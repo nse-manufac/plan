@@ -171,6 +171,7 @@
       </div>
     </div>
     <div class="desc" id="shipPreviewSummary"></div>
+    <div id="shipDateWarning" style="display:none;margin:8px 0;padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-weight:600;"></div>
     <div class="table-wrap">
       <table id="shipPreviewTable"></table>
     </div>
@@ -927,30 +928,44 @@ function renderShipPreview(parsed){
 function renderShipPreviewTable(){
   if(!pendingShipData) return;
   const date = document.getElementById('shipDate').value;
-  const existingIds = new Set(state.orders.map(o=>o.id));
+  const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
   const allCum = buildCumMap(state.records);
   const recIndex = buildRecordIndex(state.records);
-  let matchCount=0, newCount=0, sumQty=0;
+  let matchCount=0, newCount=0, sumQty=0, overlapCount=0, overlapQty=0;
+  const overLimitLines = [];
 
   const rowsHtml = pendingShipData.lines.map((ln, idx)=>{
     sumQty += ln.qty;
-    const isNew = !existingIds.has(ln.id);
+    const order = orderById[ln.id];
+    const isNew = !order;
     if(isNew) newCount++; else matchCount++;
     const prevShip = (allCum[ln.id] && allCum[ln.id].shipping) || 0;
     const existingToday = date ? recIndex[ln.id+'|shipping|'+date] : null;
-    const overwriteNote = existingToday!=null
-      ? `<span class="small muted">ทับยอดเดิมวันนี้ (${numFmt(existingToday)})</span>` : '';
+    const isDuplicateDate = existingToday!=null && existingToday !== ln.qty;
+    if(existingToday!=null){ overlapCount++; overlapQty += existingToday; }
+
+    // ยอดสะสมจริงถ้ายืนยัน = เดิมทั้งหมด - ของวันนี้ที่เคยมี (จะถูกทับ) + ยอดใหม่จากไฟล์
+    const newCumIfConfirmed = prevShip - (existingToday||0) + ln.qty;
+    const orderQty = order ? order.orderQty : ln.orderQty;
+    const isOverLimit = orderQty>0 && newCumIfConfirmed > orderQty;
+    if(isOverLimit) overLimitLines.push({subName:ln.subName, poNo:ln.poNo, pn:ln.pn, newCum:newCumIfConfirmed, orderQty});
+
+    const notes = [];
+    if(existingToday!=null) notes.push(`<span class="small" style="${isDuplicateDate?'color:#b91c1c;font-weight:600;':'color:#6b7280;'}">⚠️ ทับยอดเดิมวันนี้ (${numFmt(existingToday)} → ${numFmt(ln.qty)})</span>`);
+    if(isOverLimit) notes.push(`<span class="small" style="color:#b91c1c;font-weight:700;">🚫 เกินยอดสั่ง (${numFmt(newCumIfConfirmed)}/${numFmt(orderQty)})</span>`);
+
     const statusCell = isNew
       ? `<label style="font-weight:500;"><input type="checkbox" class="ship-create-chk" data-idx="${idx}" checked> 🆕 สร้าง order ใหม่</label>`
       : `<span class="badge green">✅ ตรงกับแผน</span>`;
-    return `<tr>
+    const rowStyle = isOverLimit ? ' style="background:#fee2e2;"' : (existingToday!=null ? ' style="background:#fffbeb;"' : '');
+    return `<tr${rowStyle}>
       <td class="left">${escapeHtml(ln.subName)}</td>
       <td class="left">${escapeHtml(ln.poNo)}</td>
       <td class="left">${escapeHtml(ln.pn)}</td>
       <td>${numFmt(ln.qty)}</td>
       <td>${numFmt(prevShip)}</td>
       <td class="left">${statusCell}</td>
-      <td class="left">${overwriteNote}</td>
+      <td class="left">${notes.join('<br>')}</td>
     </tr>`;
   }).join('');
   document.getElementById('shipPreviewTable').innerHTML =
@@ -960,12 +975,54 @@ function renderShipPreviewTable(){
   let summary = `พบ ${pendingShipData.lines.length} รายการ รวม ${numFmt(sumQty)} pcs — ตรงกับแผนเดิม ${matchCount} รายการ, จะสร้าง order ใหม่ ${newCount} รายการ`;
   if(pendingShipData.week) summary += ` (WK ${pendingShipData.week})`;
   document.getElementById('shipPreviewSummary').textContent = summary;
+
+  const warnEl = document.getElementById('shipDateWarning');
+  const warnParts = [];
+  if(overlapCount>0){
+    warnParts.push(`⚠️ วันที่ ${escapeHtml(fmtDateTH(date))} นี้เคยนำเข้ายอดส่งไปแล้ว ${overlapCount} รายการ (รวม ${numFmt(overlapQty)} pcs เดิม) — กด "ยืนยันนำเข้า" จะเป็นการทับยอดเดิมของวันนี้ทั้งหมด ตรวจสอบให้แน่ใจว่าไม่ใช่การนำเข้าไฟล์เดิมซ้ำหรือวันที่ผิด ก่อนดำเนินการต่อ`);
+  }
+  if(overLimitLines.length){
+    const detail = overLimitLines.slice(0,5).map(o=>`${escapeHtml(o.subName)} PO ${escapeHtml(o.poNo)}/${escapeHtml(o.pn)}: ${numFmt(o.newCum)}/${numFmt(o.orderQty)}`).join(' · ');
+    warnParts.push(`🚫 การนำเข้านี้จะทำให้ยอดสะสม Shipping เกินยอดสั่ง (orderQty) ของ ${overLimitLines.length} รายการ: ${detail}${overLimitLines.length>5?' …':''} — มักเกิดจากวันที่เลือกไม่ตรงกับที่เคยนำเข้าไปแล้ว (ยอดเดียวกันถูกนับซ้ำคนละวัน) กรุณาตรวจสอบวันที่ก่อนยืนยัน`);
+  }
+  if(warnParts.length){
+    warnEl.style.display = '';
+    warnEl.innerHTML = warnParts.join('<hr style="border:none;border-top:1px solid #fecaca;margin:8px 0;">');
+  } else {
+    warnEl.style.display = 'none';
+    warnEl.innerHTML = '';
+  }
 }
 
 function confirmShipImport(){
   if(!pendingShipData || !pendingShipData.lines.length) return;
   const date = document.getElementById('shipDate').value;
   if(!date){ toast('กรุณาเลือกวันที่ส่งก่อนยืนยัน'); return; }
+
+  const recIndexChk = buildRecordIndex(state.records);
+  const allCumChk = buildCumMap(state.records);
+  const orderByIdChk = {}; state.orders.forEach(o=>orderByIdChk[o.id]=o);
+
+  const overlapLines = pendingShipData.lines.filter(ln => recIndexChk[ln.id+'|shipping|'+date] != null);
+  if(overlapLines.length){
+    const ok = confirm(`วันที่ ${fmtDateTH(date)} นี้เคยนำเข้ายอดส่งไปแล้ว ${overlapLines.length} รายการ\n\nกด OK เพื่อทับยอดเดิมของวันนี้ด้วยยอดใหม่จากไฟล์นี้ (ตรวจสอบให้แน่ใจว่าไม่ใช่การนำเข้าไฟล์ซ้ำหรือเลือกวันที่ผิด)\nกด Cancel เพื่อยกเลิกและกลับไปตรวจสอบวันที่ก่อน`);
+    if(!ok) return;
+  }
+
+  const overLimitLines = pendingShipData.lines.filter(ln=>{
+    const order = orderByIdChk[ln.id];
+    const orderQty = order ? order.orderQty : ln.orderQty;
+    if(!orderQty) return false;
+    const prevShip = (allCumChk[ln.id] && allCumChk[ln.id].shipping) || 0;
+    const existingToday = recIndexChk[ln.id+'|shipping|'+date];
+    const newCum = prevShip - (existingToday||0) + ln.qty;
+    return newCum > orderQty;
+  });
+  if(overLimitLines.length){
+    const names = overLimitLines.slice(0,5).map(ln=>`${ln.subName} PO ${ln.poNo}/${ln.pn}`).join('\n');
+    const ok = confirm(`การนำเข้านี้จะทำให้ยอดสะสม Shipping เกินยอดสั่ง (orderQty) ของ ${overLimitLines.length} รายการ:\n${names}${overLimitLines.length>5?'\n…':''}\n\nมักเกิดจากวันที่เลือกไม่ตรงกับที่เคยนำเข้าไปแล้ว (ยอดเดียวกันถูกนับซ้ำคนละวัน)\n\nกด OK เพื่อบันทึกต่อไปทั้งที่เกินยอด\nกด Cancel เพื่อยกเลิกและตรวจสอบวันที่ก่อน`);
+    if(!ok) return;
+  }
 
   const now = new Date().toISOString();
   const orderMap = {}; state.orders.forEach((o,i)=>orderMap[o.id]=i);
