@@ -503,28 +503,52 @@ function excelValueToISO(v){
   }
   return null;
 }
-function dateFromISO(iso){
-  const parts = iso.split('-').map(Number);
-  return new Date(Date.UTC(parts[0], parts[1]-1, parts[2]));
-}
 function isoLocal(d){
   const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0');
   return `${y}-${m}-${day}`;
 }
 function todayISO(){ return isoLocal(new Date()); }
+
+/** บังคับให้ค่าวันที่เป็น 'YYYY-MM-DD' เสมอ
+ *  Google Sheets จะแปลงสตริงที่หน้าตาเหมือนวันที่ให้เป็นเซลล์ชนิดวันที่โดยอัตโนมัติ พอ Apps Script
+ *  อ่านกลับด้วย getValues() จะได้ Date object แล้ว JSON.stringify แปลงเป็น timestamp UTC เต็ม
+ *  (เช่น '2026-07-07T17:00:00.000Z' = เที่ยงคืนวันที่ 8 ก.ค. เวลาไทย) ค่าแบบนี้ทำให้ทั้งการแสดงผล
+ *  และการคำนวณ deadline พังทั้งหมด จึงต้องแปลงกลับด้วย getter เวลาท้องถิ่นเพื่อไม่ให้วันคลาดไป 1 วัน
+ *  (เบราว์เซอร์หน้างานกับ Apps Script อยู่โซนเวลาเดียวกัน = Asia/Bangkok) */
+function normalizeDateOnly(v){
+  if(v==null || v==='') return v;
+  if(v instanceof Date) return isNaN(v.getTime()) ? null : isoLocal(v);
+  const s = String(v);
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if(/^\d{4}-\d{2}-\d{2}T/.test(s)){
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : isoLocal(d);
+  }
+  return v;
+}
+
+function dateFromISO(iso){
+  const s = normalizeDateOnly(iso);
+  if(!s || typeof s !== 'string') return null;
+  const parts = s.split('-').map(Number);
+  if(parts.length!==3 || parts.some(n=>!isFinite(n))) return null;
+  return new Date(Date.UTC(parts[0], parts[1]-1, parts[2]));
+}
 function addDaysISO(iso, days){
-  if(!iso) return null;
   const d = dateFromISO(iso);
+  if(!d) return null;
   d.setUTCDate(d.getUTCDate()+Number(days||0));
   return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth()+1)}-${pad2(d.getUTCDate())}`;
 }
 function daysBetween(isoA, isoB){
-  if(!isoA || !isoB) return null;
-  return Math.round((dateFromISO(isoB) - dateFromISO(isoA))/86400000);
+  const a = dateFromISO(isoA), b = dateFromISO(isoB);
+  if(!a || !b) return null;
+  return Math.round((b - a)/86400000);
 }
 function fmtDateTH(iso){
-  if(!iso) return '-';
-  const parts = iso.split('-');
+  const s = normalizeDateOnly(iso);
+  if(!s || typeof s !== 'string') return '-';
+  const parts = s.split('-');
   if(parts.length!==3) return '-';
   const [y,m,d]=parts;
   return `${d}/${m}/${y}`;
@@ -556,6 +580,22 @@ const PROCESSES = ['winding','assembly','inspection','shipping'];
 const PROCESS_LABELS = {winding:'Winding/Trimming', assembly:'Assembly', inspection:'Inspection', shipping:'ส่งของ (Shipping)'};
 const PREV_PROCESS = {winding:null, assembly:'winding', inspection:'assembly', shipping:'inspection'};
 function emptyCum(){ return {winding:0, assembly:0, inspection:0, shipping:0}; }
+
+// ฟิลด์ที่เก็บ "วันปฏิทินล้วน" (YYYY-MM-DD) — ต้อง normalize ทุกครั้งที่รับค่าจากภายนอก
+// (อย่าใส่ importedAt/createdAt/updatedAt ที่นี่ — พวกนั้นต้องคง timestamp ISO เต็มไว้)
+const ORDER_DATE_FIELDS = ['orderDate','planWinding','planAssembly','planInspection'];
+const RECORD_DATE_FIELDS = ['date'];
+
+/** ซ่อมฟิลด์วันที่ในแถวเดียวให้เป็น YYYY-MM-DD · คืน true ถ้ามีการเปลี่ยนแปลงจริง */
+function normalizeRowDates(row, fields){
+  let changed = false;
+  for(const f of fields){
+    if(row[f]==null || row[f]==='') continue;
+    const fixed = normalizeDateOnly(row[f]);
+    if(fixed !== row[f]){ row[f] = fixed; changed = true; }
+  }
+  return changed;
+}
 
 /* ---------- State ---------- */
 const STORAGE_KEY = 'tue_order_tracker_v1';
@@ -594,6 +634,15 @@ let state = loadState();
 // explicit _dirty:false, so this only catches genuinely never-synced data.
 state.orders.forEach(o=>{ if(o._dirty===undefined) o._dirty=true; });
 state.records.forEach(r=>{ if(r._dirty===undefined) r._dirty=true; });
+
+// ซ่อมข้อมูลที่เพี้ยนค้างอยู่แล้วจากบั๊กวันที่ของ Google Sheets (ดู normalizeDateOnly)
+// แถวที่ค่าเปลี่ยนจริงถูกมาร์ค _dirty เพื่อดันค่าที่ถูกต้องกลับขึ้นเซิร์ฟเวอร์ทับของเดิม
+(function migrateCorruptedDates(){
+  let fixed = 0;
+  state.orders.forEach(o=>{ if(normalizeRowDates(o, ORDER_DATE_FIELDS)){ o._dirty = true; fixed++; } });
+  state.records.forEach(r=>{ if(normalizeRowDates(r, RECORD_DATE_FIELDS)){ r._dirty = true; fixed++; } });
+  if(fixed){ saveState(); console.info(`ซ่อมวันที่ที่เพี้ยนจากการซิงค์ ${fixed} รายการ`); }
+})();
 
 let workbookGlobal = null;
 let pendingImportItems = null;
@@ -646,11 +695,14 @@ async function gsApi(action, body){
   return d;
 }
 
-/** รวมแถวที่ดึงมาเข้ากับ array ในเครื่อง (ใช้ได้ทั้ง orders และ records) — id เป็นตัวจับคู่หลัก */
-function mergeRowsInto(listArr, incomingRows){
+/** รวมแถวที่ดึงมาเข้ากับ array ในเครื่อง (ใช้ได้ทั้ง orders และ records) — id เป็นตัวจับคู่หลัก
+ *  normalize ฟิลด์วันที่ก่อนเสมอ เพราะเซิร์ฟเวอร์อาจส่ง timestamp เต็มกลับมาแทน YYYY-MM-DD
+ *  (ดู normalizeDateOnly) — ถ้าปล่อยผ่านจะทำให้ deadline คำนวณไม่ได้ทั้งกระดาน */
+function mergeRowsInto(listArr, incomingRows, dateFields){
   const byId = new Map(listArr.map(x=>[x.id, x]));
   let added=0, updated=0;
   for(const r of incomingRows){
+    if(dateFields) normalizeRowDates(r, dateFields);
     const local = byId.get(r.id);
     if(!local){ listArr.push(Object.assign({}, r, {_dirty:false})); added++; continue; }
     if(local._dirty) continue; // ของเรายังไม่ได้ส่งขึ้น อย่าเพิ่งทับ
@@ -701,11 +753,11 @@ async function doSync(silent = true){
     }
 
     const pulledOrders = await gsApi('pullRows', {table:'Orders', since: syncCfg.lastPullOrders});
-    const ro = mergeRowsInto(state.orders, pulledOrders.rows||[]);
+    const ro = mergeRowsInto(state.orders, pulledOrders.rows||[], ORDER_DATE_FIELDS);
     syncCfg.lastPullOrders = pulledOrders.serverTime;
 
     const pulledRecords = await gsApi('pullRows', {table:'Records', since: syncCfg.lastPullRecords});
-    const rr = mergeRowsInto(state.records, pulledRecords.rows||[]);
+    const rr = mergeRowsInto(state.records, pulledRecords.rows||[], RECORD_DATE_FIELDS);
     syncCfg.lastPullRecords = pulledRecords.serverTime;
 
     try{
@@ -1513,6 +1565,10 @@ function saveChartPref(){
 /* ---------- Merge logic ---------- */
 function computeMergePlan(incoming){
   const plan = {newOrders:[], updOrders:[], newRecords:[], conflictRecords:[], skipRecords:0};
+  // ไฟล์ที่ export มาจากเครื่องที่ยังมีวันที่เพี้ยน (ก่อนแก้บั๊กนี้) ต้องซ่อมก่อนนำมาเทียบ
+  // ไม่งั้นการจับคู่ record ด้วย key ที่มี date จะไม่ตรงและได้รายการซ้ำ
+  (incoming.orders||[]).forEach(o=>normalizeRowDates(o, ORDER_DATE_FIELDS));
+  (incoming.records||[]).forEach(r=>normalizeRowDates(r, RECORD_DATE_FIELDS));
   const orderMap = {}; state.orders.forEach(o=>orderMap[o.id]=o);
   (incoming.orders||[]).forEach(io=>{
     const existing = orderMap[io.id];
