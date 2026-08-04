@@ -63,6 +63,8 @@
   .badge.amber{background:var(--amber-light);color:var(--amber);}
   .badge.red{background:var(--red-light);color:var(--red);}
   .badge.gray{background:var(--gray-light);color:var(--text-dim);}
+  tr.row-voided{opacity:.5;}
+  tr.row-voided td{background:var(--gray-light);}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:18px;}
   .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);}
   .card .label{font-size:12px;color:var(--text-dim);font-weight:600;margin-bottom:6px;}
@@ -80,6 +82,7 @@
   input.bad{border-color:var(--red);background:var(--red-light);}
   .muted{color:var(--text-dim);}
   .small{font-size:12px;}
+  button.btn.small{padding:4px 9px;font-size:12px;}
   .flexgap{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1f2937;color:#fff;padding:10px 20px;border-radius:8px;font-size:13.5px;box-shadow:var(--shadow);z-index:100;opacity:0;pointer-events:none;transition:opacity .25s;}
   .toast.show{opacity:1;}
@@ -171,7 +174,6 @@
       </div>
     </div>
     <div class="desc" id="shipPreviewSummary"></div>
-    <div id="shipDateWarning" style="display:none;margin:8px 0;padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-weight:600;"></div>
     <div class="table-wrap">
       <table id="shipPreviewTable"></table>
     </div>
@@ -220,6 +222,43 @@
     </div>
     <div class="table-wrap">
       <table id="entryTable"></table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>แก้ไข / ลบรายการที่บันทึกแล้ว</h2>
+    <div class="desc">แก้ยอดที่กรอกผิด หรือลบรายการทิ้ง — การลบเป็นการซ่อน (ไม่ได้ลบถาวร) กู้คืนได้เสมอ</div>
+    <div class="row filters">
+      <div class="field">
+        <label>วันที่</label>
+        <input type="date" id="recFilterDate">
+      </div>
+      <div class="field">
+        <label>Process</label>
+        <select id="recFilterProcess"><option value="">ทั้งหมด</option></select>
+      </div>
+      <div class="field">
+        <label>แหล่งที่มา</label>
+        <select id="recFilterSource">
+          <option value="">ทั้งหมด</option>
+          <option value="manual">กรอกมือ</option>
+          <option value="ship">นำเข้าจากใบส่งงาน</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>ค้นหา PO/P/N</label>
+        <input type="text" id="recFilterSearch" placeholder="พิมพ์ PO หรือ P/N">
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <label style="font-weight:500;"><input type="checkbox" id="recShowVoided"> แสดงรายการที่ลบแล้ว</label>
+      </div>
+      <div class="field">
+        <button class="btn danger" id="btnRecDeleteSelected">🗑️ ลบรายการที่เลือก (<span id="recSelectedCount">0</span>)</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="recordEditorTable"></table>
     </div>
   </div>
 </section>
@@ -821,9 +860,13 @@ function parseShipWorkbook(wb){
 }
 
 /* ---------- Cumulative / deadline / status helpers ---------- */
+// Soft-deleted records (voided:true) are excluded from every aggregate below but stay in
+// state.records — a hard delete would resurrect on the next Google Sheets pull, so deletion
+// is a synced flag, not a removal (same pattern as the Bin Card system's `voided` column).
 function buildCumMap(records){
   const map = {};
   for(const r of records){
+    if(r.voided) continue;
     if(!map[r.orderId]) map[r.orderId] = emptyCum();
     if(map[r.orderId][r.process]==null) continue;
     map[r.orderId][r.process] += Number(r.qty)||0;
@@ -832,7 +875,7 @@ function buildCumMap(records){
 }
 function buildRecordIndex(records){
   const idx = {};
-  for(const r of records) idx[r.orderId+'|'+r.process+'|'+r.date] = r.qty;
+  for(const r of records){ if(!r.voided) idx[r.orderId+'|'+r.process+'|'+r.date] = r.qty; }
   return idx;
 }
 function computeDeadlines(order){
@@ -903,14 +946,47 @@ function renderPreview(parsed){
 }
 
 function renderImportHistory(){
-  const rows = (state.importHistory||[]).slice().reverse().map(h=>`<tr>
-    <td>${new Date(h.ts).toLocaleString('th-TH')}</td>
-    <td class="left">${escapeHtml(h.week)}</td>
-    <td>${h.newCount}</td><td>${h.updCount}</td><td>${numFmt(h.sumQty)}</td>
-  </tr>`).join('');
+  const hist = state.importHistory || [];
+  const rows = hist.map((h,origIdx)=>({h,origIdx})).slice().reverse().map(({h,origIdx})=>{
+    const isShip = h.type==='ship' || (h.week||'').startsWith('ส่งของ ');
+    let actionCell = '';
+    if(isShip) actionCell = h.deletedTs
+      ? '<span class="badge gray">ลบแล้ว</span>'
+      : `<button class="btn danger small" data-del-batch="${origIdx}">🗑️ ลบยอดชุดนี้</button>`;
+    return `<tr>
+      <td>${new Date(h.ts).toLocaleString('th-TH')}</td>
+      <td class="left">${escapeHtml(h.week)}</td>
+      <td>${h.newCount}</td><td>${h.updCount}</td><td>${numFmt(h.sumQty)}</td>
+      <td>${actionCell}</td>
+    </tr>`;
+  }).join('');
   document.getElementById('importHistoryTable').innerHTML =
-    `<thead><tr><th>เวลา</th><th>Sheet</th><th>รายการใหม่</th><th>อัปเดต</th><th>รวม Qty</th></tr></thead>
-     <tbody>${rows || emptyRow(5,'ยังไม่มีประวัติการนำเข้า')}</tbody>`;
+    `<thead><tr><th>เวลา</th><th>Sheet</th><th>รายการใหม่</th><th>อัปเดต</th><th>รวม Qty</th><th></th></tr></thead>
+     <tbody>${rows || emptyRow(6,'ยังไม่มีประวัติการนำเข้า')}</tbody>`;
+
+  document.querySelectorAll('#importHistoryTable [data-del-batch]').forEach(el=>{
+    el.addEventListener('click', function(){
+      const entry = state.importHistory[Number(this.dataset.delBatch)];
+      if(!entry) return;
+      if(!confirm('ลบยอดส่งที่นำเข้าชุดนี้ทั้งหมด? (กู้คืนได้ทีหลังในตาราง "แก้ไข/ลบรายการที่บันทึกแล้ว")')) return;
+
+      let idsToVoid = [];
+      if(entry.batchId){
+        idsToVoid = state.records.filter(r=>r.batchId===entry.batchId && !r.voided).map(r=>r.id);
+      } else {
+        // entry เก่าก่อนมี batchId — จับคู่ด้วยวันที่ที่ฝังอยู่ใน week ("ส่งของ YYYY-MM-DD")
+        const m = (entry.week||'').match(/^ส่งของ (\d{4}-\d{2}-\d{2})$/);
+        if(m) idsToVoid = state.records
+          .filter(r=>r.process==='shipping' && r.note==='นำเข้าจากใบส่งงาน' && r.date===m[1] && !r.voided)
+          .map(r=>r.id);
+      }
+      if(!idsToVoid.length){ toast('ไม่พบรายการที่จะลบ (อาจถูกลบหรือแก้ไขไปแล้ว)'); return; }
+
+      entry.deletedTs = Date.now();
+      const n = voidRecords(idsToVoid); // saveState + renderAll + doSync ในตัว
+      toast(`ลบยอดส่งชุดนี้แล้ว ${n} รายการ`);
+    });
+  });
 }
 
 /* ---------- Import: ใบส่งงาน (Shipping) ---------- */
@@ -928,44 +1004,30 @@ function renderShipPreview(parsed){
 function renderShipPreviewTable(){
   if(!pendingShipData) return;
   const date = document.getElementById('shipDate').value;
-  const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
+  const existingIds = new Set(state.orders.map(o=>o.id));
   const allCum = buildCumMap(state.records);
   const recIndex = buildRecordIndex(state.records);
-  let matchCount=0, newCount=0, sumQty=0, overlapCount=0, overlapQty=0;
-  const overLimitLines = [];
+  let matchCount=0, newCount=0, sumQty=0;
 
   const rowsHtml = pendingShipData.lines.map((ln, idx)=>{
     sumQty += ln.qty;
-    const order = orderById[ln.id];
-    const isNew = !order;
+    const isNew = !existingIds.has(ln.id);
     if(isNew) newCount++; else matchCount++;
     const prevShip = (allCum[ln.id] && allCum[ln.id].shipping) || 0;
     const existingToday = date ? recIndex[ln.id+'|shipping|'+date] : null;
-    const isDuplicateDate = existingToday!=null && existingToday !== ln.qty;
-    if(existingToday!=null){ overlapCount++; overlapQty += existingToday; }
-
-    // ยอดสะสมจริงถ้ายืนยัน = เดิมทั้งหมด - ของวันนี้ที่เคยมี (จะถูกทับ) + ยอดใหม่จากไฟล์
-    const newCumIfConfirmed = prevShip - (existingToday||0) + ln.qty;
-    const orderQty = order ? order.orderQty : ln.orderQty;
-    const isOverLimit = orderQty>0 && newCumIfConfirmed > orderQty;
-    if(isOverLimit) overLimitLines.push({subName:ln.subName, poNo:ln.poNo, pn:ln.pn, newCum:newCumIfConfirmed, orderQty});
-
-    const notes = [];
-    if(existingToday!=null) notes.push(`<span class="small" style="${isDuplicateDate?'color:#b91c1c;font-weight:600;':'color:#6b7280;'}">⚠️ ทับยอดเดิมวันนี้ (${numFmt(existingToday)} → ${numFmt(ln.qty)})</span>`);
-    if(isOverLimit) notes.push(`<span class="small" style="color:#b91c1c;font-weight:700;">🚫 เกินยอดสั่ง (${numFmt(newCumIfConfirmed)}/${numFmt(orderQty)})</span>`);
-
+    const overwriteNote = existingToday!=null
+      ? `<span class="small muted">ทับยอดเดิมวันนี้ (${numFmt(existingToday)})</span>` : '';
     const statusCell = isNew
       ? `<label style="font-weight:500;"><input type="checkbox" class="ship-create-chk" data-idx="${idx}" checked> 🆕 สร้าง order ใหม่</label>`
       : `<span class="badge green">✅ ตรงกับแผน</span>`;
-    const rowStyle = isOverLimit ? ' style="background:#fee2e2;"' : (existingToday!=null ? ' style="background:#fffbeb;"' : '');
-    return `<tr${rowStyle}>
+    return `<tr>
       <td class="left">${escapeHtml(ln.subName)}</td>
       <td class="left">${escapeHtml(ln.poNo)}</td>
       <td class="left">${escapeHtml(ln.pn)}</td>
       <td>${numFmt(ln.qty)}</td>
       <td>${numFmt(prevShip)}</td>
       <td class="left">${statusCell}</td>
-      <td class="left">${notes.join('<br>')}</td>
+      <td class="left">${overwriteNote}</td>
     </tr>`;
   }).join('');
   document.getElementById('shipPreviewTable').innerHTML =
@@ -975,23 +1037,6 @@ function renderShipPreviewTable(){
   let summary = `พบ ${pendingShipData.lines.length} รายการ รวม ${numFmt(sumQty)} pcs — ตรงกับแผนเดิม ${matchCount} รายการ, จะสร้าง order ใหม่ ${newCount} รายการ`;
   if(pendingShipData.week) summary += ` (WK ${pendingShipData.week})`;
   document.getElementById('shipPreviewSummary').textContent = summary;
-
-  const warnEl = document.getElementById('shipDateWarning');
-  const warnParts = [];
-  if(overlapCount>0){
-    warnParts.push(`⚠️ วันที่ ${escapeHtml(fmtDateTH(date))} นี้เคยนำเข้ายอดส่งไปแล้ว ${overlapCount} รายการ (รวม ${numFmt(overlapQty)} pcs เดิม) — กด "ยืนยันนำเข้า" จะเป็นการทับยอดเดิมของวันนี้ทั้งหมด ตรวจสอบให้แน่ใจว่าไม่ใช่การนำเข้าไฟล์เดิมซ้ำหรือวันที่ผิด ก่อนดำเนินการต่อ`);
-  }
-  if(overLimitLines.length){
-    const detail = overLimitLines.slice(0,5).map(o=>`${escapeHtml(o.subName)} PO ${escapeHtml(o.poNo)}/${escapeHtml(o.pn)}: ${numFmt(o.newCum)}/${numFmt(o.orderQty)}`).join(' · ');
-    warnParts.push(`🚫 การนำเข้านี้จะทำให้ยอดสะสม Shipping เกินยอดสั่ง (orderQty) ของ ${overLimitLines.length} รายการ: ${detail}${overLimitLines.length>5?' …':''} — มักเกิดจากวันที่เลือกไม่ตรงกับที่เคยนำเข้าไปแล้ว (ยอดเดียวกันถูกนับซ้ำคนละวัน) กรุณาตรวจสอบวันที่ก่อนยืนยัน`);
-  }
-  if(warnParts.length){
-    warnEl.style.display = '';
-    warnEl.innerHTML = warnParts.join('<hr style="border:none;border-top:1px solid #fecaca;margin:8px 0;">');
-  } else {
-    warnEl.style.display = 'none';
-    warnEl.innerHTML = '';
-  }
 }
 
 function confirmShipImport(){
@@ -999,32 +1044,8 @@ function confirmShipImport(){
   const date = document.getElementById('shipDate').value;
   if(!date){ toast('กรุณาเลือกวันที่ส่งก่อนยืนยัน'); return; }
 
-  const recIndexChk = buildRecordIndex(state.records);
-  const allCumChk = buildCumMap(state.records);
-  const orderByIdChk = {}; state.orders.forEach(o=>orderByIdChk[o.id]=o);
-
-  const overlapLines = pendingShipData.lines.filter(ln => recIndexChk[ln.id+'|shipping|'+date] != null);
-  if(overlapLines.length){
-    const ok = confirm(`วันที่ ${fmtDateTH(date)} นี้เคยนำเข้ายอดส่งไปแล้ว ${overlapLines.length} รายการ\n\nกด OK เพื่อทับยอดเดิมของวันนี้ด้วยยอดใหม่จากไฟล์นี้ (ตรวจสอบให้แน่ใจว่าไม่ใช่การนำเข้าไฟล์ซ้ำหรือเลือกวันที่ผิด)\nกด Cancel เพื่อยกเลิกและกลับไปตรวจสอบวันที่ก่อน`);
-    if(!ok) return;
-  }
-
-  const overLimitLines = pendingShipData.lines.filter(ln=>{
-    const order = orderByIdChk[ln.id];
-    const orderQty = order ? order.orderQty : ln.orderQty;
-    if(!orderQty) return false;
-    const prevShip = (allCumChk[ln.id] && allCumChk[ln.id].shipping) || 0;
-    const existingToday = recIndexChk[ln.id+'|shipping|'+date];
-    const newCum = prevShip - (existingToday||0) + ln.qty;
-    return newCum > orderQty;
-  });
-  if(overLimitLines.length){
-    const names = overLimitLines.slice(0,5).map(ln=>`${ln.subName} PO ${ln.poNo}/${ln.pn}`).join('\n');
-    const ok = confirm(`การนำเข้านี้จะทำให้ยอดสะสม Shipping เกินยอดสั่ง (orderQty) ของ ${overLimitLines.length} รายการ:\n${names}${overLimitLines.length>5?'\n…':''}\n\nมักเกิดจากวันที่เลือกไม่ตรงกับที่เคยนำเข้าไปแล้ว (ยอดเดียวกันถูกนับซ้ำคนละวัน)\n\nกด OK เพื่อบันทึกต่อไปทั้งที่เกินยอด\nกด Cancel เพื่อยกเลิกและตรวจสอบวันที่ก่อน`);
-    if(!ok) return;
-  }
-
   const now = new Date().toISOString();
+  const batchId = uid(); // tags every record from this one import so the whole batch can be undone together
   const orderMap = {}; state.orders.forEach((o,i)=>orderMap[o.id]=i);
   const checkedIdx = new Set(Array.from(document.querySelectorAll('.ship-create-chk:checked')).map(el=>Number(el.dataset.idx)));
 
@@ -1047,16 +1068,18 @@ function confirmShipImport(){
       state.records[ri].qty = ln.qty;
       state.records[ri].updatedAt = now;
       state.records[ri].deviceName = state.deviceName;
+      state.records[ri].voided = false; // นำเข้าไฟล์เดิมซ้ำทับรายการที่เคยลบ = กู้คืนรายการนั้น
+      state.records[ri].batchId = batchId;
       state.records[ri]._dirty = true;
     } else {
-      state.records.push({id:uid(), date, orderId:ln.id, process:'shipping', qty:ln.qty, note:'นำเข้าจากใบส่งงาน', deviceName:state.deviceName, createdAt:now, updatedAt:now, _dirty:true});
+      state.records.push({id:uid(), date, orderId:ln.id, process:'shipping', qty:ln.qty, note:'นำเข้าจากใบส่งงาน', deviceName:state.deviceName, createdAt:now, updatedAt:now, voided:false, batchId, _dirty:true});
     }
     savedCount++;
     sumQty += ln.qty;
   });
 
   state.importHistory = state.importHistory || [];
-  state.importHistory.push({ts:Date.now(), week:'ส่งของ '+date, newCount:createdCount, updCount:savedCount-createdCount, sumQty});
+  state.importHistory.push({ts:Date.now(), week:'ส่งของ '+date, newCount:createdCount, updCount:savedCount-createdCount, sumQty, type:'ship', batchId});
   saveState();
 
   pendingShipData = null;
@@ -1128,6 +1151,7 @@ function renderEntryTable(){
     inputEl.addEventListener('change', function(){
       saveEntryValue(this.dataset.order, this.value, date);
       renderEntryTable();
+      renderRecordEditor();
       renderSyncBadge();
       if(pendingFocusOrderId){
         const el = document.querySelector(`#entryTable input[data-order="${CSS.escape(pendingFocusOrderId)}"]`);
@@ -1136,6 +1160,118 @@ function renderEntryTable(){
       }
     });
   });
+}
+
+/* ---------- Record editor: แก้ไข/ลบรายการที่บันทึกแล้ว ---------- */
+let recSelectedIds = new Set();
+
+function renderRecordEditor(){
+  const dateF = document.getElementById('recFilterDate').value;
+  const procF = document.getElementById('recFilterProcess').value;
+  const srcF = document.getElementById('recFilterSource').value;
+  const search = document.getElementById('recFilterSearch').value.trim().toLowerCase();
+  const showVoided = document.getElementById('recShowVoided').checked;
+
+  const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
+  let rows = state.records.filter(r=>showVoided ? true : !r.voided);
+  if(dateF) rows = rows.filter(r=>r.date===dateF);
+  if(procF) rows = rows.filter(r=>r.process===procF);
+  if(srcF==='ship') rows = rows.filter(r=>r.note==='นำเข้าจากใบส่งงาน');
+  if(srcF==='manual') rows = rows.filter(r=>r.note!=='นำเข้าจากใบส่งงาน');
+  if(search){
+    rows = rows.filter(r=>{
+      const o = orderById[r.orderId];
+      return o && (o.poNo.toLowerCase().includes(search) || o.pn.toLowerCase().includes(search));
+    });
+  }
+  rows.sort((a,b)=> (b.date||'').localeCompare(a.date) || (b.updatedAt||'').localeCompare(a.updatedAt));
+
+  const total = rows.length;
+  const limited = rows.slice(0, 300);
+  // เลิกจำ selection ของรายการที่ไม่อยู่ในผลกรองปัจจุบันแล้ว กัน "ลบรายการที่เลือก" ลบของที่มองไม่เห็นอยู่
+  const visibleIds = new Set(limited.map(r=>r.id));
+  recSelectedIds.forEach(id=>{ if(!visibleIds.has(id)) recSelectedIds.delete(id); });
+
+  const bodyHtml = limited.map(r=>{
+    const o = orderById[r.orderId];
+    const source = r.note==='นำเข้าจากใบส่งงาน' ? 'ใบส่งงาน' : 'กรอกมือ';
+    const actionBtn = r.voided
+      ? `<button class="btn small" data-restore="${r.id}">↩️ กู้คืน</button>`
+      : `<button class="btn danger small" data-delete="${r.id}">🗑️ ลบ</button>`;
+    return `<tr class="${r.voided?'row-voided':''}">
+      <td><input type="checkbox" class="rec-chk" data-id="${r.id}" ${recSelectedIds.has(r.id)?'checked':''}></td>
+      <td>${fmtDateTH(r.date)}</td>
+      <td class="left">${escapeHtml(PROCESS_LABELS[r.process]||r.process)}</td>
+      <td class="left">${escapeHtml(o?o.poNo:'?')}</td>
+      <td class="left">${escapeHtml(o?o.pn:'?')}</td>
+      <td><input type="number" min="0" class="row-input rec-qty-input" data-id="${r.id}" value="${r.qty}" ${r.voided?'disabled':''}></td>
+      <td class="left">${source}${r.voided?' <span class="badge gray">ลบแล้ว</span>':''}</td>
+      <td class="left">${escapeHtml(r.deviceName||'-')}</td>
+      <td>${actionBtn}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('recordEditorTable').innerHTML =
+    `<thead><tr><th></th><th>วันที่</th><th>Process</th><th>PO No.</th><th>P/N</th><th>จำนวน</th><th>แหล่งที่มา</th><th>เครื่องที่กรอก</th><th></th></tr></thead>
+     <tbody>${bodyHtml || emptyRow(9,'ไม่พบรายการตามตัวกรองนี้')}</tbody>`;
+  if(total>300){
+    document.getElementById('recordEditorTable').insertAdjacentHTML('afterend',
+      `<div class="small muted" style="margin-top:6px;">แสดง 300 จาก ${numFmt(total)} รายการ — กรองตามวันที่หรือค้นหาเพื่อดูรายการที่เหลือ</div>`);
+  }
+
+  document.getElementById('recSelectedCount').textContent = recSelectedIds.size;
+
+  document.querySelectorAll('#recordEditorTable .rec-chk').forEach(el=>{
+    el.addEventListener('change', function(){
+      if(this.checked) recSelectedIds.add(this.dataset.id); else recSelectedIds.delete(this.dataset.id);
+      document.getElementById('recSelectedCount').textContent = recSelectedIds.size;
+    });
+  });
+  document.querySelectorAll('#recordEditorTable .rec-qty-input').forEach(el=>{
+    el.addEventListener('change', function(){
+      const qty = Number(this.value);
+      if(isNaN(qty) || qty<0){ toast('กรุณากรอกตัวเลขที่ถูกต้อง (>= 0)'); renderRecordEditor(); return; }
+      const idx = state.records.findIndex(r=>r.id===this.dataset.id);
+      if(idx>-1){
+        state.records[idx].qty = qty;
+        state.records[idx].updatedAt = new Date().toISOString();
+        state.records[idx]._dirty = true;
+        saveState(); renderAll(); doSync();
+      }
+    });
+  });
+  document.querySelectorAll('#recordEditorTable [data-delete]').forEach(el=>{
+    el.addEventListener('click', function(){
+      if(!confirm('ลบรายการนี้? (กู้คืนได้ทีหลัง)')) return;
+      voidRecords([this.dataset.delete]);
+    });
+  });
+  document.querySelectorAll('#recordEditorTable [data-restore]').forEach(el=>{
+    el.addEventListener('click', function(){
+      const idx = state.records.findIndex(r=>r.id===this.dataset.restore);
+      if(idx>-1){
+        state.records[idx].voided = false;
+        state.records[idx].updatedAt = new Date().toISOString();
+        state.records[idx]._dirty = true;
+        saveState(); renderAll(); doSync();
+      }
+    });
+  });
+}
+
+/** ลบแบบ soft-delete (ตั้ง voided:true) — ไม่ลบถาวรเพราะจะขัดกับการซิงค์ Google Sheets */
+function voidRecords(ids){
+  const now = new Date().toISOString();
+  const idSet = new Set(ids);
+  let n=0;
+  state.records.forEach(r=>{
+    if(idSet.has(r.id) && !r.voided){ r.voided = true; r.updatedAt = now; r._dirty = true; n++; }
+  });
+  saveState();
+  recSelectedIds.clear();
+  renderAll();
+  doSync();
+  return n;
 }
 
 function saveEntryValue(orderId, rawVal, date){
@@ -1153,9 +1289,10 @@ function saveEntryValue(orderId, rawVal, date){
     state.records[idx].qty = qty;
     state.records[idx].updatedAt = now;
     state.records[idx].deviceName = state.deviceName;
+    state.records[idx].voided = false; // พิมพ์ค่าใหม่ทับรายการที่เคยลบ = กู้คืนรายการนั้น
     state.records[idx]._dirty = true;
   } else {
-    state.records.push({id:uid(), date, orderId, process:currentProcess, qty, note:'', deviceName:state.deviceName, createdAt:now, updatedAt:now, _dirty:true});
+    state.records.push({id:uid(), date, orderId, process:currentProcess, qty, note:'', deviceName:state.deviceName, createdAt:now, updatedAt:now, voided:false, _dirty:true});
   }
   saveState();
   doSync();
@@ -1226,6 +1363,7 @@ function buildDailyTotals(startISO, endISO){
   }
   const idxByDate = {}; labels.forEach((l,i)=>idxByDate[l]=i);
   state.records.forEach(r=>{
+    if(r.voided) return;
     if(idxByDate[r.date]!=null && data[r.process]) data[r.process][idxByDate[r.date]] += Number(r.qty)||0;
   });
   return {labels, data};
@@ -1443,7 +1581,7 @@ function exportExcelReport(){
       'Deadline Inspection': dl.inspection, 'กำหนดส่งของ': dl.shipping
     };
   });
-  const recordRows = state.records.slice().sort((a,b)=>(a.date||'').localeCompare(b.date)).map(r=>{
+  const recordRows = state.records.filter(r=>!r.voided).sort((a,b)=>(a.date||'').localeCompare(b.date)).map(r=>{
     const o = state.orders.find(x=>x.id===r.orderId);
     return {
       'วันที่': r.date,
@@ -1466,6 +1604,7 @@ function renderAll(){
   renderChart();
   renderDashTable();
   renderEntryTable();
+  renderRecordEditor();
   renderSyncBadge();
 }
 
@@ -1478,7 +1617,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
     document.getElementById('view-'+tab).classList.add('active');
     if(tab==='dashboard'){ renderDashFilterOptions(); renderWipCards(); renderChart(); renderDashTable(); }
-    if(tab==='entry'){ renderDashFilterOptions(); renderEntryTable(); }
+    if(tab==='entry'){ renderDashFilterOptions(); renderEntryTable(); renderRecordEditor(); }
     if(tab==='import'){ renderImportHistory(); }
     if(tab==='data'){ loadSettingsIntoForm(); }
   });
@@ -1591,6 +1730,18 @@ document.getElementById('entryDate').addEventListener('change', renderEntryTable
 document.getElementById('entrySearch').addEventListener('input', renderEntryTable);
 document.getElementById('entryWeekFilter').addEventListener('change', renderEntryTable);
 document.getElementById('entryHideDone').addEventListener('change', renderEntryTable);
+
+document.getElementById('recFilterDate').addEventListener('change', renderRecordEditor);
+document.getElementById('recFilterProcess').addEventListener('change', renderRecordEditor);
+document.getElementById('recFilterSource').addEventListener('change', renderRecordEditor);
+document.getElementById('recFilterSearch').addEventListener('input', renderRecordEditor);
+document.getElementById('recShowVoided').addEventListener('change', renderRecordEditor);
+document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
+  if(!recSelectedIds.size){ toast('ยังไม่ได้เลือกรายการ'); return; }
+  if(!confirm(`ลบ ${recSelectedIds.size} รายการที่เลือก? (กู้คืนได้ทีหลัง)`)) return;
+  const n = voidRecords(Array.from(recSelectedIds));
+  toast(`ลบแล้ว ${n} รายการ`);
+});
 
 document.getElementById('dashWeekFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashSubFilter').addEventListener('change', renderDashTable);
@@ -1715,6 +1866,8 @@ document.getElementById('syncBadge').addEventListener('click', ()=>doSync(false)
 
 /* ---------- Init ---------- */
 document.getElementById('entryDate').value = todayISO();
+document.getElementById('recFilterProcess').innerHTML =
+  '<option value="">ทั้งหมด</option>' + PROCESSES.map(p=>`<option value="${p}">${escapeHtml(PROCESS_LABELS[p])}</option>`).join('');
 loadSettingsIntoForm();
 renderAll();
 
