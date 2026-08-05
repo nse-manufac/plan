@@ -1,0 +1,10 @@
+# This repo is PUBLIC (GitHub Pages). Only the deployed app files are tracked.
+# Business data (production plans, customer names, exported reports) stays local-only.
+# Ignore everything by default, then explicitly allow the deploy files.
+# NOTE: because of the deny-all rule, every new tracked file needs a line here.
+/*
+!/.gitignore
+!/production_plan_tracker.html
+!/CLAUDE.md
+!/INVARIANTS.md
+!/.github/
