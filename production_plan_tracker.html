@@ -75,8 +75,15 @@
   .card.accent-green{border-top:4px solid var(--green);}
   .card.accent-red{border-top:4px solid var(--red);}
   .progress{width:90px;height:8px;background:var(--gray-light);border-radius:5px;overflow:hidden;display:inline-block;vertical-align:middle;}
-  .progress > div{height:100%;background:var(--primary);}
-  .progress.done > div{background:var(--green);}
+  .progress .seg-on{height:100%;background:var(--primary);float:left;}
+  .progress .seg-late{height:100%;background:#f59e0b;float:left;}
+  .progress.done .seg-on{background:var(--green);}
+  .split-note{font-size:10.5px;line-height:1.3;white-space:nowrap;}
+  .split-note .on{color:var(--primary);font-weight:700;}
+  .split-note .late{color:#b45309;font-weight:700;}
+  td.dl-done{background:var(--green-light);color:var(--green);font-weight:700;}
+  td.dl-soon{background:var(--amber-light);color:var(--amber);font-weight:700;}
+  td.dl-late{background:var(--red-light);color:var(--red);font-weight:700;}
   .row-input{width:70px;padding:5px 6px;text-align:center;}
   input.warn{border-color:var(--amber);background:var(--amber-light);}
   input.bad{border-color:var(--red);background:var(--red-light);}
@@ -930,6 +937,27 @@ function buildRecordIndex(records){
   for(const r of records){ if(!r.voided) idx[r.orderId+'|'+r.process+'|'+r.date] = r.qty; }
   return idx;
 }
+/** เหมือน buildCumMap แต่แยกยอดสะสมออกเป็น "ทันกำหนด" (บันทึกในหรือก่อนวัน deadline ของขั้นนั้น)
+ *  กับ "เกินกำหนด" (บันทึกหลังวัน deadline) — ใช้วาดแถบ progress 2 สีในตาราง Dashboard
+ *  ต้องใช้ orderById เพราะ deadline คำนวณจาก orderDate ของแต่ละ order เอง ไม่ใช่ค่าคงที่ */
+function buildCumSplitMap(records, orderById){
+  const map = {}; const dlCache = {};
+  for(const r of records){
+    if(r.voided) continue;
+    const order = orderById[r.orderId];
+    if(!order) continue;
+    if(!map[r.orderId]) map[r.orderId] = {
+      winding:{onTime:0,late:0}, assembly:{onTime:0,late:0}, inspection:{onTime:0,late:0}, shipping:{onTime:0,late:0}
+    };
+    const bucket = map[r.orderId][r.process];
+    if(!bucket) continue;
+    if(!dlCache[r.orderId]) dlCache[r.orderId] = computeDeadlines(order);
+    const dl = dlCache[r.orderId][r.process];
+    const qty = Number(r.qty)||0;
+    if(!dl || r.date <= dl) bucket.onTime += qty; else bucket.late += qty;
+  }
+  return map;
+}
 function computeDeadlines(order){
   const off = state.deadlineOffsets;
   return {
@@ -952,6 +980,16 @@ function computeStatus(order, cum, dl, refISO){
     if(daysLeft!=null && daysLeft<=3) return {code:'soon', label:`ใกล้ครบกำหนด (เหลือ ${daysLeft} วัน)`, color:'amber'};
   }
   return {code:'ok', label:'กำลังดำเนินการ', color:'gray'};
+}
+/** สีเตือนสำหรับเซลล์วันที่ deadline แต่ละคอลัมน์ — ใช้ตรรกะเดียวกับ computeStatus แต่ต่อ "ขั้นเดียว"
+ *  ไม่ใช่ทั้งบรรทัด เพื่อให้เห็นว่าขั้นไหนกำลังจะเลย/เลยไปแล้วโดยไม่ต้องกวาดตาไปดูคอลัมน์สถานะ */
+function deadlineCellClass(dlISO, cumOfStage, orderQty, refISO){
+  if(!dlISO) return '';
+  if(cumOfStage >= orderQty) return 'dl-done';
+  if(refISO > dlISO) return 'dl-late';
+  const daysLeft = daysBetween(refISO, dlISO);
+  if(daysLeft!=null && daysLeft<=3) return 'dl-soon';
+  return '';
 }
 
 /* ---------- Generic UI helpers ---------- */
@@ -1480,13 +1518,28 @@ function renderDashFilterOptions(){
   fillSelect('dashSubFilter', uniqueSorted(state.orders.map(o=>o.subName)));
 }
 
-function progressCell(pct, val, qty){
-  const cls = pct>=100 ? 'done' : '';
-  return `<div class="small">${numFmt(val)}/${numFmt(qty)}</div><div class="progress ${cls}"><div style="width:${Math.min(100,pct)}%"></div></div>`;
+/** แถบ progress 2 ส่วน: ฟ้า = ยอดที่บันทึกทันหรือก่อนวัน deadline ของขั้นนั้น, เหลือง = บันทึกหลังเลย
+ *  deadline ไปแล้ว — เขียวทั้งแถบสงวนไว้เฉพาะกรณีเสร็จครบ "และ" ไม่มีส่วนที่ช้าเลยเท่านั้น (เสร็จครบ
+ *  แบบมีส่วนช้าปนอยู่ ยังคงแสดงฟ้า+เหลืองตามจริง ไม่ใช่เขียว) ยอดแยกทัน/เกินโชว์เป็นตัวหนังสือในเซลล์
+ *  เลย ไม่ต้องรอ hover เพราะผู้ใช้อยากเห็นตัวเลขทันทีตอนกวาดตาดูตาราง */
+function progressCell(cum, split, qty){
+  split = split || {onTime:0, late:0};
+  const done = qty>0 && cum>=qty && split.late===0;
+  const onTimePct = qty>0 ? Math.min(100, split.onTime/qty*100) : 0;
+  const latePct = qty>0 ? Math.min(100-onTimePct, split.late/qty*100) : 0;
+  const splitNote = split.late>0
+    ? `<div class="split-note"><span class="on">ทัน ${numFmt(split.onTime)}</span> · <span class="late">เกิน ${numFmt(split.late)}</span></div>`
+    : '';
+  return `<div class="small">${numFmt(cum)}/${numFmt(qty)}</div>
+    <div class="progress ${done?'done':''}" title="ทันกำหนด ${numFmt(split.onTime)} · เกินกำหนด ${numFmt(split.late)}">
+      <div class="seg-on" style="width:${onTimePct}%"></div><div class="seg-late" style="width:${latePct}%"></div>
+    </div>${splitNote}`;
 }
 
 function renderDashTable(){
   const allCum = buildCumMap(state.records);
+  const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
+  const splitMap = buildCumSplitMap(state.records, orderById);
   const ref = todayISO();
   const weekF = document.getElementById('dashWeekFilter').value;
   const subF = document.getElementById('dashSubFilter').value;
@@ -1497,7 +1550,8 @@ function renderDashTable(){
     const c = allCum[o.id] || emptyCum();
     const dl = computeDeadlines(o);
     const st = computeStatus(o, c, dl, ref);
-    return {o,c,dl,st};
+    const split = splitMap[o.id] || {};
+    return {o,c,dl,st,split};
   });
   if(weekF) rows = rows.filter(x=>x.o.week===weekF);
   if(subF) rows = rows.filter(x=>x.o.subName===subF);
@@ -1505,12 +1559,12 @@ function renderDashTable(){
   if(statusF) rows = rows.filter(x=>x.st.code===statusF);
   rows.sort((a,b)=> (a.o.week||'').localeCompare(b.o.week) || (a.o.orderDate||'').localeCompare(b.o.orderDate));
 
-  const bodyHtml = rows.map(({o,c,dl,st})=>{
-    const pctW = o.orderQty? Math.round(c.winding/o.orderQty*100) : 0;
-    const pctA = o.orderQty? Math.round(c.assembly/o.orderQty*100) : 0;
-    const pctI = o.orderQty? Math.round(c.inspection/o.orderQty*100) : 0;
-    const pctS = o.orderQty? Math.round(c.shipping/o.orderQty*100) : 0;
+  const bodyHtml = rows.map(({o,c,dl,st,split})=>{
     const anomaly = c.assembly>c.winding || c.inspection>c.assembly || c.shipping>c.inspection;
+    const clsW = deadlineCellClass(dl.winding, c.winding, o.orderQty, ref);
+    const clsA = deadlineCellClass(dl.assembly, c.assembly, o.orderQty, ref);
+    const clsI = deadlineCellClass(dl.inspection, c.inspection, o.orderQty, ref);
+    const clsS = deadlineCellClass(dl.shipping, c.shipping, o.orderQty, ref);
     return `<tr>
       <td class="left">${escapeHtml(o.week)}</td>
       <td class="left">${escapeHtml(o.poNo)}</td>
@@ -1518,14 +1572,14 @@ function renderDashTable(){
       <td class="left">${escapeHtml(o.subName)}</td>
       <td>${numFmt(o.orderQty)}</td>
       <td>${fmtDateTH(o.orderDate)}</td>
-      <td>${progressCell(pctW, c.winding, o.orderQty)}</td>
-      <td>${progressCell(pctA, c.assembly, o.orderQty)}</td>
-      <td>${progressCell(pctI, c.inspection, o.orderQty)}</td>
-      <td>${progressCell(pctS, c.shipping, o.orderQty)}</td>
-      <td>${fmtDateTH(dl.winding)}</td>
-      <td>${fmtDateTH(dl.assembly)}</td>
-      <td>${fmtDateTH(dl.inspection)}</td>
-      <td>${fmtDateTH(dl.shipping)}</td>
+      <td>${progressCell(c.winding, split.winding, o.orderQty)}</td>
+      <td>${progressCell(c.assembly, split.assembly, o.orderQty)}</td>
+      <td>${progressCell(c.inspection, split.inspection, o.orderQty)}</td>
+      <td>${progressCell(c.shipping, split.shipping, o.orderQty)}</td>
+      <td class="${clsW}">${fmtDateTH(dl.winding)}</td>
+      <td class="${clsA}">${fmtDateTH(dl.assembly)}</td>
+      <td class="${clsI}">${fmtDateTH(dl.inspection)}</td>
+      <td class="${clsS}">${fmtDateTH(dl.shipping)}</td>
       <td><span class="badge ${st.color}">${escapeHtml(st.label)}</span>${anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
     </tr>`;
   }).join('');
