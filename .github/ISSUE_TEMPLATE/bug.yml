@@ -1,0 +1,87 @@
+name: แจ้งปัญหา (bug)
+description: แจ้งว่าโปรแกรมทำงานผิดพลาด
+title: "[ปัญหา] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        กรอกเท่าที่รู้ก็พอครับ ไม่ต้องครบทุกช่อง — ยิ่งบอกละเอียด ยิ่งแก้ได้ตรงจุดและเร็วขึ้น
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: เกิดที่หน้าไหน
+      options:
+        - นำเข้าแผน
+        - บันทึกยอดรายวัน
+        - Dashboard
+        - ข้อมูล & แชร์
+        - ตั้งค่า / เชื่อมต่อ Google Sheets
+        - ออกรายงาน Excel
+        - เปิดโปรแกรมไม่ขึ้นเลย
+        - ไม่แน่ใจ
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: กระทบงานแค่ไหน
+      options:
+        - ทำงานต่อไม่ได้เลย ต้องแก้ด่วน
+        - ทำงานต่อได้ แต่ต้องเลี่ยงหรือทำมือ
+        - เล็กน้อย ไม่รีบ
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: เกิดอะไรขึ้น
+      placeholder: เช่น คีย์ยอด Assembly แล้ว Dashboard ยังขึ้นยอดเดิม
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: คิดว่าควรจะเป็นยังไง
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: ทำยังไงถึงเจอ
+      placeholder: |
+        1. เข้าหน้าบันทึกยอดรายวัน
+        2. เลือกขั้นตอน Assembly วันที่ ...
+        3. กรอกยอด ... แล้วกด Tab
+
+  - type: input
+    id: ref
+    attributes:
+      label: ใบสั่งซื้อ / ขั้นตอน / วันที่ ที่เกี่ยวข้อง
+      placeholder: ใส่เท่าที่จำได้ ช่วยให้ตามรอยได้เร็วขึ้นมาก
+
+  - type: dropdown
+    id: sync
+    attributes:
+      label: เครื่องนี้ต่อ Google Sheets อยู่ไหม
+      options:
+        - ต่ออยู่
+        - ไม่ได้ต่อ ใช้ในเครื่องอย่างเดียว
+        - ไม่แน่ใจ
+
+  - type: input
+    id: reporter
+    attributes:
+      label: ชื่อผู้แจ้ง
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ถ้าแนบภาพหน้าจอได้จะดีมาก ลากไฟล์มาวางในช่องคอมเมนต์ได้เลย
+
+        > ⚠️ **ห้ามแนบไฟล์แผนผลิตตัวจริง** เพราะ repo นี้เป็นสาธารณะ ใครก็เห็นได้
+        > ถ้าจำเป็นให้ครอบตัดเฉพาะส่วนที่มีปัญหา หรือปิดชื่อลูกค้าก่อน
