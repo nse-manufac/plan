@@ -1196,7 +1196,7 @@ function renderEntryTable(){
 
   let orders = state.orders.filter(o=>o.status!=='closed');
   if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
-  if(search) orders = orders.filter(o=> o.poNo.toLowerCase().includes(search) || o.pn.toLowerCase().includes(search));
+  if(search) orders = orders.filter(o=> String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
   orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week) || (a.orderDate||'').localeCompare(b.orderDate));
 
   lastRenderedOrderIds = [];
@@ -1271,7 +1271,7 @@ function renderRecordEditor(){
   if(search){
     rows = rows.filter(r=>{
       const o = orderById[r.orderId];
-      return o && (o.poNo.toLowerCase().includes(search) || o.pn.toLowerCase().includes(search));
+      return o && (String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
     });
   }
   rows.sort((a,b)=> (b.date||'').localeCompare(a.date) || (b.updatedAt||'').localeCompare(a.updatedAt));
@@ -1555,7 +1555,7 @@ function renderDashTable(){
   });
   if(weekF) rows = rows.filter(x=>x.o.week===weekF);
   if(subF) rows = rows.filter(x=>x.o.subName===subF);
-  if(search) rows = rows.filter(x=>x.o.poNo.toLowerCase().includes(search) || x.o.pn.toLowerCase().includes(search));
+  if(search) rows = rows.filter(x=>String(x.o.poNo).toLowerCase().includes(search) || String(x.o.pn).toLowerCase().includes(search));
   if(statusF) rows = rows.filter(x=>x.st.code===statusF);
   rows.sort((a,b)=> (a.o.week||'').localeCompare(b.o.week) || (a.o.orderDate||'').localeCompare(b.o.orderDate));
 
