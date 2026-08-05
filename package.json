@@ -1,0 +1,14 @@
+{
+  "name": "plan-smoke-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Smoke tests for production_plan_tracker.html. The app itself has no build step and no runtime dependencies (SheetJS is vendored inline) — this package.json exists only for the test harness.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}
