@@ -1,0 +1,234 @@
+// Smoke test ผูกกับ INVARIANTS.md — ชื่อเทสอ้างข้อกฎตรง ๆ
+// เทสที่แดงจะบอกได้ทันทีว่าละเมิดกฎข้อไหน ไม่ต้องไปไล่อ่าน diff
+//
+// ── ทำไมเทสนี้ขับผ่าน DOM ไม่ใช่เรียกฟังก์ชันตรง ๆ ──────────────────
+// โค้ดทั้งหมดของแอปถูกห่ออยู่ใน IIFE  (function(){ ... })();
+// ทำให้ state / buildCumMap / saveEntryValue ไม่ถูก export ออกมาที่ global เลย
+// เทสจึงต้อง: seed localStorage → กดปุ่มจริง → ตรวจผลจาก localStorage และ DOM
+// ซึ่งเป็นการทดสอบที่ใกล้เคียงกับสิ่งที่ผู้ใช้เจอจริงอยู่แล้ว
+//
+// ถ้าวันหนึ่งอยากได้เทสที่ลึกกว่านี้ ค่อยพิจารณา export ฟังก์ชันออกมาตอน test เท่านั้น
+// แต่ต้องให้เจ้าของอนุมัติก่อน เพราะเป็นการแก้ไฟล์แอปจริง
+
+const { test, expect } = require('@playwright/test');
+const fs = require('fs');
+const path = require('path');
+
+const APP = '/production_plan_tracker.html';
+const APP_FILE = path.resolve(__dirname, '..', 'production_plan_tracker.html');
+const K_STATE = 'tue_order_tracker_v1';
+const TEST_DATE = '2026-08-03';
+
+function seedState(records = []) {
+  return {
+    version: 1,
+    deviceName: 'test',
+    deadlineOffsets: { winding: 10, assembly: 17, inspection: 24, shipping: 28 },
+    chartPref: { mode: '14', from: '', to: '' },
+    orders: [
+      { id: 'O1', week: 'W31', poNo: 'PO-1', pn: 'PN-1', orderQty: 100,
+        orderDate: '2026-08-01', status: 'active',
+        importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false },
+      { id: 'O2', week: 'W31', poNo: 'PO-2', pn: 'PN-2', orderQty: 50,
+        orderDate: '2026-08-01', status: 'active',
+        importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false }
+    ],
+    records,
+    importHistory: []
+  };
+}
+
+function rec(id, orderId, process, date, qty, voided = false) {
+  return {
+    id, date, orderId, process, qty, note: '', deviceName: 'test',
+    createdAt: '2026-08-02T00:00:00.000Z', updatedAt: '2026-08-02T00:00:00.000Z',
+    voided, _dirty: false
+  };
+}
+
+async function openApp(page, records = []) {
+  await page.addInitScript(([key, st]) => {
+    localStorage.setItem(key, JSON.stringify(st));
+  }, [K_STATE, seedState(records)]);
+  await page.goto(APP);
+  await page.waitForSelector('.tab-btn[data-tab="entry"]');
+}
+
+/** เข้าหน้าคีย์ยอด เลือกขั้นตอน และตั้งวันที่ให้แน่นอน */
+async function gotoEntry(page, process = 'winding', date = TEST_DATE) {
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.click(`#procBtn-${process}`);
+  await page.fill('#entryDate', date);
+  await page.waitForTimeout(100);
+}
+
+async function typeQty(page, orderId, value) {
+  const input = page.locator(`#entryTable input.row-input[data-order="${orderId}"]`);
+  await input.fill(String(value));
+  await input.press('Tab');          // change event ยิงตอนออกจากช่อง
+  await page.waitForTimeout(150);
+}
+
+function readRecords(page) {
+  return page.evaluate(k => JSON.parse(localStorage.getItem(k)).records, K_STATE);
+}
+
+// ────────────────────────────────────────────────────────────────────
+
+test('แอปเปิดขึ้นได้ ไม่มี error ที่ทำให้ใช้งานไม่ได้', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push('uncaught: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+
+  await openApp(page);
+  await gotoEntry(page);
+
+  await expect(page.locator(`#entryTable input.row-input[data-order="O1"]`)).toBeVisible();
+  expect(errors, 'มี error ตอนเปิดแอป').toEqual([]);
+});
+
+test('F2 — แอปต้องทำงานได้โดยไม่ต้องต่ออินเทอร์เน็ต', async ({ page }) => {
+  const blocked = [];
+  // ตัดทุก request ที่ออกนอกเครื่อง — ถ้าแอปพึ่ง CDN อยู่จะพังทันที
+  await page.route('**', route => {
+    const url = route.request().url();
+    if (url.startsWith('http://127.0.0.1:8124') || url.startsWith('data:') || url.startsWith('blob:')) {
+      return route.continue();
+    }
+    blocked.push(url);
+    return route.abort();
+  });
+
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+
+  await openApp(page);
+  await gotoEntry(page);
+  await typeQty(page, 'O1', 7);
+
+  const records = await readRecords(page);
+  expect(errors, 'แอปพังตอนไม่มีเน็ต — แปลว่ามี dependency ภายนอกหลุดเข้ามา').toEqual([]);
+  expect(records, 'บันทึกยอดไม่ได้ตอนออฟไลน์').toHaveLength(1);
+  expect(blocked, `แอปพยายามเรียกไฟล์จากภายนอก: ${blocked.join(', ')}`).toEqual([]);
+});
+
+test('A2 — คีย์ยอดซ้ำ order + ขั้นตอน + วันเดียวกัน ต้องทับของเดิม ไม่เกิดแถวใหม่', async ({ page }) => {
+  await openApp(page);
+  await gotoEntry(page);
+
+  await typeQty(page, 'O1', 10);
+  expect(await readRecords(page)).toHaveLength(1);
+
+  await typeQty(page, 'O1', 25);
+  const records = await readRecords(page);
+
+  expect(records, 'คีย์ทับต้องไม่สร้างแถวใหม่ — กุญแจคือ orderId|process|date').toHaveLength(1);
+  expect(records[0].qty).toBe(25);
+  expect(records[0].orderId).toBe('O1');
+  expect(records[0].process).toBe('winding');
+  expect(records[0].date).toBe(TEST_DATE);
+});
+
+test('A2 — คนละ order หรือคนละขั้นตอน ต้องแยกแถวกัน', async ({ page }) => {
+  await openApp(page);
+
+  await gotoEntry(page, 'winding');
+  await typeQty(page, 'O1', 10);
+  await typeQty(page, 'O2', 20);
+
+  await gotoEntry(page, 'assembly');
+  await typeQty(page, 'O1', 5);
+
+  const records = await readRecords(page);
+  expect(records).toHaveLength(3);
+  const key = r => `${r.orderId}|${r.process}`;
+  expect(records.map(key).sort()).toEqual(['O1|assembly', 'O1|winding', 'O2|winding']);
+});
+
+test('B2 — เคลียร์ช่องให้ว่าง ต้องไม่ลบข้อมูลที่บันทึกไว้', async ({ page }) => {
+  await openApp(page);
+  await gotoEntry(page);
+
+  await typeQty(page, 'O1', 42);
+  expect((await readRecords(page))[0].qty).toBe(42);
+
+  await typeQty(page, 'O1', '');          // เคลียร์ช่อง
+  const records = await readRecords(page);
+
+  expect(records, 'เคลียร์ช่องแล้วรายการต้องยังอยู่ (ถ้าจะแก้ให้พิมพ์ 0 ทับ)').toHaveLength(1);
+  expect(records[0].qty, 'ค่าเดิมต้องไม่ถูกเปลี่ยน').toBe(42);
+});
+
+test('B2 — พิมพ์ 0 ทับ ต้องเปลี่ยนค่าเป็น 0 ได้จริง', async ({ page }) => {
+  await openApp(page);
+  await gotoEntry(page);
+
+  await typeQty(page, 'O1', 42);
+  await typeQty(page, 'O1', 0);
+
+  const records = await readRecords(page);
+  expect(records).toHaveLength(1);
+  expect(records[0].qty).toBe(0);
+});
+
+test('A1 + B1 — รายการที่ยกเลิกแล้วต้องไม่ถูกนับในยอดสะสม แต่ต้องยังอยู่ในระบบ', async ({ page }) => {
+  await openApp(page, [
+    rec('R1', 'O1', 'winding', '2026-08-01', 30),
+    rec('R2', 'O1', 'winding', '2026-08-02', 70, true)   // ยกเลิกแล้ว — ห้ามนับ
+  ]);
+  await gotoEntry(page, 'winding');
+
+  // คอลัมน์ที่ 6 ของตารางคือ "สะสม" (#, สัปดาห์, PO No., P/N, Order Qty, สะสม, คงเหลือ, ยอดวันนี้)
+  const cum = await page.locator('#entryTable tbody tr', { has: page.locator('input[data-order="O1"]') })
+    .locator('td').nth(5).innerText();
+
+  expect(cum.trim(), 'ยอดสะสมต้องเป็น 30 — รายการที่ยกเลิกไม่ถูกนับ').toBe('30');
+
+  const records = await readRecords(page);
+  expect(records, 'รายการที่ยกเลิกต้องยังอยู่ ไม่ถูกลบ (ไม่งั้น sync จะดึงกลับมาใหม่)').toHaveLength(2);
+  expect(records.find(r => r.id === 'R2').voided).toBe(true);
+});
+
+test('B3 — พิมพ์ค่าใหม่ทับรายการที่ยกเลิกไปแล้ว ต้องกู้คืนรายการนั้น', async ({ page }) => {
+  await openApp(page, [rec('R1', 'O1', 'winding', TEST_DATE, 30, true)]);
+  await gotoEntry(page, 'winding');
+
+  await typeQty(page, 'O1', 55);
+
+  const records = await readRecords(page);
+  expect(records, 'ต้องกู้แถวเดิม ไม่ใช่สร้างแถวใหม่').toHaveLength(1);
+  expect(records[0].voided, 'พิมพ์ทับแล้วต้อง un-void').toBe(false);
+  expect(records[0].qty).toBe(55);
+});
+
+test('C1 — วันปฏิทินต้องเป็น YYYY-MM-DD ส่วน timestamp ต้องคงเวลาเต็มไว้', async ({ page }) => {
+  await openApp(page);
+  await gotoEntry(page);
+  await typeQty(page, 'O1', 12);
+
+  const r = (await readRecords(page))[0];
+  expect(r.date, 'ฟิลด์ date ต้องเป็นวันปฏิทินล้วน').toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  expect(r.createdAt, 'createdAt ต้องเป็น ISO เต็ม ห้ามถูก normalize ตัดเวลาทิ้ง')
+    .toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  expect(r.updatedAt, 'updatedAt ต้องเป็น ISO เต็ม ห้ามถูก normalize ตัดเวลาทิ้ง')
+    .toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+});
+
+test('E3 — ถ้าข้อมูลใน localStorage เสีย แอปต้องยังเปิดขึ้น ไม่ค้าง', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+
+  await page.addInitScript(k => localStorage.setItem(k, '{ นี่ไม่ใช่ JSON'), K_STATE);
+  await page.goto(APP);
+
+  await expect(page.locator('.tab-btn[data-tab="entry"]')).toBeVisible();
+  expect(errors, 'JSON เสียแล้วแอปต้อง fallback เป็น defaultState ไม่ใช่พังทั้งหน้า').toEqual([]);
+});
+
+test('F3 — ห้ามมี URL ของ Apps Script หรือ token ฝังอยู่ในไฟล์', () => {
+  const src = fs.readFileSync(APP_FILE, 'utf8');
+  expect(src, 'พบ deployment URL จริงฝังในไฟล์ — repo นี้เป็น public')
+    .not.toMatch(/AKfyc[A-Za-z0-9_-]{20,}/);
+  expect(src, 'พบ GitHub token ฝังในไฟล์').not.toMatch(/gh[pousr]_[A-Za-z0-9]{30,}/);
+  expect(src, 'พบ GitHub PAT ฝังในไฟล์').not.toMatch(/github_pat_[A-Za-z0-9_]{30,}/);
+});
