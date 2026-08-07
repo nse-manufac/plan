@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
+     คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
+<meta name="app-version" content="2026-08-07.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -25,6 +28,8 @@
   .sync-badge .dot.ok{background:#4ade80;}
   .sync-badge .dot.busy,.sync-badge .dot.pending{background:#fbbf24;}
   .sync-badge .dot.error{background:#f87171;}
+  .sync-badge[hidden]{display:none;}
+  .update-badge{background:rgba(250,204,21,.24);border-color:rgba(250,204,21,.6);}
   .gs-panel{background:var(--gray-light);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-top:4px;}
   .gs-panel .desc{margin-bottom:12px;}
   .gs-status-line{font-size:12.5px;color:var(--text-dim);margin-top:10px;}
@@ -114,7 +119,12 @@
     <div>
       <h1>ระบบติดตามแผนงาน Production &amp; WIP Dashboard</h1>
       <div class="sub">Thai Union Electronics — Winding/Trimming → Assembly → Inspection</div>
+      <div class="sub">รุ่น <span id="appVersion">—</span></div>
     </div>
+    <button class="sync-badge update-badge" id="updateBadge" hidden title="กดเพื่อโหลดโปรแกรมรุ่นใหม่">
+      <span class="dot pending"></span>
+      <span>มีรุ่นใหม่ — กดเพื่อโหลด</span>
+    </button>
     <button class="sync-badge" id="syncBadge" title="กดเพื่อซิงค์ทันที">
       <span class="dot" id="syncDot"></span>
       <span id="syncLabel">ยังไม่เชื่อมต่อ</span>
@@ -1973,6 +1983,43 @@ document.getElementById('btnGsGuide').addEventListener('click', ()=>{
   toast('ดูวิธีตั้งค่าได้ในไฟล์ คู่มือติดตั้ง_GoogleSheets.md (โฟลเดอร์เดียวกับไฟล์นี้)');
 });
 document.getElementById('syncBadge').addEventListener('click', ()=>doSync(false));
+
+/* ---------- App version / update check ---------- */
+/* เครื่องในโรงงานเปิดโปรแกรมค้างไว้ทั้งวัน และเบราว์เซอร์ก็ cache ไฟล์เก่าไว้ได้
+   เลขรุ่นบนหัวจอคือสิ่งเดียวที่ใช้ตัดสินทางโทรศัพท์ได้ว่าสองเครื่องใช้ของเดียวกันไหม
+   วิธีเช็กรุ่นใหม่: fetch ไฟล์ตัวเองแบบข้าม cache แล้วอ่าน <meta> จากข้อความที่ได้มา
+   — ไม่ต้องเพิ่มไฟล์ใหม่ ยังเป็นไฟล์เดียวเหมือนเดิม (INVARIANTS F2/F4) */
+const APP_VERSION = (document.querySelector('meta[name="app-version"]')||{}).content || '';
+const APP_VERSION_RE = /<meta\s+name="app-version"\s+content="([^"]*)"/i;
+const UPDATE_CHECK_MS = 30*60*1000;   // ไฟล์เกือบ 1 MB — เช็กถี่กว่านี้เน็ตโรงงานรับไม่ไหว
+let lastUpdateCheck = 0;
+
+async function checkAppUpdate(){
+  // กันยิงรัวตอนคนสลับหน้าจอไปมา
+  if(Date.now() - lastUpdateCheck < UPDATE_CHECK_MS) return;
+  if(!APP_VERSION) return;
+  if(location.protocol !== 'http:' && location.protocol !== 'https:') return;  // เปิดจากไฟล์ในเครื่อง = เช็กไม่ได้
+  lastUpdateCheck = Date.now();
+  try{
+    const bust = (location.search ? location.search+'&' : '?') + '_v=' + Date.now();
+    const res = await fetch(location.pathname + bust, { cache:'no-store' });
+    if(!res.ok) return;
+    const m = APP_VERSION_RE.exec(await res.text());
+    if(m && m[1] && m[1] !== APP_VERSION) document.getElementById('updateBadge').hidden = false;
+  }catch(e){
+    // เน็ตโรงงานหลุดเป็นเรื่องปกติ — เช็กไม่ได้ก็เงียบไว้ ห้ามขึ้น error ขวางการคีย์ยอด
+  }
+}
+
+document.getElementById('appVersion').textContent = APP_VERSION || 'ไม่ทราบ';
+// ห้ามโหลดหน้าใหม่เอง — รอให้คนกดปุ่มเท่านั้น (ยอดที่คีย์ค้างในช่องถูกบันทึกตอนออกจากช่องอยู่แล้ว)
+// ใส่ query กันไว้ไม่ให้เบราว์เซอร์หยิบไฟล์เก่าใน cache กลับมาให้อีก
+document.getElementById('updateBadge').addEventListener('click', ()=>{
+  location.replace(location.pathname + '?_v=' + Date.now());
+});
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkAppUpdate(); });
+setInterval(checkAppUpdate, UPDATE_CHECK_MS);
+checkAppUpdate();
 
 /* ---------- Init ---------- */
 document.getElementById('entryDate').value = todayISO();
