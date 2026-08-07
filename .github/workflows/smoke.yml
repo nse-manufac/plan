@@ -13,6 +13,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ถ้าแก้ไฟล์แอปแล้วลืมบัมป์เวอร์ชัน เครื่องที่ค้างไฟล์เก่าไว้จะไม่มีทางรู้ว่ามีของใหม่
+  # และเลขบนหน้าจอจะกลายเป็นคำโกหก ซึ่งอันตรายกว่าไม่มีเลขเลยเพราะทุกคนจะเชื่อมัน
+  # กฎแบบนี้ถ้าไม่บังคับด้วยเครื่อง เดี๋ยวก็ลืม — ให้ CI เป็นคนจำแทน (INVARIANTS F4)
+  version-bump:
+    name: ตรวจว่าบัมป์ app-version แล้ว
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: เทียบเวอร์ชันกับ base branch
+        run: |
+          set -euo pipefail
+          BASE="origin/${{ github.base_ref }}"
+          git fetch --quiet origin "${{ github.base_ref }}"
+          CHANGED=$(git diff --name-only "$BASE...HEAD")
+
+          ver() { grep -o '<meta name="app-version" content="[^"]*"' | head -1 | sed 's/.*content="//; s/"$//'; }
+
+          # วนตรวจไฟล์แอปทุกไฟล์ที่ PR แตะ ไม่ hardcode ชื่อไว้
+          # เพิ่มแอปใหม่แล้วจะถูกตรวจเอง — กฎที่ต้องจำว่าให้ไปเติม คือกฎที่จะลืม
+          FAIL=0
+          FOUND=0
+          for APP in *.html; do
+            echo "$CHANGED" | grep -qxF "$APP" || continue
+            FOUND=1
+
+            NEW=$(ver < "$APP" || true)
+            OLD=$(git show "$BASE:$APP" 2>/dev/null | ver || true)
+            echo "── $APP"
+            echo "   บน ${{ github.base_ref }} : ${OLD:-(ไม่พบ)}"
+            echo "   ใน PR นี้        : ${NEW:-(ไม่พบ)}"
+
+            if [ -z "$NEW" ]; then
+              echo "::error file=$APP::ไม่พบ <meta name=\"app-version\"> ในไฟล์ — ผู้ใช้จะบอกไม่ได้ว่าเครื่องตัวเองรันรุ่นไหน (INVARIANTS F4)"
+              FAIL=1
+            elif [ "$OLD" = "$NEW" ]; then
+              echo "::error file=$APP::แก้ $APP แล้วแต่ไม่ได้บัมป์ app-version (ยังเป็น $NEW) — เครื่องที่ค้างไฟล์เก่าไว้จะไม่รู้ว่ามีของใหม่ (INVARIANTS F4)"
+              FAIL=1
+            else
+              echo "   ✓ บัมป์แล้ว: ${OLD:-(ไม่มี)} → $NEW"
+            fi
+          done
+
+          # ห้ามเขียนเป็น `[ ... ] && echo` — ภายใต้ set -e ถ้าเงื่อนไขเป็นเท็จ
+          # AND-list จะคืนค่า 1 และทำให้ step ล้มทั้งที่ทุกอย่างถูกต้อง
+          if [ "$FOUND" -eq 0 ]; then
+            echo "PR นี้ไม่ได้แก้ไฟล์แอป — ข้ามการตรวจ"
+          fi
+          exit "$FAIL"
+
   smoke:
     name: ตรวจกฎใน INVARIANTS.md
     runs-on: ubuntu-latest
