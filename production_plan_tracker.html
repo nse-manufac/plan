@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-07.1">
+<meta name="app-version" content="2026-08-08.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -111,6 +111,24 @@
   a.linklike{color:var(--primary);cursor:pointer;text-decoration:underline;font-size:12.5px;}
   .empty-hint{padding:30px;text-align:center;color:var(--text-dim);}
   @media (max-width:640px){ header.topbar h1{font-size:17px;} nav.tabs button{padding:11px 12px;font-size:13px;} }
+  .print-only{display:none;}
+  /* ---- ตอนพิมพ์ / บันทึกเป็น PDF: กระดาษกับหน้าจอคนละเงื่อนไขกัน ใช้ความสามารถของเบราว์เซอร์ล้วน ---- */
+  @media print{
+    @page{ size:A4 landscape; margin:10mm; }
+    /* เบราว์เซอร์ตัดสีพื้นหลังทิ้งตอนพิมพ์ แต่สีคือตัวบอกว่าใบไหนล่าช้า — ต้องบังคับให้พิมพ์ออกมา */
+    *{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    body{background:#fff;}
+    header.topbar, nav.tabs, .filters, .toast, .no-print{display:none !important;}
+    .print-only{display:block;}
+    main{max-width:none;padding:0;}
+    .panel{border:none;box-shadow:none;padding:0;margin-bottom:12px;}
+    /* บนจอตารางอยู่ในกรอบสูง 70vh แล้วเลื่อนดู ถ้าไม่ปลดล็อกจะพิมพ์ได้แค่แถวที่มองเห็น */
+    .table-wrap{overflow:visible;max-height:none;}
+    table{font-size:10.5px;}
+    table th{position:static;}
+    thead{display:table-header-group;}          /* หัวตารางซ้ำทุกหน้า */
+    tr{break-inside:avoid;}
+  }
 </style>
 </head>
 <body>
@@ -282,11 +300,19 @@
 
 <!-- ================= TAB: DASHBOARD ================= -->
 <section id="view-dashboard" class="view">
+  <div class="row no-print" style="justify-content:flex-end;margin-bottom:12px;">
+    <button class="btn" id="btnPrintDash" title="สั่งพิมพ์ หรือเลือก &quot;บันทึกเป็น PDF&quot; ในช่องเครื่องพิมพ์">🖨️ พิมพ์ / บันทึก PDF</button>
+  </div>
+  <!-- หัวกระดาษ: เห็นเฉพาะตอนพิมพ์ บอกว่ากระดาษแผ่นนี้คือข้อมูลชุดไหน พิมพ์เมื่อไหร่ รุ่นอะไร -->
+  <div class="print-only" id="printHeader">
+    <h2 style="margin:0 0 4px;">สถานะแผนงานผลิต</h2>
+    <div class="small muted" id="printMeta"></div>
+  </div>
   <div class="cards" id="wipCards"></div>
 
   <div class="panel">
     <h2>ยอดผลิตรายวัน (Throughput)</h2>
-    <div class="row" style="margin-bottom:10px;">
+    <div class="row no-print" style="margin-bottom:10px;">
       <div class="field">
         <label>ช่วงเวลา</label>
         <select id="chartRange">
@@ -1867,6 +1893,27 @@ document.getElementById('dashWeekFilter').addEventListener('change', renderDashT
 document.getElementById('dashSubFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashStatusFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashSearch').addEventListener('input', renderDashTable);
+
+/* พิมพ์ / บันทึก PDF — ใช้ window.print() ของเบราว์เซอร์ล้วน ไม่เพิ่มไลบรารีทำ PDF (INVARIANTS F2)
+   เขียนหัวกระดาษก่อนพิมพ์เสมอ ทั้งตอนกดปุ่มและตอนคนกด Ctrl+P เอง เพราะกระดาษที่ไม่บอกว่า
+   กรองอะไรอยู่ / พิมพ์เมื่อไหร่ / รุ่นไหน จะถูกหยิบไปใช้ผิดใบได้ */
+function fillPrintHeader(){
+  const selText = id=>{ const el=document.getElementById(id); const o=el.options[el.selectedIndex]; return o ? o.textContent : 'ทั้งหมด'; };
+  const parts = [
+    'สัปดาห์: '+selText('dashWeekFilter'),
+    'Sub-Name: '+selText('dashSubFilter'),
+    'สถานะ: '+selText('dashStatusFilter')
+  ];
+  const search = document.getElementById('dashSearch').value.trim();
+  if(search) parts.push('ค้นหา: '+search);
+  const now = new Date();
+  const hhmm = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  parts.push('พิมพ์เมื่อ '+fmtDateTH(todayISO())+' '+hhmm);
+  parts.push('รุ่น '+(APP_VERSION||'ไม่ทราบ'));
+  document.getElementById('printMeta').textContent = parts.join(' · ');
+}
+document.getElementById('btnPrintDash').addEventListener('click', ()=>{ fillPrintHeader(); window.print(); });
+window.addEventListener('beforeprint', fillPrintHeader);
 document.getElementById('chartRange').addEventListener('change', ()=>{
   toggleChartCustomFields();
   if(document.getElementById('chartRange').value === 'custom'

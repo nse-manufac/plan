@@ -278,6 +278,66 @@ test('F4 + F2 — เช็กรุ่นไม่ได้ (เน็ตหล
   await expect(page.locator('#updateBadge'), 'เช็กไม่ได้ = ห้ามเดาว่ามีรุ่นใหม่').toBeHidden();
 });
 
+/** เข้าหน้า Dashboard แล้วรอให้ตารางสถานะขึ้นครบ */
+async function gotoDashboard(page) {
+  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.waitForSelector('#dashTable tbody tr');
+}
+
+test('F2 — ปุ่มพิมพ์ต้องเรียกการพิมพ์ของเบราว์เซอร์ ไม่พึ่งไลบรารีทำ PDF', async ({ page }) => {
+  await openApp(page);
+  await gotoDashboard(page);
+
+  // แทน window.print ชั่วคราว เพราะ headless เปิดกล่องพิมพ์จริงไม่ได้
+  await page.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
+  await page.click('#btnPrintDash');
+
+  expect(await page.evaluate(() => window.__printed), 'กดปุ่มแล้วต้องสั่งพิมพ์ด้วย window.print()').toBe(1);
+  const src = fs.readFileSync(APP_FILE, 'utf8');
+  expect(src, 'ห้ามเพิ่มไลบรารีทำ PDF — ต้องเป็นไฟล์เดียวที่เปิดออฟไลน์ได้').not.toMatch(/jsPDF|html2canvas|html2pdf/i);
+});
+
+test('F4 + G1 — หัวกระดาษตอนพิมพ์ต้องบอกตัวกรองที่เลือก วันที่พิมพ์ และเลขรุ่น เป็นภาษาไทย', async ({ page }) => {
+  const m = /<meta\s+name="app-version"\s+content="([^"]*)"/i.exec(fs.readFileSync(APP_FILE, 'utf8'));
+
+  await openApp(page);
+  await gotoDashboard(page);
+  await page.selectOption('#dashStatusFilter', 'late');
+  await page.fill('#dashSearch', 'PO-1');
+
+  await page.emulateMedia({ media: 'print' });
+  await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));   // Ctrl+P ก็ต้องได้หัวกระดาษ
+
+  const header = page.locator('#printHeader');
+  await expect(header, 'หัวกระดาษต้องโผล่ตอนพิมพ์').toBeVisible();
+  const meta = await page.locator('#printMeta').innerText();
+  expect(meta, 'ต้องบอกว่ากรองสถานะอะไรอยู่ ไม่งั้นไม่รู้ว่ากระดาษแผ่นนี้คือข้อมูลชุดไหน').toContain('ล่าช้า/เกินกำหนด');
+  expect(meta, 'ต้องบอกคำค้นที่กรองอยู่').toContain('PO-1');
+  expect(meta, 'ต้องบอกวันที่พิมพ์ กันคนหยิบกระดาษเก่าไปใช้').toContain('พิมพ์เมื่อ');
+  expect(meta, 'ต้องบอกเลขรุ่นของโปรแกรมบนกระดาษด้วย').toContain(m[1]);
+});
+
+test('G1 — ตอนพิมพ์ต้องซ่อนเมนู/ปุ่ม/ตัวกรอง พิมพ์ตารางครบทุกแถว และคงสีสถานะไว้', async ({ page }) => {
+  await openApp(page);
+  await gotoDashboard(page);
+  await page.emulateMedia({ media: 'print' });
+
+  await expect(page.locator('header.topbar'), 'แถบหัวจอไม่ควรติดไปบนกระดาษ').toBeHidden();
+  await expect(page.locator('nav.tabs'), 'แถบเมนู 4 แท็บไม่ควรติดไปบนกระดาษ').toBeHidden();
+  await expect(page.locator('#view-dashboard .filters'), 'ช่องตัวกรองไม่ควรติดไปบนกระดาษ').toBeHidden();
+  await expect(page.locator('#btnPrintDash'), 'ปุ่มพิมพ์เองก็ไม่ควรติดไปบนกระดาษ').toBeHidden();
+
+  const maxH = await page.locator('#view-dashboard .table-wrap').evaluate(el => getComputedStyle(el).maxHeight);
+  expect(maxH, 'ต้องปลดล็อกความสูงตาราง ไม่งั้นพิมพ์ได้แค่แถวที่มองเห็นบนจอ').toBe('none');
+
+  const colorAdjust = el => el.evaluate(e => getComputedStyle(e).getPropertyValue('print-color-adjust')
+    || getComputedStyle(e).getPropertyValue('-webkit-print-color-adjust'));
+  expect(await colorAdjust(page.locator('#dashTable .badge').first()),
+    'ป้ายสถานะ ล่าช้า/ใกล้ครบกำหนด ต้องพิมพ์สีออกมา').toBe('exact');
+  expect(await colorAdjust(page.locator('#dashTable tbody td').first()),
+    'ช่องวันครบกำหนด (เขียว/เหลือง/แดง) ต้องพิมพ์สีออกมาเหมือนกัน').toBe('exact');
+});
+
 test('F3 — ห้ามมี URL ของ Apps Script หรือ token ฝังอยู่ในไฟล์', () => {
   const src = fs.readFileSync(APP_FILE, 'utf8');
   expect(src, 'พบ deployment URL จริงฝังในไฟล์ — repo นี้เป็น public')
