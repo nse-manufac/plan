@@ -338,6 +338,86 @@ test('G1 — ตอนพิมพ์ต้องซ่อนเมนู/ปุ
     'ช่องวันครบกำหนด (เขียว/เหลือง/แดง) ต้องพิมพ์สีออกมาเหมือนกัน').toBe('exact');
 });
 
+// ── กล่องยืนยันเมื่อยอดสะสมจะเกิน Order Qty (issue #10) ─────────────
+// Playwright ปิด dialog ให้อัตโนมัติแบบ "ยกเลิก" ถ้าไม่ผูก handler เอง
+// จึงต้อง page.on('dialog') ทุกเทสในกลุ่มนี้ และเก็บข้อความไว้ตรวจด้วย
+
+/** ผูก dialog handler แล้วคืน array ของข้อความที่เด้งขึ้นมา */
+function catchDialogs(page, accept) {
+  const seen = [];
+  page.on('dialog', async d => { seen.push(d.message()); await (accept ? d.accept() : d.dismiss()); });
+  return seen;
+}
+
+test('A — ยอดสะสมจะเกิน Order Qty ต้องถามยืนยันก่อน แล้วบันทึกได้ถ้ากดยืนยัน', async ({ page }) => {
+  await openApp(page);
+  const dialogs = catchDialogs(page, true);
+  await gotoEntry(page);
+
+  await typeQty(page, 'O1', 150);        // Order Qty ของ O1 คือ 100
+
+  expect(dialogs, 'ยอดเกิน Order Qty แล้วต้องมีกล่องถามยืนยัน').toHaveLength(1);
+  expect(dialogs[0], 'ข้อความต้องบอก PO · ขั้นตอน · ยอดใหม่ · Order Qty').toContain('PO-1');
+  expect(dialogs[0]).toContain('150');
+  expect(dialogs[0]).toContain('100');
+
+  const records = await readRecords(page);
+  expect(records, 'กดยืนยันแล้วต้องบันทึกจริง — ห้ามทิ้งยอดที่พนักงานคีย์ไว้').toHaveLength(1);
+  expect(records[0].qty).toBe(150);
+});
+
+test('A — กดยกเลิกในกล่องยืนยัน ต้องไม่บันทึกและค่าเดิมต้องยังอยู่', async ({ page }) => {
+  await openApp(page, [rec('R1', 'O1', 'winding', TEST_DATE, 40)]);
+  const dialogs = catchDialogs(page, false);
+  await gotoEntry(page);
+
+  await typeQty(page, 'O1', 120);
+
+  expect(dialogs).toHaveLength(1);
+  const records = await readRecords(page);
+  expect(records, 'กดยกเลิกแล้วต้องไม่สร้างแถวใหม่').toHaveLength(1);
+  expect(records[0].qty, 'ค่าเดิมต้องไม่ถูกเปลี่ยน').toBe(40);
+  await expect(page.locator('#entryTable input.row-input[data-order="O1"]'),
+    'ช่องกรอกต้องวาดกลับเป็นค่าเดิม').toHaveValue('40');
+});
+
+test('A — ยอดสะสมนับรวมวันอื่นด้วย และต้องหักยอดเดิมของวันที่กำลังแก้ออกก่อน', async ({ page }) => {
+  await openApp(page, [
+    rec('R1', 'O1', 'winding', '2026-08-01', 60),
+    rec('R2', 'O1', 'winding', TEST_DATE, 90)      // สะสมตอนนี้ 150 (เกินแล้วจากการคีย์ครั้งก่อน)
+  ]);
+  const dialogs = catchDialogs(page, true);
+  await gotoEntry(page);
+
+  // แก้ยอดวันนี้ลงเหลือ 30 → สะสมใหม่ = 60 + 30 = 90 ไม่เกิน 100 จึงต้องไม่เด้ง
+  await typeQty(page, 'O1', 30);
+  expect(dialogs, 'ลืมหักยอดเดิมของวันนั้นออก กล่องจะเด้งผิดทุกครั้งที่แก้ยอดเดิม').toEqual([]);
+  expect((await readRecords(page)).find(r => r.id === 'R2').qty).toBe(30);
+
+  // แก้เป็น 50 → สะสมใหม่ = 60 + 50 = 110 เกิน 100 จึงต้องเด้ง
+  await typeQty(page, 'O1', 50);
+  expect(dialogs, 'ยอดสะสมข้ามวันเกิน Order Qty แล้วต้องเด้ง').toHaveLength(1);
+  expect(dialogs[0]).toContain('110');
+});
+
+test('G2 — คีย์ยอดไม่เกิน Order Qty ต้องไม่มีกล่องเด้ง และ Enter ยังเลื่อนโฟกัสแถวถัดไป', async ({ page }) => {
+  await openApp(page);
+  const dialogs = catchDialogs(page, true);
+  await gotoEntry(page);
+
+  const first = page.locator('#entryTable input.row-input[data-order="O1"]');
+  await first.fill('100');               // เท่ากับ Order Qty พอดี = ยังไม่เกิน
+  await first.press('Enter');
+  await page.waitForTimeout(150);
+
+  await expect(page.locator('#entryTable input.row-input[data-order="O2"]'),
+    'กด Enter แล้วโฟกัสต้องกระโดดไปแถวถัดไปเหมือนเดิม').toBeFocused();
+  await typeQty(page, 'O2', 20);
+
+  expect(dialogs, 'การคีย์ปกติต้องไม่มีอะไรเปลี่ยนเลย').toEqual([]);
+  expect((await readRecords(page)).map(r => r.qty).sort((a, b) => a - b)).toEqual([20, 100]);
+});
+
 test('F3 — ห้ามมี URL ของ Apps Script หรือ token ฝังอยู่ในไฟล์', () => {
   const src = fs.readFileSync(APP_FILE, 'utf8');
   expect(src, 'พบ deployment URL จริงฝังในไฟล์ — repo นี้เป็น public')

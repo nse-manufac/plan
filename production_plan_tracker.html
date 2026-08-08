@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-08.1">
+<meta name="app-version" content="2026-08-08.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1410,6 +1410,17 @@ function saveEntryValue(orderId, rawVal, date){
   }
   const qty = Number(rawVal);
   if(isNaN(qty) || qty<0){ toast('กรุณากรอกตัวเลขที่ถูกต้อง (>= 0)'); return; }
+  // ถามยืนยันก่อนบันทึก ถ้ายอดสะสมของขั้นนี้จะเกิน Order Qty — ไม่ห้ามบันทึก เพราะของอาจผลิตเกินจริง
+  // หรือ Order Qty ที่นำเข้ามาผิด (การทิ้งยอดที่คีย์ไว้ผิดกฎ D3/D7)
+  const ord = state.orders.find(o=>o.id===orderId);
+  const ordQty = ord ? Number(ord.orderQty) : 0;
+  if(ord && ordQty>0){
+    // buildCumMap นับยอดของวันนี้รวมอยู่แล้ว — การคีย์ทับคือ "แทนที่" จึงต้องหักยอดเดิมออกก่อน
+    const cumNow = ((buildCumMap(state.records)[orderId]||emptyCum())[currentProcess])||0;
+    const prevQty = (idx>-1 && !state.records[idx].voided) ? (Number(state.records[idx].qty)||0) : 0;
+    const cumNext = cumNow - prevQty + qty;
+    if(cumNext > ordQty && !confirm(`ยอดสะสม ${PROCESS_LABELS[currentProcess]} ของ ${ord.poNo} จะเป็น ${cumNext} ซึ่งเกิน Order Qty ${ordQty}\n\nยืนยันบันทึกหรือไม่?`)) return;
+  }
   const now = new Date().toISOString();
   if(idx>-1){
     state.records[idx].qty = qty;
