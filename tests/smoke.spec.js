@@ -345,3 +345,72 @@ test('F3 — ห้ามมี URL ของ Apps Script หรือ token ฝ
   expect(src, 'พบ GitHub token ฝังในไฟล์').not.toMatch(/gh[pousr]_[A-Za-z0-9]{30,}/);
   expect(src, 'พบ GitHub PAT ฝังในไฟล์').not.toMatch(/github_pat_[A-Za-z0-9_]{30,}/);
 });
+
+// ── กล่องยืนยันเมื่อยอดสะสมจะเกิน Order Qty (issue #10) ─────────────
+// Playwright ปิดกล่อง dialog ให้อัตโนมัติแบบ "ยกเลิก" ถ้าไม่ผูก handler เอง
+// จึงต้องผูก page.on('dialog') ทุกเทสในกลุ่มนี้ ไม่งั้นผลจะกลายเป็น "ไม่บันทึก" หมด
+function captureDialogs(page, accept) {
+  const msgs = [];
+  page.on('dialog', async d => { msgs.push(d.message()); await (accept ? d.accept() : d.dismiss()); });
+  return msgs;
+}
+
+test('D3/D7 — ยอดสะสมจะเกิน Order Qty ต้องถามก่อน และเมื่อยืนยันแล้วต้องบันทึกให้ ห้ามทิ้งยอด', async ({ page }) => {
+  await openApp(page, [rec('R1', 'O1', 'winding', '2026-08-02', 80)]);
+  const msgs = captureDialogs(page, true);
+  await gotoEntry(page);
+
+  await typeQty(page, 'O1', 30);   // 80 + 30 = 110 > Order Qty 100
+
+  expect(msgs, 'ยอดสะสมจะเกิน Order Qty แต่ไม่มีกล่องถามยืนยัน').toHaveLength(1);
+  expect(msgs[0], 'กล่องต้องบอก PO ให้รู้ว่าใบไหน').toContain('PO-1');
+  expect(msgs[0], 'กล่องต้องบอกว่ายอดสะสมจะกลายเป็นเท่าไหร่').toContain('110');
+  expect(msgs[0], 'กล่องต้องบอก Order Qty ของใบนั้น').toContain('100');
+
+  const records = await readRecords(page);
+  const today = records.filter(r => r.date === TEST_DATE && !r.voided);
+  expect(today, 'กดยืนยันแล้วต้องบันทึกให้ — ห้ามทิ้งยอดที่พนักงานคีย์').toHaveLength(1);
+  expect(today[0].qty).toBe(30);
+});
+
+test('B2 — กดยกเลิกในกล่องยืนยัน ต้องไม่บันทึก และของเดิมต้องไม่ถูกแตะ', async ({ page }) => {
+  await openApp(page, [rec('R1', 'O1', 'winding', '2026-08-02', 80)]);
+  captureDialogs(page, false);
+  await gotoEntry(page);
+
+  await typeQty(page, 'O1', 30);
+
+  const records = await readRecords(page);
+  expect(records, 'กดยกเลิกแล้วยังบันทึกแถวใหม่ให้').toHaveLength(1);
+  expect(records[0].qty, 'ยอดเดิมของวันอื่นต้องไม่ถูกแตะ').toBe(80);
+  await expect(page.locator('#entryTable input.row-input[data-order="O1"]'),
+    'กดยกเลิกแล้ว ช่องกรอกต้องวาดกลับเป็นค่าเดิม').toHaveValue('');
+});
+
+test('G2 — คีย์ทับยอดเดิมของวันเดียวกันแล้วยังไม่เกิน Order Qty ต้องไม่มีกล่องเด้งมาขัดจังหวะ', async ({ page }) => {
+  // ยอดสะสมเดิม 90 มาจาก record ของวันนี้เอง — คีย์ 95 ทับคือ "แทนที่" ได้ 95 ไม่ใช่ 185
+  await openApp(page, [rec('R1', 'O1', 'winding', TEST_DATE, 90)]);
+  const msgs = captureDialogs(page, false);
+  await gotoEntry(page);
+
+  await typeQty(page, 'O1', 95);
+  await typeQty(page, 'O2', 20);   // ใบปกติที่ไม่เกิน ก็ต้องไม่เด้งเช่นกัน
+
+  expect(msgs, 'กล่องเด้งทั้งที่ยอดไม่เกิน Order Qty — ลืมหักยอดเดิมของวันนั้นออก').toEqual([]);
+  const records = await readRecords(page);
+  expect(records.find(r => r.id === 'R1').qty, 'ต้องบันทึกทับให้ตามปกติ').toBe(95);
+});
+
+test('G2 — กด Enter ไล่คีย์ทีละแถว โฟกัสต้องกระโดดไปแถวถัดไปได้ แม้กล่องยืนยันจะเด้งขึ้นมา', async ({ page }) => {
+  await openApp(page);
+  captureDialogs(page, true);
+  await gotoEntry(page);
+
+  const input = page.locator('#entryTable input.row-input[data-order="O1"]');
+  await input.fill('150');          // เกิน Order Qty 100 → กล่องเด้ง
+  await input.press('Enter');
+  await page.waitForTimeout(300);
+
+  const focused = await page.evaluate(() => document.activeElement && document.activeElement.dataset.order);
+  expect(focused, 'กล่องยืนยันแย่งโฟกัสไป แล้วไม่คืนให้แถวถัดไป — คีย์รัว ๆ ต่อไม่ได้').toBe('O2');
+});
