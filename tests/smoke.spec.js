@@ -225,6 +225,59 @@ test('E3 — ถ้าข้อมูลใน localStorage เสีย แอ�
   expect(errors, 'JSON เสียแล้วแอปต้อง fallback เป็น defaultState ไม่ใช่พังทั้งหน้า').toEqual([]);
 });
 
+test('F4 — หน้าจอต้องโชว์เลขรุ่นที่ตรงกับ <meta name="app-version">', async ({ page }) => {
+  const src = fs.readFileSync(APP_FILE, 'utf8');
+  const m = /<meta\s+name="app-version"\s+content="([^"]*)"/i.exec(src);
+  expect(m, 'ไม่พบ <meta name="app-version"> ในไฟล์แอป').not.toBeNull();
+  expect(m[1], 'เลขรุ่นต้องเป็นรูปแบบ YYYY-MM-DD.ลำดับ').toMatch(/^\d{4}-\d{2}-\d{2}\.\d+$/);
+
+  await openApp(page);
+  await expect(page.locator('#appVersion'), 'ผู้ใช้ต้องอ่านเลขรุ่นจากหัวจอได้เลย ไม่ต้องกดอะไรลึก ๆ')
+    .toHaveText(m[1]);
+});
+
+test('F4 — เจอรุ่นใหม่บนเซิร์ฟเวอร์ ต้องขึ้นแถบให้คนกดเอง ห้ามโหลดหน้าใหม่เอง', async ({ page }) => {
+  // ดักเฉพาะคำขอที่แอปยิงไปเช็กรุ่น (มี _v= กันแคช) แล้วตอบเป็นไฟล์ที่เลขรุ่นใหม่กว่า
+  await page.route(
+    url => url.searchParams.has('_v'),
+    route => route.fulfill({
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: '<meta name="app-version" content="2099-12-31.9">'
+    })
+  );
+
+  await openApp(page);
+  await page.evaluate(() => { window.__notReloaded = true; });
+
+  await expect(page.locator('#updateBadge'), 'มีรุ่นใหม่แล้วต้องขึ้นแถบบอกที่หัวจอ').toBeVisible();
+  expect(await page.locator('.modal:visible').count(), 'ห้ามมี modal เด้งมาขวางหน้าคีย์ยอด (G2)').toBe(0);
+  expect(await page.evaluate(() => window.__notReloaded === true),
+    'ห้ามโหลดหน้าใหม่เอง ต้องรอให้คนกดปุ่ม').toBe(true);
+
+  // กดปุ่มแล้วต้องโหลดใหม่แบบข้ามแคช (ไม่งั้นเบราว์เซอร์หยิบไฟล์เก่ากลับมาให้อีก)
+  // ยอดที่คีย์ค้างไว้ถูกบันทึกตอนกดปุ่ม เพราะการกดทำให้ออกจากช่องกรอกก่อน
+  await gotoEntry(page);
+  await typeQty(page, 'O1', 9);
+  expect(await readRecords(page), 'ยอดต้องถูกบันทึกก่อนโหลดหน้าใหม่').toHaveLength(1);
+  await page.click('#updateBadge');
+  await page.waitForURL(/_v=/);
+});
+
+test('F4 + F2 — เช็กรุ่นไม่ได้ (เน็ตหลุด) ต้องเงียบ ไม่ทำให้แอปใช้งานไม่ได้', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.route(url => url.searchParams.has('_v'), route => route.abort());
+
+  await openApp(page);
+  await gotoEntry(page);
+  await typeQty(page, 'O1', 8);
+
+  expect(errors, 'เช็กรุ่นไม่ได้ต้องไม่โยน error ออกมา').toEqual([]);
+  expect(await readRecords(page), 'เช็กรุ่นไม่ได้ต้องยังคีย์ยอดได้ตามปกติ').toHaveLength(1);
+  await expect(page.locator('#updateBadge'), 'เช็กไม่ได้ = ห้ามเดาว่ามีรุ่นใหม่').toBeHidden();
+});
+
 test('F3 — ห้ามมี URL ของ Apps Script หรือ token ฝังอยู่ในไฟล์', () => {
   const src = fs.readFileSync(APP_FILE, 'utf8');
   expect(src, 'พบ deployment URL จริงฝังในไฟล์ — repo นี้เป็น public')
