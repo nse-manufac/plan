@@ -19,7 +19,7 @@
 - **ออกรายงาน Excel**
 - **ซิงค์หลายเครื่อง** ผ่าน Google Sheets (ไม่บังคับ ใช้ offline ได้)
 
-**ขั้นตอนการผลิต 4 ขั้น:** `winding` → `assembly` → `inspection` → `shipping`
+**ขั้นตอนการผลิต 5 ขั้น:** `winding` → `assembly` → `support` → `inspection` → `shipping`
 
 ---
 
@@ -90,7 +90,7 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 {
   version: 1,
   deviceName: '',
-  deadlineOffsets: { winding:10, assembly:17, inspection:24, shipping:28 },  // ซิงค์ข้ามเครื่อง
+  deadlineOffsets: { winding:10, assembly:17, support:null, inspection:24, shipping:28 },  // ซิงค์ข้ามเครื่อง (null = ยังไม่กำหนด)
   chartPref:  { mode:'14', from:'', to:'' },                                 // เครื่องนี้เท่านั้น ห้ามซิงค์
   orders: [], records: [], importHistory: []
 }
@@ -192,6 +192,7 @@ smoke test ครอบการคีย์ยอด/audit trail/วันท�
 | record | ยอดที่คีย์ 1 ครั้ง = order + ขั้นตอน + วันเดียว |
 | winding | พันขดลวด / ตัดแต่ง — ขั้นแรก |
 | assembly | ประกอบ |
+| support | ขั้นย่อยระหว่างประกอบกับตรวจสอบ (ยังไม่มีชื่อไทย) |
 | inspection | ตรวจสอบ |
 | shipping | ส่งของ — นับเป็นขั้นที่ 4 เพราะทยอยส่งได้ |
 | `deadlineOffsets` | จำนวนวันนับจาก `orderDate` ที่แต่ละขั้นต้องเสร็จ |

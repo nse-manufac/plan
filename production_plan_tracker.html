@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-08.2">
+<meta name="app-version" content="2026-08-14.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -136,7 +136,7 @@
   <div class="topbar-row">
     <div>
       <h1>ระบบติดตามแผนงาน Production &amp; WIP Dashboard</h1>
-      <div class="sub">Thai Union Electronics — Winding/Trimming → Assembly → Inspection</div>
+      <div class="sub">Thai Union Electronics — Winding/Trimming → Assembly → Support → Inspection</div>
       <div class="sub">รุ่น <span id="appVersion">—</span></div>
     </div>
     <button class="sync-badge update-badge" id="updateBadge" hidden title="กดเพื่อโหลดโปรแกรมรุ่นใหม่">
@@ -238,6 +238,7 @@
         <div class="flexgap">
           <button class="btn primary" id="procBtn-winding" data-proc="winding">🌀 Winding/Trimming</button>
           <button class="btn" id="procBtn-assembly" data-proc="assembly">🔧 Assembly</button>
+          <button class="btn" id="procBtn-support" data-proc="support">🧩 Support</button>
           <button class="btn" id="procBtn-inspection" data-proc="inspection">🔍 Inspection</button>
           <button class="btn" id="procBtn-shipping" data-proc="shipping">🚚 ส่งของ (Shipping)</button>
         </div>
@@ -337,6 +338,7 @@
     <div class="legend">
       <span><i style="background:#2563eb"></i> Winding/Trimming</span>
       <span><i style="background:#d97706"></i> Assembly</span>
+      <span><i style="background:#0891b2"></i> Support</span>
       <span><i style="background:#16a34a"></i> Inspection</span>
       <span><i style="background:#7c3aed"></i> ส่งของ (Shipping)</span>
       <span id="chartRangeCaption" class="small muted" style="margin-left:auto;"></span>
@@ -388,6 +390,7 @@
       </div>
       <div class="field"><label>Winding/Trimming (+วัน)</label><input type="number" id="offW" min="0" style="width:90px"></div>
       <div class="field"><label>Assembly (+วัน)</label><input type="number" id="offA" min="0" style="width:90px"></div>
+      <div class="field"><label>Support (+วัน)</label><input type="number" id="offSup" min="0" style="width:90px" placeholder="ยังไม่กำหนด"></div>
       <div class="field"><label>Inspection (+วัน)</label><input type="number" id="offI" min="0" style="width:90px"></div>
       <div class="field"><label>กำหนดส่งของ (+วัน)</label><input type="number" id="offS" min="0" style="width:90px"></div>
       <div class="field"><button class="btn primary" id="btnSaveSettings">บันทึกการตั้งค่า</button></div>
@@ -617,16 +620,17 @@ function downloadBlob(content, filename, type){
 }
 
 /* ---------- Processes ---------- */
-// Shipping is tracked as a 4th daily-recorded stage (goods ship out incrementally, same as
+// Shipping is tracked as the last daily-recorded stage (goods ship out incrementally, same as
 // production stages), sitting downstream of Inspection.
-const PROCESSES = ['winding','assembly','inspection','shipping'];
-const PROCESS_LABELS = {winding:'Winding/Trimming', assembly:'Assembly', inspection:'Inspection', shipping:'ส่งของ (Shipping)'};
-const PREV_PROCESS = {winding:null, assembly:'winding', inspection:'assembly', shipping:'inspection'};
-function emptyCum(){ return {winding:0, assembly:0, inspection:0, shipping:0}; }
+// Support แทรกเป็นขั้นที่ 3 ระหว่าง Assembly กับ Inspection (issue #17) — ยังไม่มีชื่อไทยตามที่เจ้าของสั่ง
+const PROCESSES = ['winding','assembly','support','inspection','shipping'];
+const PROCESS_LABELS = {winding:'Winding/Trimming', assembly:'Assembly', support:'Support', inspection:'Inspection', shipping:'ส่งของ (Shipping)'};
+const PREV_PROCESS = {winding:null, assembly:'winding', support:'assembly', inspection:'support', shipping:'inspection'};
+function emptyCum(){ return {winding:0, assembly:0, support:0, inspection:0, shipping:0}; }
 
 // ฟิลด์ที่เก็บ "วันปฏิทินล้วน" (YYYY-MM-DD) — ต้อง normalize ทุกครั้งที่รับค่าจากภายนอก
 // (อย่าใส่ importedAt/createdAt/updatedAt ที่นี่ — พวกนั้นต้องคง timestamp ISO เต็มไว้)
-const ORDER_DATE_FIELDS = ['orderDate','planWinding','planAssembly','planInspection'];
+const ORDER_DATE_FIELDS = ['orderDate','planWinding','planAssembly','planSupport','planInspection'];
 const RECORD_DATE_FIELDS = ['date'];
 
 /** ซ่อมฟิลด์วันที่ในแถวเดียวให้เป็น YYYY-MM-DD · คืน true ถ้ามีการเปลี่ยนแปลงจริง */
@@ -646,7 +650,9 @@ function defaultState(){
   return {
     version:1,
     deviceName:'',
-    deadlineOffsets:{ winding:10, assembly:17, inspection:24, shipping:28 },
+    // support:null = "ยังไม่กำหนด" — เจ้าของจะไปใส่เองที่หน้าตั้งค่า (issue #17)
+    // ค่า null ทำให้ deadline ของขั้นนี้เป็น null → ไม่มีการตัดสินว่าล่าช้า จนกว่าจะตั้งค่า
+    deadlineOffsets:{ winding:10, assembly:17, support:null, inspection:24, shipping:28 },
     chartPref:{ mode:'14', from:'', to:'' }, // เครื่องนี้เท่านั้น ไม่ส่งขึ้น Google Sheets
     orders:[],
     records:[],
@@ -860,6 +866,20 @@ function isHiddenSheet(wb, name){
   return !!(meta && meta.Hidden);
 }
 
+/** หาคอลัมน์ "วันแผนของขั้น Support" จากข้อความหัวคอลัมน์ (issue #17)
+ *  ไม่ fix ตำแหน่งไว้เหมือน M/N/O เพราะยังไม่ยืนยันว่าไฟล์ลูกค้าวางคอลัมน์นี้ไว้ตรงไหน
+ *  ถ้าหาไม่เจอ คืน null แล้วเก็บ planSupport เป็น null ไป ไม่กระทบคอลัมน์อื่น */
+function findSupportPlanCol(rows){
+  for(let i=0;i<Math.min(rows.length,12);i++){
+    const row = rows[i];
+    if(!row) continue;
+    for(let c=0;c<row.length;c++){
+      if(typeof row[c]==='string' && /support/i.test(row[c])) return c;
+    }
+  }
+  return null;
+}
+
 function parseSelectedSheet(){
   const name = document.getElementById('sheetSelect').value;
   if(!workbookGlobal || !name) return null;
@@ -867,6 +887,7 @@ function parseSelectedSheet(){
   if(!ws) return null;
   const rows = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:null});
   const items=[]; const seenIds={};
+  const supCol = findSupportPlanCol(rows);
   let reportedTotal=null;
 
   for(const row of rows){
@@ -900,6 +921,7 @@ function parseSelectedSheet(){
       orderDate: excelValueToISO(row[7]),
       planWinding: excelValueToISO(row[12]),
       planAssembly: excelValueToISO(row[13]),
+      planSupport: supCol!=null ? excelValueToISO(row[supCol]) : null,
       planInspection: excelValueToISO(row[14])
     });
   }
@@ -983,7 +1005,8 @@ function buildCumSplitMap(records, orderById){
     const order = orderById[r.orderId];
     if(!order) continue;
     if(!map[r.orderId]) map[r.orderId] = {
-      winding:{onTime:0,late:0}, assembly:{onTime:0,late:0}, inspection:{onTime:0,late:0}, shipping:{onTime:0,late:0}
+      winding:{onTime:0,late:0}, assembly:{onTime:0,late:0}, support:{onTime:0,late:0},
+      inspection:{onTime:0,late:0}, shipping:{onTime:0,late:0}
     };
     const bucket = map[r.orderId][r.process];
     if(!bucket) continue;
@@ -999,6 +1022,8 @@ function computeDeadlines(order){
   return {
     winding: addDaysISO(order.orderDate, off.winding),
     assembly: addDaysISO(order.orderDate, off.assembly),
+    // off.support ยังไม่ถูกตั้งค่า (null) = ยังไม่มีกำหนดวันของขั้นนี้ ต้องไม่กลายเป็น orderDate+0
+    support: off.support==null ? null : addDaysISO(order.orderDate, off.support),
     inspection: addDaysISO(order.orderDate, off.inspection),
     shipping: addDaysISO(order.orderDate, off.shipping)
   };
@@ -1009,6 +1034,7 @@ function computeStatus(order, cum, dl, refISO){
   if(!order.orderDate) return {code:'ok', label:'ไม่มีวันที่สั่งซื้อ', color:'gray'};
   if(dl.shipping && refISO > dl.shipping && cum.shipping < order.orderQty) return {code:'late', label:'เกินกำหนดส่งของ', color:'red'};
   if(dl.inspection && refISO > dl.inspection && cum.inspection < order.orderQty) return {code:'late', label:'ล่าช้า Inspection', color:'red'};
+  if(dl.support && refISO > dl.support && cum.support < order.orderQty) return {code:'late', label:'ล่าช้า Support', color:'red'};
   if(dl.assembly && refISO > dl.assembly && cum.assembly < order.orderQty) return {code:'late', label:'ล่าช้า Assembly', color:'red'};
   if(dl.winding && refISO > dl.winding && cum.winding < order.orderQty) return {code:'late', label:'ล่าช้า Winding', color:'red'};
   if(dl.shipping){
@@ -1183,7 +1209,7 @@ function confirmShipImport(){
         id: ln.id, week: pendingShipData.week ? ('WK '+pendingShipData.week) : 'ใบส่งงาน',
         poNo: ln.poNo, pn: ln.pn, subName: ln.subName, osc:'', pc:'',
         orderQty: ln.orderQty, orderDate: ln.orderDate,
-        planWinding: null, planAssembly: null, planInspection: null,
+        planWinding: null, planAssembly: null, planSupport: null, planInspection: null,
         status:'active', importedAt: now, updatedAt: now, _dirty:true
       });
       orderMap[ln.id] = state.orders.length-1;
@@ -1441,19 +1467,21 @@ function saveEntryValue(orderId, rawVal, date){
 /* ---------- Render: Dashboard tab ---------- */
 function renderWipCards(){
   const allCum = buildCumMap(state.records);
-  let totalQty=0, sumW=0, sumA=0, sumI=0, sumS=0, anomalyCount=0;
+  let totalQty=0, sumW=0, sumA=0, sumSup=0, sumI=0, sumS=0, anomalyCount=0;
   state.orders.forEach(o=>{
     totalQty += o.orderQty;
     const c = allCum[o.id] || emptyCum();
-    if(c.assembly > c.winding || c.inspection > c.assembly || c.shipping > c.inspection) anomalyCount++;
+    if(c.assembly > c.winding || c.support > c.assembly || c.inspection > c.support || c.shipping > c.inspection) anomalyCount++;
     sumW += Math.min(c.winding, o.orderQty);
     sumA += Math.min(c.assembly, o.orderQty);
+    sumSup += Math.min(c.support, o.orderQty);
     sumI += Math.min(c.inspection, o.orderQty);
     sumS += Math.min(c.shipping, o.orderQty);
   });
   const notStarted = Math.max(0, totalQty - sumW);
   const wipAssembly = Math.max(0, sumW - sumA);
-  const wipInspection = Math.max(0, sumA - sumI);
+  const wipSupport = Math.max(0, sumA - sumSup);
+  const wipInspection = Math.max(0, sumSup - sumI);
   const wipShipping = Math.max(0, sumI - sumS);
   const shipped = sumS;
 
@@ -1461,6 +1489,7 @@ function renderWipCards(){
     {label:'ยอดแผนรวม (Order Qty)', value:numFmt(totalQty), unit:'pcs', accent:'blue'},
     {label:'ยังไม่เริ่มผลิต', value:numFmt(notStarted), unit:'pcs', accent:'blue'},
     {label:'WIP ค้างหน้า Assembly', value:numFmt(wipAssembly), unit:'pcs', accent:'amber'},
+    {label:'WIP ค้างหน้า Support', value:numFmt(wipSupport), unit:'pcs', accent:'amber'},
     {label:'WIP ค้างหน้า Inspection', value:numFmt(wipInspection), unit:'pcs', accent:'amber'},
     {label:'WIP รอส่งของ (เสร็จ Inspection แต่ยังไม่ส่ง)', value:numFmt(wipShipping), unit:'pcs', accent:'amber'},
     {label:'ส่งของแล้ว (Shipped)', value:numFmt(shipped), unit:`pcs (${totalQty? Math.round(shipped/totalQty*100):0}%)`, accent:'green'}
@@ -1496,7 +1525,7 @@ function getChartRange(){
  *  เพื่อเลี่ยงปัญหา timezone drift เดียวกับที่แก้ไปแล้วตอน parse วันที่จากไฟล์ Excel */
 function buildDailyTotals(startISO, endISO){
   const dayCount = daysBetween(startISO, endISO)+1;
-  const labels = []; const data={winding:[],assembly:[],inspection:[],shipping:[]};
+  const labels = []; const data={winding:[],assembly:[],support:[],inspection:[],shipping:[]};
   for(let i=0;i<dayCount;i++){
     labels.push(addDaysISO(startISO, i));
     PROCESSES.forEach(p=>data[p].push(0));
@@ -1530,10 +1559,10 @@ function renderChart(){
   const perDay = labels.length>60 ? 14 : labels.length>30 ? 22 : 46;
   const w = Math.max(600, labels.length*perDay);
   const h = 220, padL=44, padB=28, padT=10;
-  const maxVal = Math.max(1, ...data.winding, ...data.assembly, ...data.inspection, ...data.shipping);
+  const maxVal = Math.max(1, ...data.winding, ...data.assembly, ...data.support, ...data.inspection, ...data.shipping);
   const plotH = h-padT-padB;
   const groupW = (w-padL)/labels.length;
-  const barW = Math.min(12, groupW/5);
+  const barW = Math.min(12, groupW/6); // 5 ขั้น + ช่องว่างระหว่างกลุ่ม
   const gap = Math.max(0.5, barW*0.15);
 
   let grid='';
@@ -1543,7 +1572,7 @@ function renderChart(){
     grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w}" y2="${y.toFixed(1)}" stroke="#e2e6ed" stroke-width="1"/><text x="${padL-6}" y="${(y+3).toFixed(1)}" font-size="10" text-anchor="end" fill="#6b7280">${val}</text>`;
   }
   let bars='';
-  const series = [['winding','#2563eb',-1.5],['assembly','#d97706',-0.5],['inspection','#16a34a',0.5],['shipping','#7c3aed',1.5]];
+  const series = [['winding','#2563eb',-2],['assembly','#d97706',-1],['support','#0891b2',0],['inspection','#16a34a',1],['shipping','#7c3aed',2]];
   // ป้ายกำกับแกน X ถี่เกินไปจะทับกันเมื่อช่วงยาว — เว้นระยะให้เหลือไม่เกิน ~18 ป้าย
   const labelStep = Math.max(1, Math.ceil(labels.length/18));
   labels.forEach((lab,i)=>{
@@ -1610,9 +1639,10 @@ function renderDashTable(){
   rows.sort((a,b)=> (a.o.week||'').localeCompare(b.o.week) || (a.o.orderDate||'').localeCompare(b.o.orderDate));
 
   const bodyHtml = rows.map(({o,c,dl,st,split})=>{
-    const anomaly = c.assembly>c.winding || c.inspection>c.assembly || c.shipping>c.inspection;
+    const anomaly = c.assembly>c.winding || c.support>c.assembly || c.inspection>c.support || c.shipping>c.inspection;
     const clsW = deadlineCellClass(dl.winding, c.winding, o.orderQty, ref);
     const clsA = deadlineCellClass(dl.assembly, c.assembly, o.orderQty, ref);
+    const clsSup = deadlineCellClass(dl.support, c.support, o.orderQty, ref);
     const clsI = deadlineCellClass(dl.inspection, c.inspection, o.orderQty, ref);
     const clsS = deadlineCellClass(dl.shipping, c.shipping, o.orderQty, ref);
     return `<tr>
@@ -1624,10 +1654,12 @@ function renderDashTable(){
       <td>${fmtDateTH(o.orderDate)}</td>
       <td>${progressCell(c.winding, split.winding, o.orderQty)}</td>
       <td>${progressCell(c.assembly, split.assembly, o.orderQty)}</td>
+      <td>${progressCell(c.support, split.support, o.orderQty)}</td>
       <td>${progressCell(c.inspection, split.inspection, o.orderQty)}</td>
       <td>${progressCell(c.shipping, split.shipping, o.orderQty)}</td>
       <td class="${clsW}">${fmtDateTH(dl.winding)}</td>
       <td class="${clsA}">${fmtDateTH(dl.assembly)}</td>
+      <td class="${clsSup}">${fmtDateTH(dl.support)}</td>
       <td class="${clsI}">${fmtDateTH(dl.inspection)}</td>
       <td class="${clsS}">${fmtDateTH(dl.shipping)}</td>
       <td><span class="badge ${st.color}">${escapeHtml(st.label)}</span>${anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
@@ -1636,9 +1668,9 @@ function renderDashTable(){
 
   document.getElementById('dashTable').innerHTML = `<thead><tr>
       <th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th><th>Order Date</th>
-      <th>Winding</th><th>Assembly</th><th>Inspection</th><th>ส่งของ<br>(Shipping)</th>
-      <th>Deadline<br>Winding</th><th>Deadline<br>Assembly</th><th>Deadline<br>Inspection</th><th>กำหนด<br>ส่งของ</th><th>สถานะ</th>
-    </tr></thead><tbody>${bodyHtml || emptyRow(15)}</tbody>`;
+      <th>Winding</th><th>Assembly</th><th>Support</th><th>Inspection</th><th>ส่งของ<br>(Shipping)</th>
+      <th>Deadline<br>Winding</th><th>Deadline<br>Assembly</th><th>Deadline<br>Support</th><th>Deadline<br>Inspection</th><th>กำหนด<br>ส่งของ</th><th>สถานะ</th>
+    </tr></thead><tbody>${bodyHtml || emptyRow(17)}</tbody>`;
 }
 
 /* ---------- Render: Data tab ---------- */
@@ -1646,6 +1678,8 @@ function loadSettingsIntoForm(){
   document.getElementById('deviceName').value = state.deviceName || '';
   document.getElementById('offW').value = state.deadlineOffsets.winding;
   document.getElementById('offA').value = state.deadlineOffsets.assembly;
+  // ยังไม่ตั้งค่า (null) ต้องโชว์เป็นช่องว่าง ไม่ใช่ 0 — 0 จะทำให้ deadline เท่ากับวันสั่งซื้อ
+  document.getElementById('offSup').value = state.deadlineOffsets.support==null ? '' : state.deadlineOffsets.support;
   document.getElementById('offI').value = state.deadlineOffsets.inspection;
   document.getElementById('offS').value = state.deadlineOffsets.shipping;
   document.getElementById('chartRange').value = state.chartPref.mode || '14';
@@ -1733,11 +1767,13 @@ function exportExcelReport(){
     return {
       'สัปดาห์': o.week, 'PO No.': o.poNo, 'P/N': o.pn, 'Sub-Name': o.subName,
       'Order Qty': o.orderQty, 'Order Date': o.orderDate,
-      'สะสม Winding': c.winding, 'สะสม Assembly': c.assembly, 'สะสม Inspection': c.inspection, 'สะสม Shipping': c.shipping,
+      'สะสม Winding': c.winding, 'สะสม Assembly': c.assembly, 'สะสม Support': c.support,
+      'สะสม Inspection': c.inspection, 'สะสม Shipping': c.shipping,
       'WIP หน้า Assembly': Math.max(0, c.winding-c.assembly),
-      'WIP หน้า Inspection': Math.max(0, c.assembly-c.inspection),
+      'WIP หน้า Support': Math.max(0, c.assembly-c.support),
+      'WIP หน้า Inspection': Math.max(0, c.support-c.inspection),
       'WIP รอส่งของ': Math.max(0, c.inspection-c.shipping),
-      'Deadline Winding': dl.winding, 'Deadline Assembly': dl.assembly,
+      'Deadline Winding': dl.winding, 'Deadline Assembly': dl.assembly, 'Deadline Support': dl.support,
       'Deadline Inspection': dl.inspection, 'กำหนดส่งของ': dl.shipping
     };
   });
@@ -1946,6 +1982,7 @@ document.getElementById('btnSaveSettings').addEventListener('click', ()=>{
   state.deadlineOffsets = {
     winding: Number(document.getElementById('offW').value)||0,
     assembly: Number(document.getElementById('offA').value)||0,
+    support: document.getElementById('offSup').value.trim()==='' ? null : Number(document.getElementById('offSup').value)||0,
     inspection: Number(document.getElementById('offI').value)||0,
     shipping: Number(document.getElementById('offS').value)||0
   };

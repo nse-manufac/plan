@@ -21,7 +21,8 @@
 **ถ้าเปลี่ยนกุญแจนี้ การรวมข้อมูลจากไฟล์และการซิงค์จะสร้างรายการซ้ำทันที**
 
 **A3 — ลำดับขั้นตอนคงที่**
-`winding → assembly → inspection → shipping` กำหนดใน `PROCESSES` และ `PREV_PROCESS`
+`winding → assembly → support → inspection → shipping` กำหนดใน `PROCESSES` และ `PREV_PROCESS`
+(ขั้น `support` เพิ่มเข้ามาเมื่อ 2026-08-14 ตามการอนุมัติของเจ้าของใน issue #17)
 การเพิ่ม/ลบ/สลับขั้นตอนกระทบทั้ง `emptyCum()` · `computeDeadlines()` · `computeStatus()`
 · `buildCumSplitMap()` · ตาราง Dashboard · การส่งออก Excel — ต้องแก้ให้ครบทุกจุดพร้อมกัน
 
@@ -29,9 +30,11 @@
 `computeDeadlines()` = `orderDate + deadlineOffsets[stage]`
 `deadlineOffsets` ตั้งค่าได้จากหน้า Settings และ **ซิงค์ข้ามเครื่อง**
 ห้าม hardcode ตัวเลข 10/17/24/28 ซ้ำที่อื่น ให้อ่านจาก `state.deadlineOffsets` เสมอ
+`deadlineOffsets[stage] === null` = "ยังไม่กำหนด" → deadline ของขั้นนั้นเป็น `null`
+และห้ามตัดสินว่าล่าช้า (ปัจจุบันคือ `support` ที่รอเจ้าของใส่เลขวันเอง) ห้ามแทนด้วย 0
 
 **A5 — `computeStatus` เรียงลำดับการตัดสินจากปลายน้ำขึ้นต้นน้ำ**
-ส่งของครบ → เกินกำหนดส่งของ → ล่าช้า Inspection → Assembly → Winding → ใกล้ครบกำหนด → ปกติ
+ส่งของครบ → เกินกำหนดส่งของ → ล่าช้า Inspection → Support → Assembly → Winding → ใกล้ครบกำหนด → ปกติ
 ลำดับนี้จงใจ เพื่อให้รายงานสถานะที่ "แย่ที่สุด" ก่อน ห้ามสลับลำดับ `if`
 
 ---
@@ -62,7 +65,7 @@
 
 | ประเภท | ฟิลด์ | รูปแบบ |
 |---|---|---|
-| วันปฏิทินล้วน | `orderDate` `planWinding` `planAssembly` `planInspection` `date` | `YYYY-MM-DD` |
+| วันปฏิทินล้วน | `orderDate` `planWinding` `planAssembly` `planSupport` `planInspection` `date` | `YYYY-MM-DD` |
 | timestamp | `createdAt` `updatedAt` `importedAt` | ISO 8601 เต็ม |
 
 **ห้ามเอา `createdAt`/`updatedAt`/`importedAt` ไปใส่ใน `ORDER_DATE_FIELDS` หรือ `RECORD_DATE_FIELDS`**

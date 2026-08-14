@@ -414,3 +414,75 @@ test('G2 — กด Enter ไล่คีย์ทีละแถว โฟก�
   const focused = await page.evaluate(() => document.activeElement && document.activeElement.dataset.order);
   expect(focused, 'กล่องยืนยันแย่งโฟกัสไป แล้วไม่คืนให้แถวถัดไป — คีย์รัว ๆ ต่อไม่ได้').toBe('O2');
 });
+
+// ── ขั้น support (issue #17) ────────────────────────────────────────
+// เจ้าของอนุมัติให้แทรกขั้นที่ 3 ระหว่าง Assembly กับ Inspection
+// กำหนดวันของขั้นนี้ยัง "ไม่ตั้งค่า" (deadlineOffsets.support = null) รอเจ้าของไปใส่เองที่หน้าตั้งค่า
+
+/** เซลล์ "Deadline Support" ของแถวแรกในตาราง Dashboard (td ลำดับที่ 14) */
+function supportDeadlineCell(page) {
+  return page.locator('#dashTable tbody tr').first().locator('td').nth(13);
+}
+
+test('A3 — ขั้น support ต้องคีย์ยอดแยกจากขั้นอื่นได้ และขั้นก่อนหน้าของมันคือ assembly', async ({ page }) => {
+  await openApp(page, [rec('R1', 'O1', 'assembly', TEST_DATE, 10)]);
+
+  await gotoEntry(page, 'support');
+  await expect(page.locator('#entryTable thead'), 'หัวตารางต้องบอกว่ากำลังคีย์ขั้น Support')
+    .toContainText('สะสม Support');
+  await typeQty(page, 'O1', 40);
+
+  const records = await readRecords(page);
+  expect(records, 'ยอด support ต้องเป็นแถวใหม่ ไม่ทับยอด assembly ของวันเดียวกัน').toHaveLength(2);
+  const sup = records.find(r => r.process === 'support');
+  expect(sup, 'ไม่พบ record ของขั้น support').toBeTruthy();
+  expect(sup.qty).toBe(40);
+  expect(sup.date).toBe(TEST_DATE);
+  expect(records.find(r => r.id === 'R1').qty, 'ยอด assembly เดิมต้องไม่ถูกแตะ').toBe(10);
+
+  // support สะสม 40 > assembly สะสม 10 → ต้องเตือนผิดลำดับ (PREV_PROCESS.support === 'assembly')
+  await expect(page.locator('#entryTable tbody tr').first(),
+    'ยอด support เกินขั้นก่อนหน้า (assembly) ต้องขึ้นเตือน').toContainText('⚠');
+});
+
+test('A3 + E2 — state เก่าที่ยังไม่มี deadlineOffsets.support ต้องเปิดได้ และ Dashboard ต้องมีคอลัมน์ Support', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+
+  // seedState() ไม่มีคีย์ support เลย = ข้อมูลที่บันทึกไว้ก่อนจะมีขั้นนี้
+  await openApp(page, [rec('R1', 'O1', 'support', TEST_DATE, 30)]);
+  await gotoDashboard(page);
+
+  const head = await page.locator('#dashTable thead').innerText();
+  expect(head, 'ตาราง Dashboard ต้องมีคอลัมน์ของขั้น Support').toContain('Support');
+  await expect(page.locator('#wipCards'), 'ต้องมีการ์ด WIP ค้างหน้า Support').toContainText('WIP ค้างหน้า Support');
+
+  // ยังไม่ตั้งค่า → ไม่มีกำหนดวัน และห้ามตัดสินว่าล่าช้า Support (A4: ห้ามเดาเลขวันแทนเจ้าของ)
+  await expect(supportDeadlineCell(page), 'ยังไม่ตั้งค่า Support (+วัน) ต้องแสดงเป็น "-" ไม่ใช่วันสั่งซื้อ')
+    .toHaveText('-');
+  await expect(page.locator('#dashTable tbody')).not.toContainText('ล่าช้า Support');
+  expect(errors, 'state เก่าที่ไม่มีคีย์ support ต้องเปิดได้ ไม่พัง').toEqual([]);
+});
+
+test('A4 — ตั้งค่า Support (+วัน) แล้วกำหนดวันต้องนับจาก Order Date · เว้นว่างต้องกลับเป็นไม่กำหนด', async ({ page }) => {
+  await openApp(page);
+
+  await page.click('.tab-btn[data-tab="data"]');
+  await page.fill('#offSup', '20');
+  await page.click('#btnSaveSettings');
+  await gotoDashboard(page);
+  // O1 สั่งซื้อ 2026-08-01 + 20 วัน = 2026-08-21
+  await expect(supportDeadlineCell(page), 'กำหนดวัน Support ต้องเป็น orderDate + deadlineOffsets.support')
+    .toHaveText('21/08/2026');
+
+  await page.click('.tab-btn[data-tab="data"]');
+  await expect(page.locator('#offSup'), 'ค่าที่บันทึกไว้ต้องกลับมาโชว์ในช่องตั้งค่า').toHaveValue('20');
+  await page.fill('#offSup', '');
+  await page.click('#btnSaveSettings');
+  await gotoDashboard(page);
+
+  const off = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).deadlineOffsets, K_STATE);
+  expect(off.support, 'เว้นช่องว่างต้องเก็บเป็น null (ยังไม่กำหนด) ไม่ใช่ 0 ที่จะทำให้ทุกใบเลยกำหนดทันที')
+    .toBeNull();
+  await expect(supportDeadlineCell(page), 'ไม่กำหนดวันแล้วต้องกลับไปแสดง "-"').toHaveText('-');
+});
