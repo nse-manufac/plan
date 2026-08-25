@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-14.1">
+<meta name="app-version" content="2026-08-25.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -365,6 +365,17 @@
           <option value="soon">ใกล้ถึงกำหนด (≤3 วัน)</option>
           <option value="ok">กำลังดำเนินการ (ปกติ)</option>
           <option value="done">เสร็จแล้ว</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>ค้างอยู่ที่ขั้น</label>
+        <select id="dashWipFilter">
+          <option value="">ทั้งหมด</option>
+          <option value="notStarted">ยังไม่เริ่มผลิต</option>
+          <option value="assembly">ค้างหน้า Assembly</option>
+          <option value="support">ค้างหน้า Support</option>
+          <option value="inspection">ค้างหน้า Inspection</option>
+          <option value="shipping">รอส่งของ</option>
         </select>
       </div>
       <div class="field">
@@ -1501,6 +1512,18 @@ function renderWipCards(){
   document.getElementById('wipCards').innerHTML = html;
 }
 
+/** ยอดที่ค้างอยู่หน้าขั้น stage ของใบสั่งซื้อใบเดียว — ใช้สูตรเดียวกับการ์ด WIP ด้านบน
+ *  (renderWipCards) แต่คิดทีละใบ เพื่อให้ตัวเลขบนการ์ดกับรายการที่กรองออกมาตรงกันเสมอ
+ *  ต้องครอบ Math.min(สะสม, orderQty) เหมือนการ์ด ไม่งั้นใบที่คีย์เกิน Order Qty จะเพี้ยน
+ *  stage 'notStarted' = ยังไม่เข้า winding */
+function wipQtyAtStage(order, cum, stage){
+  const capped = p => Math.min(cum[p]||0, order.orderQty);
+  if(stage === 'notStarted') return Math.max(0, order.orderQty - capped('winding'));
+  const prev = PREV_PROCESS[stage];
+  if(!prev) return 0;
+  return Math.max(0, capped(prev) - capped(stage));
+}
+
 const MAX_CHART_DAYS = 366;
 
 /** อ่านช่วงวันที่ที่กราฟจะแสดง จาก dropdown/ช่องวันที่กำหนดเอง
@@ -1623,6 +1646,7 @@ function renderDashTable(){
   const weekF = document.getElementById('dashWeekFilter').value;
   const subF = document.getElementById('dashSubFilter').value;
   const statusF = document.getElementById('dashStatusFilter').value;
+  const wipF = document.getElementById('dashWipFilter').value;
   const search = document.getElementById('dashSearch').value.trim().toLowerCase();
 
   let rows = state.orders.map(o=>{
@@ -1636,6 +1660,7 @@ function renderDashTable(){
   if(subF) rows = rows.filter(x=>x.o.subName===subF);
   if(search) rows = rows.filter(x=>String(x.o.poNo).toLowerCase().includes(search) || String(x.o.pn).toLowerCase().includes(search));
   if(statusF) rows = rows.filter(x=>x.st.code===statusF);
+  if(wipF) rows = rows.filter(x=>wipQtyAtStage(x.o, x.c, wipF) > 0);
   rows.sort((a,b)=> (a.o.week||'').localeCompare(b.o.week) || (a.o.orderDate||'').localeCompare(b.o.orderDate));
 
   const bodyHtml = rows.map(({o,c,dl,st,split})=>{
@@ -1942,6 +1967,7 @@ document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
 document.getElementById('dashWeekFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashSubFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashStatusFilter').addEventListener('change', renderDashTable);
+document.getElementById('dashWipFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashSearch').addEventListener('input', renderDashTable);
 
 /* พิมพ์ / บันทึก PDF — ใช้ window.print() ของเบราว์เซอร์ล้วน ไม่เพิ่มไลบรารีทำ PDF (INVARIANTS F2)
@@ -1952,7 +1978,8 @@ function fillPrintHeader(){
   const parts = [
     'สัปดาห์: '+selText('dashWeekFilter'),
     'Sub-Name: '+selText('dashSubFilter'),
-    'สถานะ: '+selText('dashStatusFilter')
+    'สถานะ: '+selText('dashStatusFilter'),
+    'ค้างอยู่ที่ขั้น: '+selText('dashWipFilter')
   ];
   const search = document.getElementById('dashSearch').value.trim();
   if(search) parts.push('ค้นหา: '+search);
