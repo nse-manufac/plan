@@ -66,6 +66,14 @@ jobs:
       # นับจากจำนวนคอมเมนต์ที่หัวหน้าทีมเคยเขียนในเรื่องนี้ — รอบแรกตอนเปิดเรื่องนับเป็น 1
       # ไม่ใช้ --paginate เพราะมันคืนหลาย array ต่อกันซึ่งไม่ใช่ JSON ที่ jq อ่านรวดเดียวได้
       # และเรื่องหนึ่งไม่มีทางมีคอมเมนต์ถึง 100 อยู่แล้วด้วยเพดานนี้
+      #
+      # ⚠️ ข้อความที่ขึ้นต้นด้วย <!-- agent-note: --> ไม่นับเป็นรอบ
+      # เพราะมันคือประกาศของ workflow เอง (เช่น "ทำงานไม่สำเร็จ") ไม่ใช่ผลงานของ opus
+      # ของจริงเจอที่ repo store issue #35 — หัวหน้าทีมล้มสองครั้งติด
+      # ข้อความล้มสองอันนั้นกินโควตาไปสองรอบจากสาม แล้วเรื่องตันโดยที่
+      # คำตอบของพนักงานสองข้อความไม่เคยถูกอ่านเลยสักครั้ง
+      # repo นี้ใช้ workflow ชุดเดียวกัน จึงมีรูเดียวกันทุกประการ
+      # เพดานที่นับของที่ไม่ได้ทำงานด้วย คือเพดานที่กันคนออกจากระบบ ไม่ใช่กันเงินบานปลาย
       # ═══════════════════════════════════════════════════════════════
       - name: ตรวจว่ายังตอบรอบใหม่ได้อีกไหม
         id: gate
@@ -73,12 +81,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ISSUE: ${{ github.event.issue.number }}
-          MAX: ${{ vars.AGENT_MAX_TRIAGE_ROUNDS || 3 }}
+          MAX: ${{ vars.AGENT_MAX_TRIAGE_ROUNDS || 5 }}
         run: |
           set -euo pipefail
           gh api "repos/$REPO/issues/$ISSUE/comments?per_page=100" > cmt.json
-          n=$(jq '[.[] | select(.user.login == "github-actions[bot]")] | length' cmt.json)
+          n=$(jq '[.[]
+                   | select(.user.login == "github-actions[bot]")
+                   | select((.body // "") | startswith("<!-- agent-note:") | not)] | length' cmt.json)
+          skipped=$(jq '[.[]
+                   | select(.user.login == "github-actions[bot]")
+                   | select((.body // "") | startswith("<!-- agent-note:"))] | length' cmt.json)
           echo "หัวหน้าทีมเคยตอบเรื่องนี้ไปแล้ว $n รอบ (เพดาน $MAX)"
+          [ "$skipped" -gt 0 ] && echo "ไม่นับประกาศของระบบอีก $skipped ข้อความ" || true
 
           if [ "$n" -lt "$MAX" ]; then
             echo "go=yes" >> "$GITHUB_OUTPUT"
@@ -88,7 +102,7 @@ jobs:
           echo "go=no" >> "$GITHUB_OUTPUT"
 
           # แจ้งครั้งเดียวพอ ไม่งั้นทุกคอมเมนต์ที่ตามมาจะได้ข้อความซ้ำ
-          told=$(jq '[.[] | select(.body | contains("AGENT-ROUNDS-EXHAUSTED"))] | length' cmt.json)
+          told=$(jq '[.[] | select((.body // "") | contains("AGENT-ROUNDS-EXHAUSTED"))] | length' cmt.json)
           rm -f cmt.json
           if [ "$told" -gt 0 ]; then
             echo "แจ้งเรื่องเพดานไปแล้ว ไม่แจ้งซ้ำ"; exit 0
@@ -96,7 +110,9 @@ jobs:
 
           # บล็อก line ท้ายคอมเมนต์ทำให้ขั้นส่งกลับ LINE หยิบไปส่งให้เอง ไม่ต้องเขียนซ้ำ
           {
-            echo "<!-- AGENT-ROUNDS-EXHAUSTED -->"
+            # ใส่ agent-note ด้วย เพราะข้อความนี้ก็เป็นประกาศของระบบ ไม่ใช่ผลงานของ opus
+            # (ตัวกันแจ้งซ้ำด้านบนยังหา AGENT-ROUNDS-EXHAUSTED เจอเหมือนเดิม)
+            echo "<!-- agent-note: AGENT-ROUNDS-EXHAUSTED -->"
             echo "🛑 **เรื่องนี้ถามตอบกันครบ $MAX รอบแล้ว** หัวหน้าทีมจะไม่ตอบอัตโนมัติอีก"
             echo ""
             echo "ถ้ายังไม่ได้ข้อสรุป เจ้าของต้องเข้ามาอ่านเองแล้วตัดสินว่าจะทำอะไรต่อ"
@@ -451,6 +467,8 @@ jobs:
         run: |
           set -euo pipefail
           {
+            # ⚠️ บรรทัดนี้ห้ามลบ — ตัวนับรอบใช้มันแยกว่า "ตอบจริง" กับ "ล้ม"
+            echo "<!-- agent-note: ไม่นับเป็นรอบตอบ -->"
             echo "⚠️ **หัวหน้าทีมคัดกรอง issue นี้ไม่สำเร็จ**"
             echo ""
             echo "เรื่องนี้ยังไม่ได้ถูกส่งต่อให้ช่างซ่อม ถ้าจะให้ลองใหม่ ให้ปิด issue แล้วเปิดกลับ"
