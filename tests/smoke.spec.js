@@ -486,3 +486,65 @@ test('A4 — ตั้งค่า Support (+วัน) แล้วกำหน
     .toBeNull();
   await expect(supportDeadlineCell(page), 'ไม่กำหนดวันแล้วต้องกลับไปแสดง "-"').toHaveText('-');
 });
+
+// ── ตัวกรอง "ค้างอยู่ที่ขั้น" ในตาราง Dashboard (issue #21) ────────────
+// นิยาม "ค้าง" ที่ผู้ใช้ยืนยัน = ผ่านขั้นก่อนหน้ามาแล้วแต่ขั้นนี้ยังไม่ครบ
+// ต้องเป็นสูตรเดียวกับการ์ด WIP ด้านบน ไม่งั้นการ์ดกับรายการจะบอกคนละยอด
+
+/** รายการ PO No. (คอลัมน์ที่ 2) ที่เหลืออยู่ในตาราง Dashboard หลังกรอง */
+async function dashPoList(page) {
+  await page.waitForTimeout(100);
+  return page.locator('#dashTable tbody tr td:nth-child(2)').allInnerTexts();
+}
+
+test('A3 — กรอง "ค้างอยู่ที่ขั้น" ต้องได้เฉพาะใบที่ผ่านขั้นก่อนหน้าแล้ว แต่ขั้นนี้ยังไม่ครบ', async ({ page }) => {
+  // O1 (100 ชิ้น) เดินถึง Inspection ครบแล้ว ยังไม่ส่งของ → ค้างที่ "รอส่งของ"
+  // O2 (50 ชิ้น) พัน winding ครบแล้ว ยังไม่ประกอบ → ค้างหน้า Assembly
+  await openApp(page, [
+    rec('R1', 'O1', 'winding', TEST_DATE, 100),
+    rec('R2', 'O1', 'assembly', TEST_DATE, 100),
+    rec('R3', 'O1', 'support', TEST_DATE, 100),
+    rec('R4', 'O1', 'inspection', TEST_DATE, 100),
+    rec('R5', 'O2', 'winding', TEST_DATE, 50)
+  ]);
+  await gotoDashboard(page);
+
+  expect(await dashPoList(page), 'ยังไม่เลือกตัวกรอง ต้องเห็นครบทุกใบเหมือนเดิม').toEqual(['PO-1', 'PO-2']);
+
+  await page.selectOption('#dashWipFilter', 'assembly');
+  expect(await dashPoList(page), 'ค้างหน้า Assembly = พัน winding แล้วแต่ยังไม่ประกอบ').toEqual(['PO-2']);
+
+  await page.selectOption('#dashWipFilter', 'shipping');
+  expect(await dashPoList(page), 'รอส่งของ = ตรวจครบแล้วแต่ยังไม่ส่ง').toEqual(['PO-1']);
+
+  await page.selectOption('#dashWipFilter', 'support');
+  expect(await dashPoList(page), 'ไม่มีใบไหนค้างหน้า Support ต้องไม่โผล่ใบที่ผ่านไปแล้วมาปน').toEqual([]);
+
+  await page.selectOption('#dashWipFilter', 'assembly');
+  await page.fill('#dashSearch', 'PO-1');
+  expect(await dashPoList(page), 'ต้องกรองซ้อนกับตัวกรองเดิมได้ตามปกติ').toEqual([]);
+});
+
+test('A1 — ใบที่ยอดถูกยกเลิกไปแล้ว ต้องไม่ถูกนับว่าค้างอยู่หน้าขั้นถัดไป', async ({ page }) => {
+  // ยอด winding ของ O2 ถูกยกเลิก → เท่ากับยังไม่ได้เริ่มผลิต ห้ามนับว่าค้างหน้า Assembly
+  await openApp(page, [rec('R1', 'O2', 'winding', TEST_DATE, 50, true)]);
+  await gotoDashboard(page);
+
+  await page.selectOption('#dashWipFilter', 'assembly');
+  expect(await dashPoList(page), 'ยอดที่ยกเลิกแล้วห้ามทำให้ใบนั้นโผล่มาเป็นงานค้าง').toEqual([]);
+
+  await page.selectOption('#dashWipFilter', 'notStarted');
+  expect(await dashPoList(page), 'ทั้งสองใบยังไม่มียอด winding ที่ใช้ได้ = ยังไม่เริ่มผลิต').toEqual(['PO-1', 'PO-2']);
+});
+
+test('A1 — ใบที่คีย์ยอดเกิน Order Qty ต้องไม่ค้าง เพราะยอดถูกครอบด้วย Order Qty เหมือนการ์ด WIP', async ({ page }) => {
+  // O1 สั่ง 100 แต่คีย์ winding ไป 120 และประกอบครบ 100 แล้ว → ไม่ควรเหลือค้าง 20
+  await openApp(page, [
+    rec('R1', 'O1', 'winding', TEST_DATE, 120),
+    rec('R2', 'O1', 'assembly', TEST_DATE, 100)
+  ]);
+  await gotoDashboard(page);
+
+  await page.selectOption('#dashWipFilter', 'assembly');
+  expect(await dashPoList(page), 'ยอดส่วนที่เกิน Order Qty ต้องไม่กลายเป็นงานค้างที่ไม่มีจริง').toEqual([]);
+});
