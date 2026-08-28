@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-25.1">
+<meta name="app-version" content="2026-08-26.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -128,6 +128,13 @@
     table th{position:static;}
     thead{display:table-header-group;}          /* หัวตารางซ้ำทุกหน้า */
     tr{break-inside:avoid;}
+    /* แท็บบันทึกยอดรายวัน: พิมพ์เฉพาะตารางรายการที่บันทึกแล้ว ฟอร์มคีย์ยอดไม่ต้องติดไปบนกระดาษ */
+    #view-entry .panel:first-child{display:none !important;}
+    /* ช่องติ๊ก (คอลัมน์แรก) กับปุ่มลบ/กู้คืน (คอลัมน์สุดท้าย) ใช้บนกระดาษไม่ได้ */
+    #recordEditorTable th:first-child, #recordEditorTable td:first-child,
+    #recordEditorTable th:last-child,  #recordEditorTable td:last-child{display:none !important;}
+    .rec-qty-input{border:none;background:none;padding:0;width:auto;appearance:textfield;-moz-appearance:textfield;}
+    .rec-qty-input::-webkit-inner-spin-button, .rec-qty-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
   }
 </style>
 </head>
@@ -262,8 +269,16 @@
   </div>
 
   <div class="panel">
-    <h2>แก้ไข / ลบรายการที่บันทึกแล้ว</h2>
-    <div class="desc">แก้ยอดที่กรอกผิด หรือลบรายการทิ้ง — การลบเป็นการซ่อน (ไม่ได้ลบถาวร) กู้คืนได้เสมอ</div>
+    <h2 class="no-print">แก้ไข / ลบรายการที่บันทึกแล้ว</h2>
+    <div class="desc no-print">แก้ยอดที่กรอกผิด หรือลบรายการทิ้ง — การลบเป็นการซ่อน (ไม่ได้ลบถาวร) กู้คืนได้เสมอ</div>
+    <div class="row no-print" style="justify-content:flex-end;margin-bottom:12px;">
+      <button class="btn" id="btnPrintRecords" title="สั่งพิมพ์ หรือเลือก &quot;บันทึกเป็น PDF&quot; ในช่องเครื่องพิมพ์">🖨️ พิมพ์ / บันทึก PDF</button>
+    </div>
+    <!-- หัวกระดาษของกล่องนี้: บอกว่ากระดาษแผ่นนี้เป็นยอดของวันไหน กรองอะไรไว้ พิมพ์เมื่อไหร่ รุ่นอะไร -->
+    <div class="print-only" id="recPrintHeader">
+      <h2 style="margin:0 0 4px;">ยอดที่บันทึก</h2>
+      <div class="small muted" id="recPrintMeta"></div>
+    </div>
     <div class="row filters">
       <div class="field">
         <label>วันที่</label>
@@ -1350,7 +1365,8 @@ function renderRecordEditor(){
   rows.sort((a,b)=> (b.date||'').localeCompare(a.date) || (b.updatedAt||'').localeCompare(a.updatedAt));
 
   const total = rows.length;
-  const limited = rows.slice(0, 300);
+  // เลือกวันที่เจาะจงแล้วไม่ตัดที่ 300 แถว — วันเดียวต้องได้ครบใบ ไม่งั้นกระดาษที่พิมพ์ขาดหายโดยคนพิมพ์ไม่รู้ตัว
+  const limited = dateF ? rows : rows.slice(0, 300);
   // เลิกจำ selection ของรายการที่ไม่อยู่ในผลกรองปัจจุบันแล้ว กัน "ลบรายการที่เลือก" ลบของที่มองไม่เห็นอยู่
   const visibleIds = new Set(limited.map(r=>r.id));
   recSelectedIds.forEach(id=>{ if(!visibleIds.has(id)) recSelectedIds.delete(id); });
@@ -1377,9 +1393,10 @@ function renderRecordEditor(){
   document.getElementById('recordEditorTable').innerHTML =
     `<thead><tr><th></th><th>วันที่</th><th>Process</th><th>PO No.</th><th>P/N</th><th>จำนวน</th><th>แหล่งที่มา</th><th>เครื่องที่กรอก</th><th></th></tr></thead>
      <tbody>${bodyHtml || emptyRow(9,'ไม่พบรายการตามตัวกรองนี้')}</tbody>`;
-  if(total>300){
+  const oldNote = document.getElementById('recTruncNote'); if(oldNote) oldNote.remove();   // ไม่งั้นข้อความ "แสดงไม่ครบ" ของรอบก่อนค้างอยู่ แล้วติดไปบนกระดาษทั้งที่ตอนนี้แสดงครบแล้ว
+  if(total>limited.length){
     document.getElementById('recordEditorTable').insertAdjacentHTML('afterend',
-      `<div class="small muted" style="margin-top:6px;">แสดง 300 จาก ${numFmt(total)} รายการ — กรองตามวันที่หรือค้นหาเพื่อดูรายการที่เหลือ</div>`);
+      `<div id="recTruncNote" class="small muted" style="margin-top:6px;">แสดง ${numFmt(limited.length)} จาก ${numFmt(total)} รายการ — กรองตามวันที่หรือค้นหาเพื่อดูรายการที่เหลือ</div>`);
   }
 
   document.getElementById('recSelectedCount').textContent = recSelectedIds.size;
@@ -1991,6 +2008,27 @@ function fillPrintHeader(){
 }
 document.getElementById('btnPrintDash').addEventListener('click', ()=>{ fillPrintHeader(); window.print(); });
 window.addEventListener('beforeprint', fillPrintHeader);
+
+/* หัวกระดาษของกล่อง "แก้ไข / ลบรายการที่บันทึกแล้ว" — แยกจาก fillPrintHeader ของ Dashboard
+   เพราะคนละตัวกรองและคนละ "ณ วันที่" กัน เอามารวมใบเดียวจะอ่านผิดวัน */
+function fillRecPrintHeader(){
+  const selText = id=>{ const el=document.getElementById(id); const o=el.options[el.selectedIndex]; return o ? o.textContent : 'ทั้งหมด'; };
+  const dateF = document.getElementById('recFilterDate').value;
+  const parts = [
+    'ยอดของวันที่: '+(dateF ? fmtDateTH(dateF) : 'ทุกวัน'),
+    'Process: '+selText('recFilterProcess'),
+    'แหล่งที่มา: '+selText('recFilterSource')
+  ];
+  const search = document.getElementById('recFilterSearch').value.trim();
+  if(search) parts.push('ค้นหา: '+search);
+  const now = new Date();
+  const hhmm = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+  parts.push('พิมพ์เมื่อ '+fmtDateTH(todayISO())+' '+hhmm);
+  parts.push('รุ่น '+(APP_VERSION||'ไม่ทราบ'));
+  document.getElementById('recPrintMeta').textContent = parts.join(' · ');
+}
+document.getElementById('btnPrintRecords').addEventListener('click', ()=>{ fillRecPrintHeader(); window.print(); });
+window.addEventListener('beforeprint', fillRecPrintHeader);
 document.getElementById('chartRange').addEventListener('change', ()=>{
   toggleChartCustomFields();
   if(document.getElementById('chartRange').value === 'custom'

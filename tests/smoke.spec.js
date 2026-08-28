@@ -548,3 +548,83 @@ test('A1 — ใบที่คีย์ยอดเกิน Order Qty ต้�
   await page.selectOption('#dashWipFilter', 'assembly');
   expect(await dashPoList(page), 'ยอดส่วนที่เกิน Order Qty ต้องไม่กลายเป็นงานค้างที่ไม่มีจริง').toEqual([]);
 });
+
+// ── พิมพ์กล่อง "แก้ไข / ลบรายการที่บันทึกแล้ว" = รายงานยอดที่คีย์ในวันที่เลือก (issue #25) ──
+
+async function gotoRecordEditor(page) {
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForSelector('#recordEditorTable tbody tr');
+}
+
+function recDateColumn(page) {
+  return page.locator('#recordEditorTable tbody tr td:nth-child(2)').allInnerTexts();
+}
+
+test('F2 + F4 + G1 — ปุ่มพิมพ์ในกล่องรายการที่บันทึกแล้ว ต้องสั่งพิมพ์ และหัวกระดาษต้องบอกวันของยอด เวลาพิมพ์ และเลขรุ่น', async ({ page }) => {
+  const m = /<meta\s+name="app-version"\s+content="([^"]*)"/i.exec(fs.readFileSync(APP_FILE, 'utf8'));
+
+  await openApp(page, [rec('R1', 'O1', 'winding', TEST_DATE, 10)]);
+  await gotoRecordEditor(page);
+
+  // แทน window.print ชั่วคราว เพราะ headless เปิดกล่องพิมพ์จริงไม่ได้
+  await page.evaluate(() => { window.__printed = 0; window.print = () => { window.__printed++; }; });
+  await page.fill('#recFilterDate', TEST_DATE);
+  await page.selectOption('#recFilterProcess', 'winding');
+  await page.click('#btnPrintRecords');
+  expect(await page.evaluate(() => window.__printed), 'กดปุ่มแล้วต้องสั่งพิมพ์ด้วย window.print()').toBe(1);
+
+  await page.emulateMedia({ media: 'print' });
+  await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));   // Ctrl+P ก็ต้องได้หัวกระดาษ
+
+  await expect(page.locator('#recPrintHeader'), 'หัวกระดาษของกล่องนี้ต้องโผล่ตอนพิมพ์').toBeVisible();
+  const meta = await page.locator('#recPrintMeta').innerText();
+  expect(meta, 'ต้องบอกว่ากระดาษแผ่นนี้เป็นยอดของวันไหน ไม่งั้นหยิบไปใช้ผิดวัน').toContain('03/08/2026');
+  expect(meta, 'ต้องบอกตัวกรอง Process ที่เลือกอยู่').toContain('Winding');
+  expect(meta, 'ต้องบอกวันที่พิมพ์ กันคนหยิบกระดาษเก่าไปใช้').toContain('พิมพ์เมื่อ');
+  expect(meta, 'ต้องบอกเลขรุ่นของโปรแกรมบนกระดาษด้วย').toContain(m[1]);
+});
+
+test('G1 — ตอนพิมพ์กล่องรายการที่บันทึกแล้ว ต้องเหลือแค่ตาราง ไม่มีฟอร์มคีย์ยอด ช่องติ๊ก หรือปุ่มลบ', async ({ page }) => {
+  await openApp(page, [rec('R1', 'O1', 'winding', TEST_DATE, 10)]);
+  await gotoRecordEditor(page);
+  await page.emulateMedia({ media: 'print' });
+
+  await expect(page.locator('#entryTable'), 'ฟอร์มคีย์ยอดไม่ควรติดไปบนกระดาษรายงาน').toBeHidden();
+  await expect(page.locator('#btnPrintRecords'), 'ปุ่มพิมพ์เองก็ไม่ควรติดไปบนกระดาษ').toBeHidden();
+  await expect(page.locator('#recordEditorTable .rec-chk').first(), 'ช่องติ๊กเลือกแถวใช้บนกระดาษไม่ได้').toBeHidden();
+  await expect(page.locator('#recordEditorTable [data-delete]').first(), 'ปุ่มลบใช้บนกระดาษไม่ได้').toBeHidden();
+  await expect(page.locator('#recordEditorTable .rec-qty-input').first(), 'ยอดต้องยังพิมพ์ออกมาเห็นเป็นตัวเลข').toBeVisible();
+});
+
+test('C3 — เลือกวันที่ย้อนหลังในกล่องรายการที่บันทึกแล้ว ต้องเหลือเฉพาะยอดของวันนั้น', async ({ page }) => {
+  await openApp(page, [
+    rec('R1', 'O1', 'winding', TEST_DATE, 10),
+    rec('R2', 'O2', 'winding', '2026-07-20', 20)
+  ]);
+  await gotoRecordEditor(page);
+
+  expect(await recDateColumn(page), 'ยังไม่เลือกวัน ต้องเห็นครบทุกวันเหมือนเดิม').toEqual(['03/08/2026', '20/07/2026']);
+
+  await page.fill('#recFilterDate', '2026-07-20');
+  await page.waitForTimeout(100);
+  expect(await recDateColumn(page), 'เลือกวันย้อนหลังแล้วต้องเหลือเฉพาะยอดของวันนั้น').toEqual(['20/07/2026']);
+});
+
+test('B1 — เลือกวันที่เจาะจงแล้ว ต้องไม่ตัดที่ 300 แถว ไม่งั้นกระดาษที่พิมพ์ขาดหายโดยไม่มีใครรู้', async ({ page }) => {
+  // วันเดียวคีย์ 320 รายการ (ยอดคนละ order/ขั้น ไม่ชน A2) — กระดาษต้องได้ครบใบ
+  const many = [];
+  for (let i = 0; i < 320; i++) {
+    many.push(rec('R' + i, i % 2 ? 'O1' : 'O2', 'winding', TEST_DATE, i));
+  }
+  many.push(rec('OLD', 'O1', 'winding', '2026-07-20', 5));
+  await openApp(page, many);
+  await gotoRecordEditor(page);
+
+  const rowCount = () => page.locator('#recordEditorTable tbody tr').count();
+  expect(await rowCount(), 'ไม่เลือกวัน ยังคงตัดที่ 300 แถวเหมือนเดิม').toBe(300);
+
+  await page.fill('#recFilterDate', TEST_DATE);
+  await page.waitForTimeout(150);
+  expect(await rowCount(), 'เลือกวันเจาะจงแล้วต้องได้ครบทุกแถวของวันนั้น').toBe(320);
+  await expect(page.locator('#recordEditorTable + .muted'), 'ไม่มีการตัดแถวแล้ว ก็ไม่ต้องมีข้อความว่าแสดงไม่ครบ').toHaveCount(0);
+});
