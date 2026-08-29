@@ -124,4 +124,35 @@ async function readWorkbook(buf) {
   return out;
 }
 
-module.exports = { planWorkbook, shipWorkbook, readWorkbook };
+/** ไฟล์แบบ Daily Call In — หัวตารางแถว 6 ข้อมูลเริ่มแถว 7
+ *  A=P/N B=PO NO C=Order Date D=PO QTY E=Wip bal. F=Aging(สูตร) J=commit ตามวัน
+ *  ชีตที่สองมีสูตรไว้พิสูจน์ว่าการกรอกไม่ไปแตะชีตอื่น */
+async function callInWorkbook(rows, opts = {}) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(opts.sheetName || "X-FRM wk34");
+  anchorTopLeft(ws);
+  ws.getCell('E1').value = 'DAILY CALL IN TRANSFOMER';
+  const head = ws.getRow(6);
+  [[1,'P/N'], [2,'PO  NO'], [3,'Order Date'], [4,'PO QTY'], [5,'Wip bal.'], [6,'Aging'], [10,'commit']
+  ].forEach(([c, v]) => { head.getCell(c).value = v; });
+
+  rows.forEach((r, i) => {
+    const n = 7 + i;
+    const row = ws.getRow(n);
+    row.getCell(1).value = r.pn;
+    row.getCell(2).value = r.poNo;
+    if (r.orderDate) row.getCell(3).value = new Date(r.orderDate + 'T00:00:00Z');
+    row.getCell(4).value = r.qty;
+    if (r.wip !== undefined) row.getCell(5).value = r.wip;
+    row.getCell(6).value = { formula: `TODAY()-C${n}` };
+    if (r.commit !== undefined) row.getCell(10).value = r.commit;   // ของที่คนวางแผนกรอกเอง
+  });
+
+  const other = wb.addWorksheet('อีกชีตที่ห้ามแตะ');
+  anchorTopLeft(other);
+  other.getCell('B2').value = 123;
+  other.getCell('B3').value = { formula: 'B2*2' };
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+module.exports = { planWorkbook, shipWorkbook, callInWorkbook, readWorkbook };
