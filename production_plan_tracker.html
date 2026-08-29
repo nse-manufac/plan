@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-29.2">
+<meta name="app-version" content="2026-08-30.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -697,6 +697,27 @@ function emptyCum(){ return {winding:0, assembly:0, support:0, inspection:0, shi
 // (อย่าใส่ importedAt/createdAt/updatedAt ที่นี่ — พวกนั้นต้องคง timestamp ISO เต็มไว้)
 const ORDER_DATE_FIELDS = ['orderDate','planWinding','planAssembly','planSupport','planInspection'];
 const RECORD_DATE_FIELDS = ['date'];
+const DELIVERY_DATE_FIELDS = ['date'];
+
+/* ---------- ใบส่งสินค้า ---------- */
+/*
+ * หนึ่งแถว = หนึ่งบรรทัดบนใบส่งสินค้า ไม่ใช่หนึ่งใบ
+ * เก็บแบนแบบเดียวกับ records เพื่อให้ merge ด้วย id ได้เหมือนกันหมด
+ * ถ้าเก็บ lines[] ซ้อนอยู่ในใบ จะ merge ทีละบรรทัดไม่ได้ และต้องยัด JSON ลงช่องเดียวใน Sheets
+ *
+ *   id · date · unit (TUE-U/TUE-H/TUE-T) · orderId · pn
+ *   perBox · boxes · remainder   ยอดบรรจุตามฟอร์ม FM-ST-07
+ *   remark (NEW/RETURN/REWORK) · billNo · deviceName · createdAt · updatedAt · voided
+ *
+ * ⚠️ ไม่เก็บ qty — เพราะมันคือ perBox*boxes+remainder อยู่แล้ว
+ *    เก็บสองที่เมื่อไหร่ก็มีวันไม่ตรงกันเมื่อนั้น ให้คิดตอนใช้ทุกครั้ง
+ *
+ * orderId ว่างได้ — ในใบจริงมีบรรทัด RETURN/REWORK ที่ไม่มี PO แต่มี P/N
+ */
+function deliveryQty(l){
+  const n = v => Number(v) || 0;
+  return n(l.perBox) * n(l.boxes) + n(l.remainder);
+}
 
 /** ซ่อมฟิลด์วันที่ในแถวเดียวให้เป็น YYYY-MM-DD · คืน true ถ้ามีการเปลี่ยนแปลงจริง */
 function normalizeRowDates(row, fields){
@@ -721,6 +742,7 @@ function defaultState(){
     chartPref:{ mode:'14', from:'', to:'' }, // เครื่องนี้เท่านั้น ไม่ส่งขึ้น Google Sheets
     orders:[],
     records:[],
+    deliveryNotes:[],
     importHistory:[]
   };
 }
@@ -735,11 +757,25 @@ function loadState(){
       chartPref: Object.assign({}, base.chartPref, parsed.chartPref||{}),
       orders: Array.isArray(parsed.orders)? parsed.orders : [],
       records: Array.isArray(parsed.records)? parsed.records : [],
+      deliveryNotes: Array.isArray(parsed.deliveryNotes)? parsed.deliveryNotes : [],
       importHistory: Array.isArray(parsed.importHistory)? parsed.importHistory : []
     });
   }catch(e){ console.error('loadState failed', e); return defaultState(); }
 }
-function saveState(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+/** ⚠️ ต้องมี try/catch — ถ้าพื้นที่เต็ม setItem จะ throw
+ *  เดิมไม่มีใครดัก ทำให้ throw ทะลุกลางฟังก์ชันที่เรียก แล้วบรรทัดถัดไป (doSync/renderAll)
+ *  ไม่ถูกเรียก · ที่แย่กว่านั้นคือถ้าเกิดตอนบูตใน migrateCorruptedDates แอปจะเปิดไม่ขึ้นเลย
+ *  ยอมให้ข้อมูลในหน่วยความจำเดินต่อและบอกคนใช้ ดีกว่าตายเงียบหรือตายทั้งหน้า */
+function saveState(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    return true;
+  }catch(e){
+    console.error('saveState failed', e);
+    toast('บันทึกลงเครื่องไม่สำเร็จ — พื้นที่เก็บข้อมูลอาจเต็ม กรุณา Export ไฟล์ข้อมูลเก็บไว้แล้วแจ้งหัวหน้า');
+    return false;
+  }
+}
 
 let state = loadState();
 // Orders/records saved before this sync feature existed (or never successfully pushed) have
@@ -748,6 +784,7 @@ let state = loadState();
 // explicit _dirty:false, so this only catches genuinely never-synced data.
 state.orders.forEach(o=>{ if(o._dirty===undefined) o._dirty=true; });
 state.records.forEach(r=>{ if(r._dirty===undefined) r._dirty=true; });
+state.deliveryNotes.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
 
 // ซ่อมข้อมูลที่เพี้ยนค้างอยู่แล้วจากบั๊กวันที่ของ Google Sheets (ดู normalizeDateOnly)
 // แถวที่ค่าเปลี่ยนจริงถูกมาร์ค _dirty เพื่อดันค่าที่ถูกต้องกลับขึ้นเซิร์ฟเวอร์ทับของเดิม
@@ -755,6 +792,7 @@ state.records.forEach(r=>{ if(r._dirty===undefined) r._dirty=true; });
   let fixed = 0;
   state.orders.forEach(o=>{ if(normalizeRowDates(o, ORDER_DATE_FIELDS)){ o._dirty = true; fixed++; } });
   state.records.forEach(r=>{ if(normalizeRowDates(r, RECORD_DATE_FIELDS)){ r._dirty = true; fixed++; } });
+  state.deliveryNotes.forEach(d=>{ if(normalizeRowDates(d, DELIVERY_DATE_FIELDS)){ d._dirty = true; fixed++; } });
   if(fixed){ saveState(); console.info(`ซ่อมวันที่ที่เพี้ยนจากการซิงค์ ${fixed} รายการ`); }
 })();
 
@@ -773,7 +811,8 @@ let pendingFocusOrderId = null;
 // clobbered by an incoming pull until it has been pushed.
 const SYNC_KEY = 'tue_order_tracker_sync_v1';
 function defaultSyncCfg(){
-  return {url:'', token:'', auto:true, lastPullOrders:'', lastPullRecords:'', lastOkAt:'', state:'off', error:''};
+  return {url:'', token:'', auto:true, lastPullOrders:'', lastPullRecords:'', lastPullDeliveryNotes:'',
+          lastOkAt:'', state:'off', error:''};
 }
 function loadSyncCfg(){
   try{
@@ -786,8 +825,11 @@ function loadSyncCfg(){
   }catch(e){ return defaultSyncCfg(); }
 }
 function saveSyncCfg(){
-  const {url,token,auto,lastPullOrders,lastPullRecords,lastOkAt} = syncCfg;
-  localStorage.setItem(SYNC_KEY, JSON.stringify({url,token,auto,lastPullOrders,lastPullRecords,lastOkAt}));
+  // ⚠️ แจกแจงชื่อฟิลด์ไว้ตรง ๆ — เพิ่มตารางใหม่แล้วลืมเติมที่นี่ นาฬิกา pull จะรีเซ็ตทุกครั้งที่เปิดโปรแกรม
+  //    แล้วจะดึงข้อมูลทั้งกระดานลงมาใหม่ทุกวันโดยไม่มีใครสังเกต
+  const {url,token,auto,lastPullOrders,lastPullRecords,lastPullDeliveryNotes,lastOkAt} = syncCfg;
+  localStorage.setItem(SYNC_KEY, JSON.stringify({url,token,auto,lastPullOrders,lastPullRecords,
+                                                 lastPullDeliveryNotes,lastOkAt}));
 }
 let syncCfg = loadSyncCfg();
 let syncing = false;
@@ -831,7 +873,9 @@ function renderSyncBadge(){
   const dot = document.getElementById('syncDot');
   const label = document.getElementById('syncLabel');
   if(!dot || !label) return;
-  const pending = state.orders.filter(o=>o._dirty).length + state.records.filter(r=>r._dirty).length;
+  const pending = state.orders.filter(o=>o._dirty).length
+                + state.records.filter(r=>r._dirty).length
+                + state.deliveryNotes.filter(d=>d._dirty).length;
   let cls='', text='';
   if(!syncCfg.url){ text = 'ยังไม่เชื่อมต่อ'; }
   else if(syncCfg.state==='busy'){ cls='busy'; text = 'กำลังซิงค์...'; }
@@ -866,6 +910,24 @@ async function doSync(silent = true){
       dirtyRecords.forEach(r=>{ r._dirty=false; if(res.serverTime) r.updatedAt=res.serverTime; });
     }
 
+    // ── ใบส่งสินค้า ────────────────────────────────────────────
+    // แยก try/catch ของตัวเอง เพราะ Apps Script ที่ยังไม่ได้ re-deploy จะไม่รู้จักตารางนี้
+    // ถ้าปล่อยให้ throw ออกไป แผนงานกับยอดผลิตจะซิงค์ไม่ได้ทั้งหมดตามไปด้วย
+    // ระหว่างนั้นแถวยังคง _dirty อยู่ ป้ายจะขึ้น "รอส่ง n" ไม่ใช่หายเงียบ
+    let rd = {added:0, updated:0};
+    try{
+      const dirtyNotes = state.deliveryNotes.filter(d=>d._dirty);
+      if(dirtyNotes.length){
+        const res = await gsApi('pushRows', {table:'DeliveryNotes', rows: dirtyNotes.map(cleanForPush)});
+        dirtyNotes.forEach(d=>{ d._dirty=false; if(res.serverTime) d.updatedAt=res.serverTime; });
+      }
+      const pulledNotes = await gsApi('pullRows', {table:'DeliveryNotes', since: syncCfg.lastPullDeliveryNotes});
+      rd = mergeRowsInto(state.deliveryNotes, pulledNotes.rows||[], DELIVERY_DATE_FIELDS);
+      syncCfg.lastPullDeliveryNotes = pulledNotes.serverTime;
+    }catch(e){
+      console.warn('ซิงค์ใบส่งสินค้าไม่สำเร็จ — เซิร์ฟเวอร์อาจยังไม่ได้ re-deploy', e.message);
+    }
+
     const pulledOrders = await gsApi('pullRows', {table:'Orders', since: syncCfg.lastPullOrders});
     const ro = mergeRowsInto(state.orders, pulledOrders.rows||[], ORDER_DATE_FIELDS);
     syncCfg.lastPullOrders = pulledOrders.serverTime;
@@ -882,9 +944,9 @@ async function doSync(silent = true){
     saveState(); saveSyncCfg();
     syncCfg.state = 'ok'; syncCfg.lastOkAt = new Date().toISOString();
     renderSyncBadge();
-    const changed = ro.added+ro.updated+rr.added+rr.updated > 0;
-    if(changed) renderAll();
-    if(!silent) toast(`ซิงค์แล้ว · ส่งขึ้น ${dirtyOrders.length+dirtyRecords.length} · รับมา ${ro.added+ro.updated+rr.added+rr.updated}`);
+    const pulledCount = ro.added+ro.updated+rr.added+rr.updated+rd.added+rd.updated;
+    if(pulledCount > 0) renderAll();
+    if(!silent) toast(`ซิงค์แล้ว · ส่งขึ้น ${dirtyOrders.length+dirtyRecords.length} · รับมา ${pulledCount}`);
   }catch(e){
     syncCfg.state = 'error'; syncCfg.error = e.message;
     renderSyncBadge();
