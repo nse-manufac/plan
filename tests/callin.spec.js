@@ -94,6 +94,19 @@ test('F2 — กรอกแล้วทุกส่วนของไฟล์�
   expect(changed, 'ต้องแตะชีตเดียวเท่านั้น ส่วนที่เหลือห้ามถูกเขียนใหม่').toEqual(['xl/worksheets/sheet1.xml']);
 });
 
+test('F2 — ไฟล์ที่ได้กลับมาต้องไม่บวม เพราะต้องส่งเข้าเมลให้ลูกค้าทุกวัน', async ({ page }) => {
+  // ⚠️ เคยพลาดมาแล้ว: JSZip ไม่บีบอัดถ้าไม่สั่ง ไฟล์จริง 191 KB โตเป็น 1 MB
+  //    เนื้อหาเหมือนเดิมทุกช่อง เปิดได้ปกติ ไม่มี error — จับไม่ได้เลยถ้าดูแต่เนื้อหา
+  const src = await callInWorkbook(ROWS);
+  await openWith(page, ORDERS, [shipped('S1', 'TM4267U041|2877686000', 120)]);
+  await scan(page, src);
+  const out = await apply(page);
+
+  expect(out.length / src.length,
+    `ไฟล์ออก ${out.length} ไบต์ จากไฟล์เข้า ${src.length} ไบต์ — โตผิดปกติแปลว่าลืมสั่งบีบอัด`)
+    .toBeLessThan(1.3);
+});
+
 test('A1 — สูตรและคอลัมน์ที่คนกรอกเอง ต้องรอดมาครบ', async ({ page }) => {
   await openWith(page, ORDERS, [shipped('S1', 'TM4267U041|2877686000', 120)]);
   await scan(page, await callInWorkbook(ROWS));

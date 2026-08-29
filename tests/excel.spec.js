@@ -59,6 +59,27 @@ test('C1 + C3 — นำเข้าแผนแล้ววันที่ท�
   expect(got.find(o => o.poNo === 'TM5267H176').subName).toBe('TUE-U');
 });
 
+// เทสข้างบนรันบนเครื่องที่อยู่ UTC หรือ UTC+7 ซึ่งบังเอิญได้วันเดียวกันทั้งสองวิธีอ่าน
+// จึงพิสูจน์ไม่ได้ว่าโค้ดอ่านด้วย UTC getters จริง ต้องมีเครื่องที่อยู่ "หลัง" UTC มายืนยัน
+test.describe('เครื่องที่อยู่หลัง UTC', () => {
+  test.use({ timezoneId: 'America/Los_Angeles' });
+
+  test('C1 — วันที่จาก Excel ต้องไม่เลื่อนถอยหนึ่งวัน บนเครื่องที่เขตเวลาอยู่หลัง UTC', async ({ page }) => {
+    // ตัวอ่าน Excel สร้าง Date ของช่องวันที่ไว้ที่เที่ยงคืน UTC เสมอ ปิดพฤติกรรมนี้ไม่ได้
+    // ถ้าใครเผลอเปลี่ยน excelValueToISO กลับไปอ่านด้วย getters ตามเขตเวลาเครื่อง
+    // เครื่องที่อยู่หลัง UTC จะได้วันก่อนหน้าไปหนึ่งวัน — ทั้งวันสั่งซื้อและวันแผนทุกขั้น
+    await openBlank(page);
+    await upload(page, '#fileInput', await planWorkbook(PLAN_ROWS), 'แผน.xlsx');
+    await page.click('#btnParseSheet');
+    await page.click('#btnConfirmImport');
+
+    const a = (await orders(page)).find(o => o.poNo === 'TM5267H179');
+    expect(a.orderDate, 'วันสั่งซื้อต้องเป็นวันเดียวกับที่อยู่ในไฟล์ ไม่ใช่ถอยไปหนึ่งวัน').toBe('2026-07-29');
+    expect(a.planWinding).toBe('2026-08-08');
+    expect(a.planSupport).toBe('2026-08-18');
+  });
+});
+
 test('B1 — แถวที่ไม่มี PO หรือยอดเป็นศูนย์/ติดลบ ต้องถูกข้าม ไม่ใช่เข้ามาเป็นใบเปล่า', async ({ page }) => {
   await openBlank(page);
   await upload(page, '#fileInput', await planWorkbook([

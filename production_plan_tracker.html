@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-29.3">
+<meta name="app-version" content="2026-08-30.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1170,7 +1170,12 @@ async function applyCallIn(zip, path, doc, plan, wipStyle){
     setNumberCell(doc, u.it.rowEl, CALLIN_COL.wip, u.wip, wipStyle);
   });
   zip.file(path, serializeXml(doc));
+  // ⚠️ ต้องสั่ง DEFLATE เอง — ค่าเริ่มต้นของ JSZip คือ STORE ที่ไม่บีบอัดเลย
+  //    ไฟล์ Call In จริงจะโตจาก 191 KB เป็น 1 MB ทั้งที่เนื้อหาเหมือนเดิมทุกช่อง
+  //    เปิดได้ปกติ ไม่มี error จึงไม่มีใครรู้จนกว่าเมลที่ส่งลูกค้าจะเด้งกลับ
+  //    ระดับ 6 คือระดับเดียวกับที่ Excel ใช้เขียนไฟล์เอง
   return await zip.generateAsync({type:'blob',
+    compression:'DEFLATE', compressionOptions:{level:6},
     mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
 }
 
