@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened]
     branches: [main]
 
-# รันเฉพาะ PR ที่มาจาก branch ของ agent — PR ที่เจ้าของทำเองไม่ต้องเสีย token
+# รันทุก PR ที่เข้า main ไม่มีข้อยกเว้น
 # (concurrency กันรันซ้ำเวลามี push ตามเข้ามาติด ๆ)
 concurrency:
   group: agent-review-${{ github.event.pull_request.number }}
@@ -14,13 +14,16 @@ concurrency:
 jobs:
   review:
     name: ตรวจตาม INVARIANTS
-    # PR ที่เจ้าของทำเองไม่ต้องเสีย token — แต่ต้องรู้ให้แน่ว่า "ไม่ใช่ของ agent"
-    # ชื่อ branch เชื่อไม่ได้ (agent ตั้งเอง) จึงดูคนเปิด PR เป็นหลัก
-    # ของจริงเคยหลุด: branch feat/21-... ทำให้ผู้ตรวจข้าม PR ของช่างซ่อมไปทั้งใบ
-    if: >-
-      github.event.pull_request.user.login == 'github-actions[bot]'
-      || startsWith(github.head_ref, 'fix/')
-      || startsWith(github.head_ref, 'claude/')
+    # ⚠️ ห้ามใส่เงื่อนไข if กลับเข้ามาที่นี่อีก — ผู้ตรวจต้องรันทุกใบ
+    #
+    # เคยพยายามประหยัด token ด้วยการข้าม "PR ที่เจ้าของทำเอง" มาสองรอบแล้ว และหลุดทั้งสองรอบ
+    #   รอบแรก  ตัดสินจากชื่อ branch  -> ช่างซ่อมตั้งชื่อ feat/21-... ผู้ตรวจข้ามทั้งใบ
+    #   รอบสอง  ตัดสินจากคนเปิด PR    -> agent ที่รันในเครื่องเปิด PR ด้วยบัญชีเจ้าของ
+    #                                     สองก้อนใหญ่ที่สุดของงานทั้งชุดจึงไม่มีใครตรวจเลย
+    #
+    # ทุกเกณฑ์ที่ใช้แยก "ของ agent" กับ "ของคน" เป็นสิ่งที่ฝั่งที่ถูกตรวจเลือกเองได้ทั้งนั้น
+    # = ถามผู้ต้องสงสัยว่าตัวเองเป็นผู้ต้องสงสัยไหม
+    # ค่าตรวจสัปดาห์ละราว $10 ถูกกว่าการปล่อยของพังขึ้น production ที่พนักงานใช้อยู่ทุกวัน
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
