@@ -19,13 +19,13 @@ const APP_FILE = path.resolve(__dirname, '..', 'production_plan_tracker.html');
 const K_STATE = 'tue_order_tracker_v1';
 const TEST_DATE = '2026-08-03';
 
-function seedState(records = []) {
+function seedState(records = [], orders = null) {
   return {
     version: 1,
     deviceName: 'test',
     deadlineOffsets: { winding: 10, assembly: 17, inspection: 24, shipping: 28 },
     chartPref: { mode: '14', from: '', to: '' },
-    orders: [
+    orders: orders || [
       { id: 'O1', week: 'W31', poNo: 'PO-1', pn: 'PN-1', orderQty: 100,
         orderDate: '2026-08-01', status: 'active',
         importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false },
@@ -38,6 +38,14 @@ function seedState(records = []) {
   };
 }
 
+/** วันของ N วันก่อน ในรูปแบบ YYYY-MM-DD ตามนาฬิกาเครื่อง — ให้ตรงกับ todayISO() ของแอป */
+function isoDaysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  const p = v => String(v).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 function rec(id, orderId, process, date, qty, voided = false) {
   return {
     id, date, orderId, process, qty, note: '', deviceName: 'test',
@@ -46,10 +54,10 @@ function rec(id, orderId, process, date, qty, voided = false) {
   };
 }
 
-async function openApp(page, records = []) {
+async function openApp(page, records = [], orders = null) {
   await page.addInitScript(([key, st]) => {
     localStorage.setItem(key, JSON.stringify(st));
-  }, [K_STATE, seedState(records)]);
+  }, [K_STATE, seedState(records, orders)]);
   await page.goto(APP);
   await page.waitForSelector('.tab-btn[data-tab="entry"]');
 }
@@ -335,7 +343,7 @@ test('G1 — ตอนพิมพ์ต้องซ่อนเมนู/ปุ
   expect(await colorAdjust(page.locator('#dashTable .badge').first()),
     'ป้ายสถานะ ล่าช้า/ใกล้ครบกำหนด ต้องพิมพ์สีออกมา').toBe('exact');
   expect(await colorAdjust(page.locator('#dashTable tbody td').first()),
-    'ช่องวันครบกำหนด (เขียว/เหลือง/แดง) ต้องพิมพ์สีออกมาเหมือนกัน').toBe('exact');
+    'ช่องอื่นในตารางก็ต้องถูกบังคับให้พิมพ์สีเหมือนกัน ไม่ใช่เฉพาะป้ายสถานะ').toBe('exact');
 });
 
 test('F3 — ห้ามมี URL ของ Apps Script หรือ token ฝังอยู่ในไฟล์', () => {
@@ -419,11 +427,6 @@ test('G2 — กด Enter ไล่คีย์ทีละแถว โฟก�
 // เจ้าของอนุมัติให้แทรกขั้นที่ 3 ระหว่าง Assembly กับ Inspection
 // กำหนดวันของขั้นนี้ยัง "ไม่ตั้งค่า" (deadlineOffsets.support = null) รอเจ้าของไปใส่เองที่หน้าตั้งค่า
 
-/** เซลล์ "Deadline Support" ของแถวแรกในตาราง Dashboard (td ลำดับที่ 14) */
-function supportDeadlineCell(page) {
-  return page.locator('#dashTable tbody tr').first().locator('td').nth(13);
-}
-
 test('A3 — ขั้น support ต้องคีย์ยอดแยกจากขั้นอื่นได้ และขั้นก่อนหน้าของมันคือ assembly', async ({ page }) => {
   await openApp(page, [rec('R1', 'O1', 'assembly', TEST_DATE, 10)]);
 
@@ -457,34 +460,51 @@ test('A3 + E2 — state เก่าที่ยังไม่มี deadlineOf
   expect(head, 'ตาราง Dashboard ต้องมีคอลัมน์ของขั้น Support').toContain('Support');
   await expect(page.locator('#wipCards'), 'ต้องมีการ์ด WIP ค้างหน้า Support').toContainText('WIP ค้างหน้า Support');
 
-  // ยังไม่ตั้งค่า → ไม่มีกำหนดวัน และห้ามตัดสินว่าล่าช้า Support (A4: ห้ามเดาเลขวันแทนเจ้าของ)
-  await expect(supportDeadlineCell(page), 'ยังไม่ตั้งค่า Support (+วัน) ต้องแสดงเป็น "-" ไม่ใช่วันสั่งซื้อ')
-    .toHaveText('-');
+  // ยังไม่ตั้งค่า → ห้ามตัดสินว่าล่าช้า Support (A4: ห้ามเดาเลขวันแทนเจ้าของ)
+  // ถ้าเผลอตีความ null เป็น orderDate + 0 ทุกใบจะกลายเป็นล่าช้าทันทีตั้งแต่วันสั่ง
   await expect(page.locator('#dashTable tbody')).not.toContainText('ล่าช้า Support');
   expect(errors, 'state เก่าที่ไม่มีคีย์ support ต้องเปิดได้ ไม่พัง').toEqual([]);
 });
 
 test('A4 — ตั้งค่า Support (+วัน) แล้วกำหนดวันต้องนับจาก Order Date · เว้นว่างต้องกลับเป็นไม่กำหนด', async ({ page }) => {
-  await openApp(page);
+  // เจ้าของเอาคอลัมน์ Deadline ออกจากหน้าจอแล้ว จึงตรวจการนับวันผ่าน "ป้ายสถานะ"
+  // ซึ่งเป็นผลจริงที่ผู้ใช้เห็น และคมกว่าเดิมเพราะล็อกขอบเขตคร่อมวันนี้พอดี
+  //   สั่งมา 30 วัน · Support +29 = ครบกำหนดเมื่อวาน → ต้องล่าช้า
+  //                 · Support +31 = ครบกำหนดพรุ่งนี้ → ต้องยังไม่ล่าช้า
+  // ขั้นอื่นตั้งไว้ +200 วัน เพื่อไม่ให้ไปชิงป้ายล่าช้าไปก่อน (computeStatus คืนขั้นแรกที่เลย)
+  await openApp(page, [], [
+    { id: 'O1', week: 'W31', poNo: 'PO-1', pn: 'PN-1', orderQty: 100,
+      orderDate: isoDaysAgo(30), status: 'active',
+      importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false }
+  ]);
+
+  const setOffsets = async sup => {
+    await page.click('.tab-btn[data-tab="data"]');
+    for (const [id, v] of [['offW', '200'], ['offA', '200'], ['offI', '200'], ['offS', '200'], ['offSup', sup]]) {
+      await page.fill('#' + id, v);
+    }
+    await page.click('#btnSaveSettings');
+    await gotoDashboard(page);
+  };
+
+  await setOffsets('29');
+  await expect(page.locator('#dashTable tbody'),
+    'ครบกำหนดไปแล้วเมื่อวาน ต้องขึ้นล่าช้า Support').toContainText('ล่าช้า Support');
 
   await page.click('.tab-btn[data-tab="data"]');
-  await page.fill('#offSup', '20');
-  await page.click('#btnSaveSettings');
-  await gotoDashboard(page);
-  // O1 สั่งซื้อ 2026-08-01 + 20 วัน = 2026-08-21
-  await expect(supportDeadlineCell(page), 'กำหนดวัน Support ต้องเป็น orderDate + deadlineOffsets.support')
-    .toHaveText('21/08/2026');
+  await expect(page.locator('#offSup'), 'ค่าที่บันทึกไว้ต้องกลับมาโชว์ในช่องตั้งค่า').toHaveValue('29');
 
-  await page.click('.tab-btn[data-tab="data"]');
-  await expect(page.locator('#offSup'), 'ค่าที่บันทึกไว้ต้องกลับมาโชว์ในช่องตั้งค่า').toHaveValue('20');
-  await page.fill('#offSup', '');
-  await page.click('#btnSaveSettings');
-  await gotoDashboard(page);
+  await setOffsets('31');
+  await expect(page.locator('#dashTable tbody'),
+    'ยังไม่ถึงกำหนด (อีก 1 วัน) ห้ามตัดสินว่าล่าช้า — พลาดข้างนี้แปลว่านับวันเกินไปหนึ่ง')
+    .not.toContainText('ล่าช้า Support');
 
+  await setOffsets('');
   const off = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).deadlineOffsets, K_STATE);
   expect(off.support, 'เว้นช่องว่างต้องเก็บเป็น null (ยังไม่กำหนด) ไม่ใช่ 0 ที่จะทำให้ทุกใบเลยกำหนดทันที')
     .toBeNull();
-  await expect(supportDeadlineCell(page), 'ไม่กำหนดวันแล้วต้องกลับไปแสดง "-"').toHaveText('-');
+  await expect(page.locator('#dashTable tbody'),
+    'ไม่กำหนดวันแล้วต้องเลิกตัดสินว่าล่าช้า').not.toContainText('ล่าช้า Support');
 });
 
 // ── ตัวกรอง "ค้างอยู่ที่ขั้น" ในตาราง Dashboard (issue #21) ────────────
@@ -627,4 +647,99 @@ test('B1 — เลือกวันที่เจาะจงแล้ว ต
   await page.waitForTimeout(150);
   expect(await rowCount(), 'เลือกวันเจาะจงแล้วต้องได้ครบทุกแถวของวันนั้น').toBe(320);
   await expect(page.locator('#recordEditorTable + .muted'), 'ไม่มีการตัดแถวแล้ว ก็ไม่ต้องมีข้อความว่าแสดงไม่ครบ').toHaveCount(0);
+});
+
+// ── Dashboard: Aging · ซ่อนงานที่ส่งของครบแล้ว · เลิกแสดง deadline รายขั้น ──
+
+/** ค่าในคอลัมน์ Aging (คอลัมน์ที่ 7 ถัดจาก Order Date) */
+function agingColumn(page) {
+  return page.locator('#dashTable tbody tr td:nth-child(7)').allInnerTexts();
+}
+
+test('C1 + C3 — Aging ต้องเป็นจำนวนวันนับจาก Order Date ถึงวันนี้ ไม่ใช่วันที่', async ({ page }) => {
+  // ไม่ hardcode ตัวเลข เพราะ "วันนี้" เดินทุกวัน — นับถอยจากวันนี้จริงแทน
+  await openApp(page, [], [
+    { id: 'O1', week: 'W31', poNo: 'PO-1', pn: 'PN-1', orderQty: 100,
+      orderDate: isoDaysAgo(12), status: 'active',
+      importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false },
+    { id: 'O2', week: 'W31', poNo: 'PO-2', pn: 'PN-2', orderQty: 50,
+      orderDate: isoDaysAgo(0), status: 'active',
+      importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false }
+  ]);
+  await gotoDashboard(page);
+
+  expect(await agingColumn(page), 'สั่งมา 12 วันต้องได้ 12 · สั่งวันนี้ต้องได้ 0 ไม่ใช่ช่องว่าง')
+    .toEqual(['12', '0']);
+});
+
+test('C1 — ใบที่ไม่มี Order Date ต้องขึ้นขีด ไม่ใช่ NaN', async ({ page }) => {
+  // ใบที่มาจากการนำเข้าใบส่งงานอาจไม่มีวันสั่ง — ห้ามให้ตัวเลขขยะโผล่บนหน้าจอ
+  await openApp(page, [], [
+    { id: 'O1', week: 'ใบส่งงาน', poNo: 'PO-1', pn: 'PN-1', orderQty: 100,
+      orderDate: null, status: 'active',
+      importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false }
+  ]);
+  await gotoDashboard(page);
+
+  expect(await agingColumn(page), 'ไม่มีวันสั่ง = คำนวณอายุงานไม่ได้ ต้องบอกตรง ๆ ว่าไม่มี').toEqual(['—']);
+});
+
+test('A1 — ติ๊กซ่อนงานที่ส่งของครบแล้ว ต้องเหลือเฉพาะใบที่ยังไม่จบ', async ({ page }) => {
+  // O1 ส่งครบ 100 แล้ว · O2 ยังไม่ส่งเลย
+  await openApp(page, [rec('R1', 'O1', 'shipping', TEST_DATE, 100)]);
+  await gotoDashboard(page);
+
+  await expect(page.locator('#dashHideDone'), 'ต้องติ๊กไว้ตั้งแต่เปิดโปรแกรม').toBeChecked();
+  expect(await dashPoList(page), 'ใบที่ส่งครบแล้วต้องไม่กองอยู่ในตาราง').toEqual(['PO-2']);
+
+  await page.uncheck('#dashHideDone');
+  await page.waitForTimeout(100);
+  expect(await dashPoList(page), 'ปลดติ๊กแล้วต้องกลับมาเห็นครบ').toEqual(['PO-1', 'PO-2']);
+});
+
+test('A1 — ยอดส่งที่ถูกยกเลิกแล้ว ต้องไม่ทำให้ใบนั้นถูกซ่อนว่าส่งครบ', async ({ page }) => {
+  await openApp(page, [rec('R1', 'O1', 'shipping', TEST_DATE, 100, true)]);
+  await gotoDashboard(page);
+
+  expect(await dashPoList(page), 'ยอดที่ยกเลิกไม่นับ ใบนี้ยังไม่ส่ง ต้องยังอยู่ในตาราง')
+    .toEqual(['PO-1', 'PO-2']);
+});
+
+test('G2 — เลือกสถานะ "เสร็จแล้ว" ต้องเห็นใบที่ส่งครบ แม้ยังติ๊กซ่อนค้างไว้', async ({ page }) => {
+  // ถ้าตัวกรองสองตัวขัดกันเงียบ ๆ คนจะเห็นตารางว่างโดยไม่รู้ว่าเพราะอะไร
+  await openApp(page, [rec('R1', 'O1', 'shipping', TEST_DATE, 100)]);
+  await gotoDashboard(page);
+
+  await page.selectOption('#dashStatusFilter', 'done');
+  await page.waitForTimeout(100);
+  expect(await dashPoList(page), 'คนขอดูของที่เสร็จแล้ว ต้องได้เห็น ไม่ใช่ตารางว่าง').toEqual(['PO-1']);
+});
+
+test('G1 — หัวกระดาษต้องบอกด้วยว่าซ่อนงานที่ส่งครบอยู่', async ({ page }) => {
+  // กระดาษที่ไม่บอกว่าซ่อนอะไรไว้ จะถูกอ่านว่า "งานทั้งหมดมีเท่านี้" ซึ่งไม่จริง
+  await openApp(page);
+  await gotoDashboard(page);
+  await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+  expect(await page.locator('#printMeta').innerText(),
+    'ติ๊กซ่อนอยู่ แต่กระดาษไม่บอก = อ่านผิดว่างานหมดแค่นี้').toContain('ซ่อนงานที่ส่งของครบแล้ว');
+
+  await page.uncheck('#dashHideDone');
+  await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+  expect(await page.locator('#printMeta').innerText(),
+    'ไม่ได้ซ่อนก็ไม่ต้องเขียน จะได้ไม่รกและไม่ทำให้เข้าใจผิดกลับทาง').not.toContain('ซ่อนงานที่ส่งของครบแล้ว');
+});
+
+test('G1 — ตาราง Dashboard ต้องไม่มีคอลัมน์ deadline รายขั้นหลงเหลือ', async ({ page }) => {
+  await openApp(page);
+  await gotoDashboard(page);
+
+  const head = await page.locator('#dashTable thead').innerText();
+  expect(head, 'เจ้าของสั่งเอาวันครบกำหนดรายขั้นออกจากหน้าจอแล้ว').not.toContain('Deadline');
+  expect(head, 'คอลัมน์อายุงานต้องมาแทน').toContain('Aging');
+
+  const cells = await page.locator('#dashTable tbody tr').first().locator('td').count();
+  expect(cells, 'หัวตารางกับแถวข้อมูลต้องมีจำนวนคอลัมน์เท่ากัน').toBe(13);
+
+  const src = fs.readFileSync(APP_FILE, 'utf8');
+  expect(src, 'ไฟล์ Excel ยังต้องมี deadline เหมือนเดิม เอาออกเฉพาะหน้าจอ').toContain("'Deadline Winding': dl.winding");
 });
