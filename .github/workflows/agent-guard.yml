@@ -2,7 +2,10 @@ name: ด่านกัน agent ยกระดับสิทธิ์ตั�
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    # ต้องมี labeled/unlabeled ด้วย — ด่านข้อ 4 อ่าน label เป็นเงื่อนไข
+    # ถ้าไม่รันใหม่ตอนติด/ถอด label เครื่องหมายเขียวที่ค้างอยู่จะไม่ตรงกับสภาพจริงตอน merge
+    # ไม่มี edited แล้ว — เคยมีตอนที่ด่านอ่านข้อความในหัว PR ตอนนี้ไม่มีด่านไหนอ่านข้อความ
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [main]
 
 # ═══════════════════════════════════════════════════════════════
@@ -33,6 +36,9 @@ jobs:
         env:
           HEAD_REF: ${{ github.head_ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_EVENT: ${{ github.event.action }}
+          # ชื่อ label ที่เพิ่งถูกติด/ถอดในรอบนี้ — ว่างถ้ารอบนี้ไม่ได้มาจากการแตะ label
+          PR_LABEL_NAME: ${{ github.event.label.name }}
         run: |
           set -euo pipefail
           BASE="origin/${{ github.base_ref }}"
@@ -113,16 +119,17 @@ jobs:
               fi
           fi
 
-          # ── 4. ห้ามแตะบรรทัด vendor SheetJS (INVARIANTS F2) ──
-          # ~800 KB จาก 990 KB ของไฟล์แอปคือ SheetJS ที่ vendor ไว้ในบรรทัดยาวมาก
-          # ถ้าเครื่องมือ format หรือ agent เผลอแตะ diff จะบวมมหาศาลและแอปอาจพังแบบเงียบ ๆ
+          # ── 4. ห้ามแตะบรรทัด vendor โดยไม่ได้ตั้งใจ (INVARIANTS F2) ──
+          # ไฟล์แอปเกือบทั้งไฟล์คือไลบรารีที่ vendor ไว้ในบรรทัดยาวมาก (ตอนนี้คือ ExcelJS กับ JSZip)
+          # ถ้าเครื่องมือจัดรูปแบบหรือ agent เผลอแตะ diff จะบวมมหาศาลและแอปอาจพังแบบเงียบ ๆ
           # ตรวจจากความยาวบรรทัด ไม่ต้องรู้เลขบรรทัด — เลขเลื่อนได้ แต่ความยาวไม่โกหก
           # `|| true` จำเป็น — grep คืน 1 เมื่อไม่เจอ ซึ่งกับ set -e + pipefail จะทำให้ step ล้มทั้งที่ผลคือ "สะอาด"
           VENDORHIT=$(git diff -U0 "$BASE...HEAD" -- '*.html' | grep '^[+-]' | awk 'length($0)>20000' | wc -l || true)
-          if [ "$VENDORHIT" -gt 0 ]; then
-            echo "::error::PR นี้แตะบรรทัด vendor SheetJS ($VENDORHIT บรรทัด) — ห้ามแก้ ห้าม format ดู INVARIANTS F2"
-            FAIL=1
-          fi
+          # ตรรกะการตัดสินอยู่ที่ .github/scripts/vendor-gate.sh เพื่อให้มีเทสจับได้
+          # (tests/guard-rules.test.sh เรียกสคริปต์ตัวเดียวกันนี้ ไม่ใช่ก๊อปตรรกะไปเขียนใหม่)
+          # ตรรกะนี้เคยพลาดสี่รอบติดใน 30 ส.ค. 2026 — ของแบบนั้นต้องมีเทส ไม่ใช่ต้องระวังให้มากขึ้น
+          source .github/scripts/vendor-gate.sh
+          if ! vendor_gate; then FAIL=1; fi
 
           # ── 5. ห้ามเปลี่ยนไปโหลด library จากเน็ต (INVARIANTS F2) ──
           # แอปต้องเปิดได้ในโรงงานตอนเน็ตหลุด การเปลี่ยนไป CDN ทำให้พังเฉพาะตอนที่ต้องการใช้ที่สุด

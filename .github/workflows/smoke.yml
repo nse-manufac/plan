@@ -75,6 +75,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # เทสตรรกะของด่านตรวจ ไม่ต้องใช้เบราว์เซอร์ จึงรันก่อนติดตั้งอะไรทั้งนั้น
+      # ล้มเร็วกว่ารอ playwright ติดตั้งเสร็จสามนาทีแล้วค่อยรู้ว่าด่านพัง
+      - name: เทสตรรกะของด่านตรวจ
+        run: bash tests/guard-rules.test.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
