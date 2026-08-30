@@ -1804,7 +1804,7 @@ function confirmShipImport(){
       state.records[ri].batchId = batchId;
       state.records[ri]._dirty = true;
     } else {
-      state.records.push({id:uid(), date, orderId:ln.id, process:'shipping', qty:ln.qty, note:'นำเข้าจากใบส่งงาน', deviceName:state.deviceName, createdAt:now, updatedAt:now, voided:false, batchId, _dirty:true});
+      state.records.push({id:uid(), date, orderId:ln.id, process:'shipping', qty:ln.qty, note:SOURCE_SHIP_IMPORT, deviceName:state.deviceName, createdAt:now, updatedAt:now, voided:false, batchId, _dirty:true});
     }
     savedCount++;
     sumQty += ln.qty;
