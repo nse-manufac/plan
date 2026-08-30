@@ -4,7 +4,8 @@ on:
   pull_request:
     # ต้องมี labeled/unlabeled ด้วย — ด่านข้อ 4 อ่าน label เป็นเงื่อนไข
     # ถ้าไม่รันใหม่ตอนติด/ถอด label เครื่องหมายเขียวที่ค้างอยู่จะไม่ตรงกับสภาพจริงตอน merge
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    # ไม่มี edited แล้ว — เคยมีตอนที่ด่านอ่านข้อความในหัว PR ตอนนี้ไม่มีด่านไหนอ่านข้อความ
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [main]
 
 # ═══════════════════════════════════════════════════════════════
@@ -36,6 +37,7 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           HAS_VENDOR_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'vendor-change') }}
+          PR_EVENT: ${{ github.event.action }}
         run: |
           set -euo pipefail
           BASE="origin/${{ github.base_ref }}"
@@ -143,14 +145,23 @@ jobs:
               echo "::error::PR ของ agent (โดย $PR_AUTHOR branch $HEAD_REF) แตะบรรทัด vendor ($VENDORHIT บรรทัด)"
               echo "::error::  ไม่อนุญาตเด็ดขาด ต่อให้ติด label ก็ตาม — การเปลี่ยนไลบรารีเป็นเรื่องของเจ้าของ"
               FAIL=1
-            elif [ "$HAS_VENDOR_LABEL" = true ]; then
-              echo "::warning::PR นี้แตะบรรทัด vendor $VENDORHIT บรรทัด และติด label vendor-change ไว้แล้ว"
-              echo "::warning::  ต้องอ่านด้วยตาว่าเปลี่ยนไลบรารีอะไรเป็นอะไร และขนาดไฟล์เปลี่ยนไปเท่าไหร่"
-            else
+            elif [ "$HAS_VENDOR_LABEL" != true ]; then
               echo "::error::PR นี้แตะบรรทัด vendor ($VENDORHIT บรรทัด) — ห้ามแก้ ห้าม format ดู INVARIANTS F2"
               echo "::error::  ถ้าตั้งใจเปลี่ยนไลบรารีที่ฝังไว้จริง ให้เจ้าของติด label ชื่อ vendor-change ที่ PR ใบนี้"
               echo "::error::  แล้วเขียนในหัว PR ว่าเปลี่ยนอะไรเป็นอะไรเพราะอะไร"
               FAIL=1
+            elif [ "$PR_EVENT" = synchronize ]; then
+              # ⚠️ label ไม่ผูกกับ commit — ติดครั้งเดียวแล้วจะค้างอยู่ตลอดอายุ PR
+              #    ถ้าไม่กันตรงนี้ พอ push อะไรตามมาทีหลัง ด่านจะปล่อยผ่านโดยไม่มีคนตัดสินใจเพิ่มอีกเลย
+              #    ซึ่งขัดกับเหตุผลที่เลือกใช้ label ตั้งแต่แรก คือให้เป็นการกระทำที่มีคนและเวลากำกับ
+              #    ทางออกจึงเปิดเฉพาะรอบที่คนเพิ่งลงมือ ไม่ใช่รอบที่โค้ดเพิ่งเปลี่ยน
+              echo "::error::PR นี้ติด label vendor-change ไว้ แต่มีการ push โค้ดเข้ามาหลังจากนั้น"
+              echo "::error::  label ที่ติดไว้เป็นการอนุมัติของ commit ก่อนหน้า ไม่ใช่ commit นี้"
+              echo "::error::  ให้เจ้าของถอด label ออกแล้วติดกลับ หลังอ่าน diff ล่าสุดแล้ว"
+              FAIL=1
+            else
+              echo "::warning::PR นี้แตะบรรทัด vendor $VENDORHIT บรรทัด และเจ้าของติด label vendor-change ให้รอบนี้"
+              echo "::warning::  ต้องอ่านด้วยตาว่าเปลี่ยนไลบรารีอะไรเป็นอะไร และขนาดไฟล์เปลี่ยนไปเท่าไหร่"
             fi
           fi
 
