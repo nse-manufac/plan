@@ -2,9 +2,9 @@ name: ด่านกัน agent ยกระดับสิทธิ์ตั�
 
 on:
   pull_request:
-    # ต้องมี edited ด้วย — ด่านข้อ 4 อ่านหัว PR เป็นเงื่อนไข ถ้าไม่รันใหม่ตอนแก้หัว PR
-    # เครื่องหมายเขียวที่ค้างอยู่จะไม่ตรงกับหัว PR ที่เจ้าของอ่านตอน merge
-    types: [opened, synchronize, reopened, edited]
+    # ต้องมี labeled/unlabeled ด้วย — ด่านข้อ 4 อ่าน label เป็นเงื่อนไข
+    # ถ้าไม่รันใหม่ตอนติด/ถอด label เครื่องหมายเขียวที่ค้างอยู่จะไม่ตรงกับสภาพจริงตอน merge
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
     branches: [main]
 
 # ═══════════════════════════════════════════════════════════════
@@ -35,7 +35,7 @@ jobs:
         env:
           HEAD_REF: ${{ github.head_ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_BODY: ${{ github.event.pull_request.body }}
+          HAS_VENDOR_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'vendor-change') }}
         run: |
           set -euo pipefail
           BASE="origin/${{ github.base_ref }}"
@@ -130,20 +130,26 @@ jobs:
             #
             #    ของจริง 30 ส.ค. 2026 — PR ที่ฝัง JSZip เพิ่มถูกด่านนี้ตีตก และ enforce_admins
             #    ที่เพิ่งเปิดทำให้ข้ามด้วยสิทธิ์เจ้าของไม่ได้อีก ด่านที่ไม่มีทางออกจึงกลายเป็นทางตัน
+            # ⚠️ ประตูคือ label ไม่ใช่ข้อความในหัว PR และไม่ใช่ IS_AGENT
+            #    หัว PR — agent เขียนเองได้ระหว่างที่เขียนใบอยู่แล้ว แทบไม่ต่างจากไม่มีด่าน
+            #    IS_AGENT — คอมเมนต์ข้างบนในไฟล์นี้เขียนไว้เองว่าห้ามใช้เป็นด่านสุดท้าย
+            #                ของอะไรที่พังแล้วเสียหายหนัก ซึ่งไลบรารี ~925 KB คือของแบบนั้น
+            #    label — เป็นการกระทำแยกต่างหาก มีชื่อคนทำและเวลาอยู่ในไทม์ไลน์ของ PR
+            #
+            #    ⚠️ ยังไม่ใช่ด่านที่หัก agent ที่ถือ credential ของเจ้าของได้ — มันติด label เองได้
+            #    แต่ต้องเป็นการกระทำที่ตั้งใจแยกอีกครั้ง ไม่ใช่พิมพ์บรรทัดเดียวระหว่างเขียนใบ
+            #    และเห็นในไทม์ไลน์ว่าใครติดเมื่อไหร่ ด่านสุดท้ายจริงคือสายตาเจ้าของ
             if [ "$IS_AGENT" = yes ]; then
-              # ⚠️ agent เขียนหัว PR ของตัวเอง คำประกาศจึงไม่ใช่ด่านสำหรับมันเลย
-              #    ทางออกข้างล่างมีไว้ให้ "กรณีที่เราแยกไม่ออกอยู่แล้ว" เท่านั้น
-              #    ไม่ใช่ให้ทุกคน — ไม่งั้นด่านที่ชื่อว่ากัน agent จะถูกข้ามด้วยข้อความบรรทัดเดียว
               echo "::error::PR ของ agent (โดย $PR_AUTHOR branch $HEAD_REF) แตะบรรทัด vendor ($VENDORHIT บรรทัด)"
-              echo "::error::  ไม่อนุญาตเด็ดขาด ไม่ว่าจะประกาศไว้ในหัว PR หรือไม่ — การเปลี่ยนไลบรารีเป็นเรื่องของเจ้าของ"
+              echo "::error::  ไม่อนุญาตเด็ดขาด ต่อให้ติด label ก็ตาม — การเปลี่ยนไลบรารีเป็นเรื่องของเจ้าของ"
               FAIL=1
-            elif echo "$PR_BODY" | grep -qE '^[[:space:]]*vendor-change:'; then
-              echo "::warning::PR นี้แตะบรรทัด vendor $VENDORHIT บรรทัด และประกาศไว้ในหัว PR แล้ว"
+            elif [ "$HAS_VENDOR_LABEL" = true ]; then
+              echo "::warning::PR นี้แตะบรรทัด vendor $VENDORHIT บรรทัด และติด label vendor-change ไว้แล้ว"
               echo "::warning::  ต้องอ่านด้วยตาว่าเปลี่ยนไลบรารีอะไรเป็นอะไร และขนาดไฟล์เปลี่ยนไปเท่าไหร่"
             else
               echo "::error::PR นี้แตะบรรทัด vendor ($VENDORHIT บรรทัด) — ห้ามแก้ ห้าม format ดู INVARIANTS F2"
-              echo "::error::  ถ้าตั้งใจเปลี่ยนไลบรารีที่ฝังไว้จริง ให้เขียนบรรทัดที่ขึ้นต้นว่า"
-              echo "::error::  vendor-change: <เปลี่ยนอะไรเป็นอะไร เพราะอะไร>   ไว้ในหัว PR"
+              echo "::error::  ถ้าตั้งใจเปลี่ยนไลบรารีที่ฝังไว้จริง ให้เจ้าของติด label ชื่อ vendor-change ที่ PR ใบนี้"
+              echo "::error::  แล้วเขียนในหัว PR ว่าเปลี่ยนอะไรเป็นอะไรเพราะอะไร"
               FAIL=1
             fi
           fi
