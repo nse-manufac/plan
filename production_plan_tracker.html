@@ -2418,8 +2418,8 @@ const DN_COL = { pn:'C', po:'D', orderDate:'E', orderQty:'F', wip:'G',
 /** เขียนข้อความลงช่อง โดยรักษารูปแบบเดิมไว้
  *  ใช้ inlineStr เพื่อไม่ต้องไปยุ่งกับตาราง sharedStrings ที่ใช้ร่วมกันทั้งไฟล์
  *  แตะตารางนั้นเมื่อไหร่ ช่องอื่นที่อ้างเลขเดียวกันจะเปลี่ยนตามไปด้วย */
-function setTextCell(doc, rowEl, col, text){
-  const c = ensureCell(doc, rowEl, col);
+function setTextCell(doc, rowEl, col, text, fallbackStyle){
+  const c = ensureCell(doc, rowEl, col, fallbackStyle);
   c.setAttribute('t', 'inlineStr');
   while(c.firstChild) c.removeChild(c.firstChild);
   const is = doc.createElementNS(XL_NS, 'is');
@@ -2441,13 +2441,14 @@ function clearCell(doc, rowEl, col){
 }
 
 /** หา <c> ของคอลัมน์นี้ สร้างใหม่ให้ถูกลำดับถ้ายังไม่มี */
-function ensureCell(doc, rowEl, col){
+function ensureCell(doc, rowEl, col, fallbackStyle){
   const ref = col + rowEl.getAttribute('r');
   for(const el of Array.from(rowEl.children)){
     if(el.getAttribute('r') === ref) return el;
   }
   const c = doc.createElementNS(XL_NS, 'c');
   c.setAttribute('r', ref);
+  if(fallbackStyle != null) c.setAttribute('s', fallbackStyle);
   const want = colIndex(col);
   let before = null;
   for(const el of Array.from(rowEl.children)){
@@ -2467,6 +2468,19 @@ async function fillDeliveryForm(zip, path, unit, date, lines, week){
   Array.from(doc.getElementsByTagNameNS(XL_NS, 'row'))
     .forEach(r => { rowByNo[Number(r.getAttribute('r'))] = r; });
 
+  // รูปแบบประจำคอลัมน์ เอาไว้ใช้กับแถวที่ยังไม่มีช่องนั้นอยู่เลย
+  // ⚠️ สำคัญกับคอลัมน์ Order Date เป็นพิเศษ — ช่องที่สร้างใหม่โดยไม่มีรูปแบบ
+  //    จะโชว์เป็นเลขดิบ 46237 แทนที่จะเป็นวันที่ ซึ่งอ่านไม่รู้เรื่องบนกระดาษ
+  const styleOf = {};
+  Object.values(DN_COL).forEach(col=>{
+    for(let n=DN_FIRST_ROW; n<=DN_LAST_ROW; n++){
+      const rowEl = rowByNo[n];
+      if(!rowEl) continue;
+      const c = Array.from(rowEl.children).find(x=>x.getAttribute('r')===col+n);
+      if(c && c.getAttribute('s') != null){ styleOf[col] = c.getAttribute('s'); break; }
+    }
+  });
+
   // หัวใบ — หน่วยกับวันที่/สัปดาห์
   const d = date.split('-');
   const dateLabel = `Date___${Number(d[2])}/${Number(d[1])}/${d[0].slice(2)}__(WK ${week})`;
@@ -2485,16 +2499,16 @@ async function fillDeliveryForm(zip, path, unit, date, lines, week){
       continue;
     }
     const l = row.line;
-    setTextCell(doc, rowEl, DN_COL.pn, row.o.pn);
-    setTextCell(doc, rowEl, DN_COL.po, row.o.poNo);
-    if(row.o.orderDate) setNumberCell(doc, rowEl, DN_COL.orderDate, isoToExcelSerial(row.o.orderDate));
+    setTextCell(doc, rowEl, DN_COL.pn, row.o.pn, styleOf[DN_COL.pn]);
+    setTextCell(doc, rowEl, DN_COL.po, row.o.poNo, styleOf[DN_COL.po]);
+    if(row.o.orderDate) setNumberCell(doc, rowEl, DN_COL.orderDate, isoToExcelSerial(row.o.orderDate), styleOf[DN_COL.orderDate]);
     else clearCell(doc, rowEl, DN_COL.orderDate);
-    setNumberCell(doc, rowEl, DN_COL.orderQty, Number(row.o.orderQty)||0);
-    setNumberCell(doc, rowEl, DN_COL.wip, row.wip);
-    setNumberCell(doc, rowEl, DN_COL.perBox, Number(l.perBox)||0);
-    setNumberCell(doc, rowEl, DN_COL.boxes, Number(l.boxes)||0);
-    setNumberCell(doc, rowEl, DN_COL.remainder, Number(l.remainder)||0);
-    if(l.remark) setTextCell(doc, rowEl, DN_COL.remark, l.remark);
+    setNumberCell(doc, rowEl, DN_COL.orderQty, Number(row.o.orderQty)||0, styleOf[DN_COL.orderQty]);
+    setNumberCell(doc, rowEl, DN_COL.wip, row.wip, styleOf[DN_COL.wip]);
+    setNumberCell(doc, rowEl, DN_COL.perBox, Number(l.perBox)||0, styleOf[DN_COL.perBox]);
+    setNumberCell(doc, rowEl, DN_COL.boxes, Number(l.boxes)||0, styleOf[DN_COL.boxes]);
+    setNumberCell(doc, rowEl, DN_COL.remainder, Number(l.remainder)||0, styleOf[DN_COL.remainder]);
+    if(l.remark) setTextCell(doc, rowEl, DN_COL.remark, l.remark, styleOf[DN_COL.remark]);
     else clearCell(doc, rowEl, DN_COL.remark);
   }
 
@@ -2550,7 +2564,7 @@ function renderDeliveryNote(){
       <td><input type="number" min="0" class="row-input dn-in" data-f="perBox" data-order="${escapeHtml(o.id)}" value="${l.perBox||''}"></td>
       <td><input type="number" min="0" class="row-input dn-in" data-f="boxes" data-order="${escapeHtml(o.id)}" value="${l.boxes||''}"></td>
       <td><input type="number" min="0" class="row-input dn-in" data-f="remainder" data-order="${escapeHtml(o.id)}" value="${l.remainder||''}"></td>
-      <td><b>${pcs? numFmt(pcs) : '—'}</b>${over?' <span class="badge red" title="มากกว่ายอดที่ยังค้างส่ง">⚠ เกิน</span>':''}</td>
+      <td data-pcs="${escapeHtml(o.id)}">${dnPcsCell(pcs, over)}</td>
       <td><input type="text" class="row-input dn-in" style="width:110px" data-f="remark" data-order="${escapeHtml(o.id)}" value="${escapeHtml(l.remark||'')}" placeholder="NEW/RETURN"></td>
     </tr>`;
   }).join('');
@@ -2563,23 +2577,48 @@ function renderDeliveryNote(){
      <tbody>${bodyHtml || emptyRow(11, 'หน่วยนี้ไม่มีใบที่ค้างส่งแล้ว')}</tbody>`;
 
   document.getElementById('dnSummary').innerHTML =
-    `${numFmt(rows.length)} บรรทัด · รวมที่จะส่งวันนี้ <b>${numFmt(totalPcs)}</b> ชิ้น` +
+    `${numFmt(rows.length)} บรรทัด · รวมที่จะส่งวันนี้ <b id="dnTotal">${numFmt(totalPcs)}</b> ชิ้น` +
     ` · ยอดนี้ลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
 
   // บันทึกตอนออกจากช่อง ไม่มีปุ่มบันทึก (INVARIANTS G2)
+  //
+  // ⚠️ ห้ามวาดตารางใหม่ทั้งใบตรงนี้ — change ยิงตอนกด Tab ซึ่งเบราว์เซอร์ย้ายโฟกัสไปช่องถัดไปแล้ว
+  //    ถ้าวาดใหม่ ช่องที่เพิ่งได้โฟกัสจะถูกทิ้ง พนักงานต้องคลิกทีละช่องทั้งวัน (INVARIANTS G2)
+  //    จึงอัปเดตเฉพาะช่องที่ค่าเปลี่ยนจริง คือ จำนวน/PCS ของแถวนั้น กับบรรทัดสรุป
+  //    (คอลัมน์ Wip bal. ไม่ขยับ เพราะเป็นยอดก่อนส่งรอบนี้ ไม่ถูกหักด้วยของที่เพิ่งคีย์)
   document.querySelectorAll('#dnTable .dn-in').forEach(el=>{
     el.addEventListener('change', function(){
-      const f = this.dataset.f;
+      const f = this.dataset.f, orderId = this.dataset.order;
       let v = this.value;
       if(f !== 'remark'){
         v = Number(v);
-        if(isNaN(v) || v < 0){ toast('กรุณากรอกตัวเลขที่ถูกต้อง (>= 0)'); renderDeliveryNote(); return; }
+        if(isNaN(v) || v < 0){ toast('กรุณากรอกตัวเลขที่ถูกต้อง (>= 0)'); this.value=''; return; }
       }
-      saveDeliveryLine(dnDate(), dnUnit(), this.dataset.order, {[f]: v});
-      renderDeliveryNote();
+      saveDeliveryLine(dnDate(), dnUnit(), orderId, {[f]: v});
+      refreshDnRow(orderId);
       renderSyncBadge();
     });
   });
+}
+
+/** ข้อความในช่อง จำนวน/PCS ของแถวหนึ่ง */
+function dnPcsCell(pcs, over){
+  return `<b>${pcs? numFmt(pcs) : '—'}</b>` +
+         (over? ' <span class="badge red" title="มากกว่ายอดที่ยังค้างส่ง">⚠ เกิน</span>' : '');
+}
+
+/** อัปเดตเฉพาะแถวที่เพิ่งแก้ ไม่แตะโฟกัสของช่องอื่น */
+function refreshDnRow(orderId){
+  const date = dnDate(), unit = dnUnit();
+  const row = deliveryRows(date, unit).find(r => r.o.id === orderId);
+  const td = document.querySelector(`#dnTable td[data-pcs="${CSS.escape(orderId)}"]`);
+  if(row && td){
+    const pcs = row.line ? deliveryQty(row.line) : 0;
+    td.innerHTML = dnPcsCell(pcs, pcs > row.wip);
+  }
+  const total = deliveryRows(date, unit).reduce((s,r)=> s + (r.line? deliveryQty(r.line) : 0), 0);
+  const el = document.getElementById('dnTotal');
+  if(el) el.textContent = numFmt(total);
 }
 
 /* ---------- ออกไฟล์ใบส่งสินค้า FM-ST-07 ---------- */

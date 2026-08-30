@@ -175,6 +175,12 @@ async function deliveryFormWorkbook(units = ['TUE-U', 'TUE-H'], opts = {}) {
       const row = ws.getRow(n);
       row.getCell(2).value = n - 9;                              // Item มีอยู่แล้วในฟอร์ม
       row.getCell(8).value  = { formula: `TODAY()-E${n}` };      // Aging
+      // ⚠️ ตั้งรูปแบบวันที่ไว้ที่แถวแรกแถวเดียว เลียนแบบฟอร์มจริงที่บางแถวยังไม่มีช่องนั้นเลย
+      //    แถวถัดไปที่แอปต้องสร้างช่องขึ้นมาใหม่ ต้องหยิบรูปแบบนี้ไปใช้ ไม่งั้นวันที่จะโชว์เป็นเลขดิบ
+      if (n === 10) {
+        row.getCell(5).value = new Date('2020-01-01T00:00:00Z');   // ของสัปดาห์ก่อนที่ค้างอยู่
+        row.getCell(5).numFmt = 'dd/mm/yyyy';
+      }
       row.getCell(16).value = { formula: `M${n}*N${n}+O${n}` };  // จำนวน/PCS
       row.getCell(23).value = { formula: `G${n}-P${n}` };        // Fail
     }

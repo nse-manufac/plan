@@ -18,9 +18,9 @@ const order = (poNo, pn, qty, orderDate, unit = 'TUE-U') => ({
 });
 
 const ORDERS = [
-  order('TM4268U001', '2877663202', 20000, '2026-08-03'),
-  order('TM4268U004', '2870756200', 37000, '2026-08-05'),
-  order('TM4267H070', '2870846701', 200, '2026-07-20', 'TUE-H')
+  order('PO-A001', '9000000001', 12000, '2026-08-03'),
+  order('PO-A004', '9000000004', 9000, '2026-08-05'),
+  order('PO-B070', '9000000070', 200, '2026-07-20', 'TUE-H')
 ];
 
 async function open(page, orders = ORDERS, records = [], unit = 'TUE-U') {
@@ -51,13 +51,13 @@ const col = (page, n) => page.locator(`#dnTable tbody tr td:nth-child(${n})`).al
 
 test('A2 — คีย์ยอดบรรจุแล้วต้องเกิดยอดส่งของในสมุดให้เอง หนึ่งใบต่อหนึ่งวัน', async ({ page }) => {
   await open(page);
-  await key(page, 'TM4268U001|2877663202', 'perBox', 64);
-  await key(page, 'TM4268U001|2877663202', 'boxes', 242);
+  await key(page, 'PO-A001|9000000001', 'perBox', 50);
+  await key(page, 'PO-A001|9000000001', 'boxes', 30);
 
   const st = await readState(page);
   const ship = st.records.filter(r => r.process === 'shipping' && !r.voided);
   expect(ship.length, 'หนึ่ง order + shipping + หนึ่งวัน = หนึ่ง record').toBe(1);
-  expect(ship[0].qty, '64 × 242 + 0 = 15,488 — สูตรเดียวกับในฟอร์ม').toBe(15488);
+  expect(ship[0].qty, '50 × 30 + 0 = 1,500 — สูตรเดียวกับในฟอร์ม').toBe(1500);
   expect(ship[0].date).toBe(DATE);
   expect(ship[0].note, 'ต้องบอกที่มาไว้ ไม่งั้นแยกจากยอดที่คีย์มือไม่ออก').toBe('จากใบส่งสินค้า');
 });
@@ -65,27 +65,27 @@ test('A2 — คีย์ยอดบรรจุแล้วต้องเก�
 test('A2 — แก้ตัวเลขที่พิมพ์ผิด ยอดต้องคิดใหม่ทั้งก้อน ไม่ใช่บวกทบ', async ({ page }) => {
   // ถ้าบวกทบ ยอดจะเบิ้ลทุกครั้งที่คนแก้ค่า และจับไม่ได้เลยจนกว่าจะสิ้นเดือน
   await open(page);
-  await key(page, 'TM4268U001|2877663202', 'perBox', 64);
-  await key(page, 'TM4268U001|2877663202', 'boxes', 242);
-  await key(page, 'TM4268U001|2877663202', 'boxes', 100);   // แก้ใหม่
+  await key(page, 'PO-A001|9000000001', 'perBox', 50);
+  await key(page, 'PO-A001|9000000001', 'boxes', 30);
+  await key(page, 'PO-A001|9000000001', 'boxes', 10);    // แก้ใหม่
 
   const st = await readState(page);
   const ship = st.records.filter(r => r.process === 'shipping' && !r.voided);
   expect(ship.length, 'ยังต้องมี record เดียว').toBe(1);
-  expect(ship[0].qty, '64 × 100 = 6,400 ไม่ใช่ 15,488 + 6,400').toBe(6400);
+  expect(ship[0].qty, '50 × 10 = 500 ไม่ใช่ 1,500 + 500').toBe(500);
 });
 
 test('Wip bal. บนใบต้องเป็นยอดค้างก่อนส่งรอบนี้ ไม่ใช่หลังส่ง', async ({ page }) => {
   // ในฟอร์มมีสูตร W = G − P (ค้าง ลบ ที่ส่งรอบนี้ = เหลือเท่าไหร่)
   // ถ้า G เป็นยอดหลังหักไปแล้ว สูตรนั้นจะหักซ้ำสองรอบและอ่านไม่ได้ความ
   await open(page);
-  await key(page, 'TM4268U001|2877663202', 'perBox', 64);
-  await key(page, 'TM4268U001|2877663202', 'boxes', 242);
+  await key(page, 'PO-A001|9000000001', 'perBox', 50);
+  await key(page, 'PO-A001|9000000001', 'boxes', 30);
 
   const wip = (await col(page, 6))[0];
   const pcs = (await col(page, 10))[0];
-  expect(wip, 'ยังต้องเป็นยอดเต็มของใบ ไม่ถูกหักด้วยของที่กำลังจะส่ง').toBe('20,000');
-  expect(pcs).toBe('15,488');
+  expect(wip, 'ยังต้องเป็นยอดเต็มของใบ ไม่ถูกหักด้วยของที่กำลังจะส่ง').toBe('12,000');
+  expect(pcs).toBe('1,500');
 });
 
 test('G2 — ตัวเลือกหน่วยต้องไม่มี "ทั้งหมด" เพราะใบหนึ่งใบเป็นของหน่วยเดียว', async ({ page }) => {
@@ -98,15 +98,15 @@ test('G2 — ตัวเลือกหน่วยต้องไม่มี 
 
 test('A1 — ใบที่ส่งครบแล้วต้องหายจากรายการ แต่บรรทัดที่คีย์วันนี้ต้องยังอยู่ให้แก้ได้', async ({ page }) => {
   await open(page, ORDERS, [{
-    id: 'S1', date: '2026-08-20', orderId: 'TM4268U004|2870756200', process: 'shipping', qty: 37000,
+    id: 'S1', date: '2026-08-20', orderId: 'PO-A004|9000000004', process: 'shipping', qty: 9000,
     note: '', deviceName: 't', createdAt: 'x', updatedAt: 'x', voided: false, _dirty: false
   }]);
-  expect(await col(page, 2), 'ใบที่ส่งครบไปแล้วไม่ต้องโผล่มาให้กรอกอีก').toEqual(['TM4268U001']);
+  expect(await col(page, 2), 'ใบที่ส่งครบไปแล้วไม่ต้องโผล่มาให้กรอกอีก').toEqual(['PO-A001']);
 
-  await key(page, 'TM4268U001|2877663202', 'perBox', 1);
-  await key(page, 'TM4268U001|2877663202', 'boxes', 20000);
+  await key(page, 'PO-A001|9000000001', 'perBox', 1);
+  await key(page, 'PO-A001|9000000001', 'boxes', 12000);
   expect(await col(page, 2), 'ส่งครบแล้วแต่เป็นบรรทัดของวันนี้ ต้องยังอยู่ให้แก้ตัวเลขที่พิมพ์ผิดได้')
-    .toEqual(['TM4268U001']);
+    .toEqual(['PO-A001']);
 });
 
 // ── ออกไฟล์ฟอร์ม FM-ST-07 ──────────────────────────────────────────
@@ -122,8 +122,8 @@ async function exportForm(page, opts = {}) {
 
 test('ไฟล์ของผู้ใช้ต้องไม่ถูกทำลาย — ออกใบแล้วทุกส่วนของฟอร์มต้องอยู่ครบ เปลี่ยนแค่ชีตเดียว', async ({ page }) => {
   await open(page);
-  await key(page, 'TM4268U001|2877663202', 'perBox', 64);
-  await key(page, 'TM4268U001|2877663202', 'boxes', 242);
+  await key(page, 'PO-A001|9000000001', 'perBox', 50);
+  await key(page, 'PO-A001|9000000001', 'boxes', 30);
 
   const { src, out } = await exportForm(page);
   const za = await JSZip.loadAsync(src), zb = await JSZip.loadAsync(out);
@@ -141,8 +141,8 @@ test('ไฟล์ของผู้ใช้ต้องไม่ถูกท�
 
 test('ห้ามแตะสูตรของฟอร์ม — Aging · จำนวน/PCS · Fail · ยอดรวมท้ายตาราง ต้องรอดครบ', async ({ page }) => {
   await open(page);
-  await key(page, 'TM4268U001|2877663202', 'perBox', 64);
-  await key(page, 'TM4268U001|2877663202', 'boxes', 242);
+  await key(page, 'PO-A001|9000000001', 'perBox', 50);
+  await key(page, 'PO-A001|9000000001', 'boxes', 30);
 
   const { out } = await exportForm(page);
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
@@ -153,20 +153,60 @@ test('ห้ามแตะสูตรของฟอร์ม — Aging · จ
   expect(xml, 'ยอดรวมท้ายตารางต้องไม่ถูกแตะ').toContain('SUM(P10:P95)');
 
   const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>\\s*<v>([^<]*)</v>').exec(xml) || [])[1];
-  expect(at('F10'), 'PO QTY').toBe('20000');
-  expect(at('G10'), 'Wip bal. ต้องเป็นยอดก่อนส่งรอบนี้ ไม่งั้นสูตร Fail หักซ้ำสองรอบ').toBe('20000');
-  expect(at('M10')).toBe('64');
-  expect(at('N10')).toBe('242');
+  expect(at('F10'), 'PO QTY').toBe('12000');
+  expect(at('G10'), 'Wip bal. ต้องเป็นยอดก่อนส่งรอบนี้ ไม่งั้นสูตร Fail หักซ้ำสองรอบ').toBe('12000');
+  expect(at('M10')).toBe('50');
+  expect(at('N10')).toBe('30');
   expect(xml, 'หัวใบต้องบอกหน่วยและวันที่ของใบนี้').toContain('Date___29/8/26__(WK 34)');
 });
 
 test('แถวที่เหลือจากใบครั้งก่อนต้องถูกล้าง ไม่ให้ของเก่าปนมาในใบใหม่', async ({ page }) => {
   await open(page);
-  await key(page, 'TM4268U001|2877663202', 'perBox', 64);
-  await key(page, 'TM4268U001|2877663202', 'boxes', 242);
+  await key(page, 'PO-A001|9000000001', 'perBox', 50);
+  await key(page, 'PO-A001|9000000001', 'boxes', 30);
 
   const { out } = await exportForm(page, { stale: true });
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
   expect(xml, 'ข้อความของใบครั้งก่อนต้องหายไป').not.toContain('ของเก่าที่ต้องหาย');
   expect(xml, 'และตัวเลขบรรจุของเก่าก็ต้องไม่ค้าง').not.toContain('<v>999</v>');
+});
+
+test('G2 — กด Tab ไล่คีย์ทีละช่อง โฟกัสต้องไม่หลุด', async ({ page }) => {
+  // change ยิงตอนกด Tab ซึ่งเบราว์เซอร์ย้ายโฟกัสไปช่องถัดไปแล้ว
+  // ถ้าโค้ดวาดตารางใหม่ทั้งใบตรงนั้น ช่องที่เพิ่งได้โฟกัสจะถูกทิ้ง
+  // แล้วพนักงานต้องคลิกทีละช่องทั้งวัน
+  await open(page);
+  const first = page.locator(`#dnTable input[data-order="PO-A001|9000000001"][data-f="perBox"]`);
+  await first.fill('50');
+  await first.press('Tab');
+  await page.waitForTimeout(200);
+
+  const focused = await page.evaluate(() => {
+    const el = document.activeElement;
+    return el && el.dataset ? { f: el.dataset.f, order: el.dataset.order } : null;
+  });
+  expect(focused, 'โฟกัสต้องอยู่ที่ช่องถัดไปของแถวเดิม ไม่ใช่หลุดไปที่ body')
+    .toEqual({ f: 'boxes', order: 'PO-A001|9000000001' });
+
+  // และค่าที่เพิ่งคีย์ต้องถูกบันทึกไปแล้วจริง ไม่ใช่แค่โฟกัสไม่หลุด
+  const st = await readState(page);
+  expect(st.deliveryNotes[0].perBox).toBe(50);
+});
+
+test('ช่องวันที่ที่แอปสร้างขึ้นใหม่ ต้องได้รูปแบบวันที่ ไม่ใช่โชว์เป็นเลขดิบ', async ({ page }) => {
+  // ฟอร์มจริงมีบางแถวที่ยังไม่มีช่องนั้นอยู่เลย แอปต้องสร้างขึ้นมาเอง
+  // ช่องใหม่ที่ไม่มีรูปแบบจะโชว์ 46237 แทน 03/08/2026 ซึ่งอ่านไม่รู้เรื่องบนกระดาษ
+  await open(page);
+  await key(page, 'PO-A001|9000000001', 'perBox', 50);
+  await key(page, 'PO-A001|9000000001', 'boxes', 30);
+  await key(page, 'PO-A004|9000000004', 'perBox', 10);
+  await key(page, 'PO-A004|9000000004', 'boxes', 5);
+
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const styleAt = ref => (new RegExp('<c r="' + ref + '"[^>]*s="([0-9]+)"').exec(xml) || [])[1];
+
+  expect(styleAt('E10'), 'แถวแรกมีรูปแบบอยู่แล้ว ต้องไม่ถูกทำหาย').toBeTruthy();
+  expect(styleAt('E11'), 'แถวที่สองแอปสร้างช่องขึ้นใหม่ ต้องหยิบรูปแบบของคอลัมน์เดียวกันมาใช้')
+    .toBe(styleAt('E10'));
 });
