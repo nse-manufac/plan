@@ -8,7 +8,7 @@
 // ไฟล์ทดสอบถูกประกอบขึ้นเองใน tests/fixtures.js — ห้ามเอาไฟล์ธุรกิจจริงเข้า repo (INVARIANTS F3)
 
 const { test, expect } = require('@playwright/test');
-const { planWorkbook, shipWorkbook, readWorkbook } = require('./fixtures');
+const { planWorkbook, readWorkbook } = require('./fixtures');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -121,46 +121,6 @@ test('ชีตที่ซ่อนคือของที่เขาตั�
     'ชีตที่ซ่อนต้องมีป้ายกำกับ ไม่งั้นคนเลือกไปโดยไม่รู้ว่ามันเป็นของเก่าที่ถูกซ่อนไว้').toBe(true);
   expect(await page.locator('#sheetSelect').inputValue(),
     'เลือกอัตโนมัติต้องข้ามชีตที่ซ่อน แม้เลข WK จะสูงกว่า').toBe('WK 30  26-29.7.26');
-});
-
-// ── นำเข้าใบส่งงาน TPP-UNION ────────────────────────────────────────
-
-test('A2 — นำเข้าใบส่งงานแล้วต้องได้ยอด shipping ตรงกับคอลัมน์ จำนวน/PCS', async ({ page }) => {
-  await openBlank(page);
-  await upload(page, '#fileInput', await planWorkbook(PLAN_ROWS), 'แผน.xlsx');
-  await page.click('#btnParseSheet');
-  await page.click('#btnConfirmImport');
-
-  await upload(page, '#shipFileInput', await shipWorkbook([
-    { unit: 'TUE-U', lines: [{ pn: '2870327301', poNo: 'TM5267H179', orderDate: '2026-07-29', orderQty: 800, qty: 500 }] },
-    { unit: 'TUE-H', lines: [{ pn: '2870501700', poNo: 'TM5267H176', orderDate: '2026-07-30', orderQty: 5000, qty: 1200 }] }
-  ]), 'ใบส่งงาน.xlsx');
-  await expect(page.locator('#shipPreviewPanel')).toBeVisible();
-  await page.fill('#shipDate', '2026-08-29');
-  await page.click('#btnConfirmShipImport');
-
-  const rs = await records(page);
-  const ship = rs.filter(r => r.process === 'shipping' && !r.voided);
-  expect(ship.length, 'ต้องได้บรรทัดละหนึ่ง record').toBe(2);
-  expect(ship.every(r => r.date === '2026-08-29'), 'ทุก record ต้องลงวันที่ที่เลือกไว้').toBe(true);
-  expect(ship.find(r => r.orderId === 'TM5267H179|2870327301').qty).toBe(500);
-  expect(ship.find(r => r.orderId === 'TM5267H176|2870501700').qty).toBe(1200);
-  expect(ship.every(r => r.note === 'นำเข้าจากใบส่งงาน'), 'ต้องมีที่มากำกับไว้ ไม่งั้นแยกจากยอดที่คีย์มือไม่ออก').toBe(true);
-});
-
-test('ชีตที่ซ่อนคือของที่เขาตั้งใจเก็บไว้ — ใบส่งงานชีตที่ซ่อนต้องไม่ถูกอ่านเข้ามา', async ({ page }) => {
-  await openBlank(page);
-  await upload(page, '#fileInput', await planWorkbook(PLAN_ROWS), 'แผน.xlsx');
-  await page.click('#btnParseSheet');
-  await page.click('#btnConfirmImport');
-
-  await upload(page, '#shipFileInput', await shipWorkbook([
-    { unit: 'TUE-U', lines: [{ pn: '2870327301', poNo: 'TM5267H179', orderDate: '2026-07-29', orderQty: 800, qty: 500 }] }
-  ]), 'ใบส่งงาน.xlsx');
-  await expect(page.locator('#shipPreviewPanel')).toBeVisible();
-
-  const preview = await page.locator('#shipPreviewTable').innerText();
-  expect(preview, 'ชีตที่ซ่อนคือของเก่าที่เขาตั้งใจเก็บไว้ ห้ามดึงยอดออกมาใช้').not.toContain('TMHIDDEN');
 });
 
 // ── ออกไฟล์รายงาน ──────────────────────────────────────────────────

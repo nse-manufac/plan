@@ -1,6 +1,10 @@
 // เทสหน้าจอใบส่งสินค้า และการกรอกฟอร์ม FM-ST-07
 //
-// หน้านี้เป็นที่แรกที่ "การคีย์ของพนักงาน" ไปสร้าง record ยอดส่งของให้เอง
+// ⚠️ หน่วยของการกรอกคือ P/N ไม่ใช่ PO — ตรงกับใบจริงที่ใช้อยู่หน้างาน
+//    ของถูกบรรจุรวมกันตาม P/N (ช่องต่อกล่อง/กล่อง/เศษ ถูก merge ข้ามแถวในใบจริง)
+//    แล้ว "คน" เป็นคนตัดยอดเข้าใบสั่งแต่ละใบเอง — ระบบห้ามเฉลี่ยให้
+//
+// หน้านี้เป็นที่แรกที่การคีย์ของพนักงานไปสร้าง record ยอดส่งของ
 // ถ้ายอดคิดผิด Dashboard · การ์ด WIP · และยอดที่ส่งลูกค้าจะผิดตามกันหมดโดยไม่มีใครรู้
 
 const { test, expect } = require('@playwright/test');
@@ -11,16 +15,19 @@ const { deliveryFormWorkbook } = require('./fixtures');
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
 const DATE = '2026-08-29';
+const PN_A = '9000000004', PN_B = '9000000002';
 
 const order = (poNo, pn, qty, orderDate, unit = 'TUE-U') => ({
   id: poNo + '|' + pn, week: 'WK 34', poNo, pn, subName: unit, orderQty: qty, orderDate,
   status: 'active', importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false
 });
 
+// สอง P/N — ตัวหนึ่งครอบสองใบสั่ง อีกตัวครอบใบเดียว เลียนโครงของใบจริง
 const ORDERS = [
-  order('PO-A001', '9000000001', 12000, '2026-08-03'),
-  order('PO-A004', '9000000004', 9000, '2026-08-05'),
-  order('PO-B070', '9000000070', 200, '2026-07-20', 'TUE-H')
+  order('PO-B001', PN_B, 12000, '2026-08-03'),
+  order('PO-B055', PN_B, 12000, '2026-08-10'),
+  order('PO-A004', PN_A, 9000, '2026-08-05'),
+  order('PO-H070', '9000000070', 200, '2026-07-20', 'TUE-H')
 ];
 
 async function open(page, orders = ORDERS, records = [], unit = 'TUE-U') {
@@ -34,79 +41,100 @@ async function open(page, orders = ORDERS, records = [], unit = 'TUE-U') {
   await page.click('.tab-btn[data-tab="delivery"]');
   await page.fill('#dnDate', DATE);
   await page.waitForTimeout(150);
-  // หน่วยเริ่มต้นคือตัวแรกตามตัวอักษร ต้องเลือกให้ตรงกับใบที่จะคีย์ก่อน
   if (unit) { await page.selectOption('#dnUnit', unit); await page.waitForTimeout(150); }
 }
 
-/** กรอกช่องหนึ่งแล้วรอให้บันทึก — ไม่มีปุ่มบันทึก บันทึกตอนออกจากช่อง (INVARIANTS G2) */
-async function key(page, orderId, field, value) {
-  const i = page.locator(`#dnTable input[data-order="${orderId}"][data-f="${field}"]`);
-  await i.fill(String(value));
-  await i.press('Tab');
-  await page.waitForTimeout(150);
+/** กรอกยอดบรรจุของกลุ่ม P/N — บันทึกตอนออกจากช่อง ไม่มีปุ่มบันทึก (INVARIANTS G2) */
+async function pack(page, pn, field, value) {
+  const i = page.locator(`#dnTable input.dn-pack[data-pn="${pn}"][data-f="${field}"]`);
+  await i.fill(String(value)); await i.press('Tab'); await page.waitForTimeout(150);
+}
+/** ตัดยอดเข้าใบสั่งใบหนึ่ง */
+async function alloc(page, orderId, value) {
+  const i = page.locator(`#dnTable input.dn-alloc[data-order="${orderId}"]`);
+  await i.fill(String(value)); await i.press('Tab'); await page.waitForTimeout(150);
 }
 
 const readState = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)), K_STATE);
-const col = (page, n) => page.locator(`#dnTable tbody tr td:nth-child(${n})`).allInnerTexts();
+const leftCell = (page, pn) => page.locator(`#dnTable td[data-left="${pn}"]`).innerText();
+const ships = st => st.records.filter(r => r.process === 'shipping' && !r.voided);
 
-test('A2 — คีย์ยอดบรรจุแล้วต้องเกิดยอดส่งของในสมุดให้เอง หนึ่งใบต่อหนึ่งวัน', async ({ page }) => {
+test('จัดกลุ่มตาม P/N — ยอดบรรจุกรอกครั้งเดียวต่อกลุ่ม ไม่ใช่ต่อใบสั่ง', async ({ page }) => {
   await open(page);
-  await key(page, 'PO-A001|9000000001', 'perBox', 50);
-  await key(page, 'PO-A001|9000000001', 'boxes', 30);
-
-  const st = await readState(page);
-  const ship = st.records.filter(r => r.process === 'shipping' && !r.voided);
-  expect(ship.length, 'หนึ่ง order + shipping + หนึ่งวัน = หนึ่ง record').toBe(1);
-  expect(ship[0].qty, '50 × 30 + 0 = 1,500 — สูตรเดียวกับในฟอร์ม').toBe(1500);
-  expect(ship[0].date).toBe(DATE);
-  expect(ship[0].note, 'ต้องบอกที่มาไว้ ไม่งั้นแยกจากยอดที่คีย์มือไม่ออก').toBe('จากใบส่งสินค้า');
+  expect(await page.locator('#dnTable tr.dn-group').count(), 'สอง P/N = สองหัวกลุ่ม').toBe(2);
+  expect(await page.locator('#dnTable input.dn-pack[data-f="perBox"]').count(),
+    'ช่องต่อกล่องต้องมีกลุ่มละช่องเดียว ไม่ใช่ใบสั่งละช่อง').toBe(2);
+  expect(await page.locator('#dnTable input.dn-alloc').count(), 'ช่องตัดเข้าใบมีทุกใบสั่ง').toBe(3);
 });
 
-test('A2 — แก้ตัวเลขที่พิมพ์ผิด ยอดต้องคิดใหม่ทั้งก้อน ไม่ใช่บวกทบ', async ({ page }) => {
-  // ถ้าบวกทบ ยอดจะเบิ้ลทุกครั้งที่คนแก้ค่า และจับไม่ได้เลยจนกว่าจะสิ้นเดือน
+test('A2 — คนตัดยอดเข้าใบเอง ระบบต้องไม่เฉลี่ยให้ และลงเป็น record หนึ่งใบต่อวัน', async ({ page }) => {
   await open(page);
-  await key(page, 'PO-A001|9000000001', 'perBox', 50);
-  await key(page, 'PO-A001|9000000001', 'boxes', 30);
-  await key(page, 'PO-A001|9000000001', 'boxes', 10);    // แก้ใหม่
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 30);           // รวม 1,500
 
-  const st = await readState(page);
-  const ship = st.records.filter(r => r.process === 'shipping' && !r.voided);
-  expect(ship.length, 'ยังต้องมี record เดียว').toBe(1);
-  expect(ship[0].qty, '50 × 10 = 500 ไม่ใช่ 1,500 + 500').toBe(500);
+  let st = await readState(page);
+  expect(ships(st).length, 'กรอกยอดบรรจุอย่างเดียว ต้องยังไม่มียอดส่งของใบไหนเลย').toBe(0);
+
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await alloc(page, 'PO-B055|' + PN_B, 500);
+
+  st = await readState(page);
+  const s = ships(st);
+  expect(s.length).toBe(2);
+  expect(s.find(r => r.orderId === 'PO-B001|' + PN_B).qty, 'ตามที่คนใส่ ไม่ใช่ที่ระบบเฉลี่ย').toBe(1000);
+  expect(s.find(r => r.orderId === 'PO-B055|' + PN_B).qty).toBe(500);
+  expect(s.every(r => r.note === 'จากใบส่งสินค้า'), 'ต้องบอกที่มา ไม่งั้นแยกจากยอดที่คีย์มือไม่ออก').toBe(true);
 });
 
-test('Wip bal. บนใบต้องเป็นยอดค้างก่อนส่งรอบนี้ ไม่ใช่หลังส่ง', async ({ page }) => {
-  // ในฟอร์มมีสูตร W = G − P (ค้าง ลบ ที่ส่งรอบนี้ = เหลือเท่าไหร่)
-  // ถ้า G เป็นยอดหลังหักไปแล้ว สูตรนั้นจะหักซ้ำสองรอบและอ่านไม่ได้ความ
+test('A2 — แก้ตัวเลขที่พิมพ์ผิด ต้องเขียนทับ ไม่ใช่บวกทบ', async ({ page }) => {
   await open(page);
-  await key(page, 'PO-A001|9000000001', 'perBox', 50);
-  await key(page, 'PO-A001|9000000001', 'boxes', 30);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await alloc(page, 'PO-B001|' + PN_B, 400);
 
-  const wip = (await col(page, 6))[0];
-  const pcs = (await col(page, 10))[0];
-  expect(wip, 'ยังต้องเป็นยอดเต็มของใบ ไม่ถูกหักด้วยของที่กำลังจะส่ง').toBe('12,000');
-  expect(pcs).toBe('1,500');
+  const s = ships(await readState(page));
+  expect(s.length, 'ยังต้องมี record เดียวของใบนั้น').toBe(1);
+  expect(s[0].qty, '400 ไม่ใช่ 1,400').toBe(400);
+});
+
+test('ยอดบรรจุกับยอดที่ตัดเข้าใบไม่ตรงกัน ต้องเห็นบนจอ ไม่ใช่รู้ตอนใบออกไปแล้ว', async ({ page }) => {
+  await open(page);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 30);
+  expect(await leftCell(page, PN_B), 'ยังไม่ได้ตัดเข้าใบเลย').toContain('เหลือต้องตัดอีก');
+
+  await alloc(page, 'PO-B001|' + PN_B, 1500);
+  expect(await leftCell(page, PN_B), 'ตัดครบพอดี').toContain('ตัดครบแล้ว');
+
+  await alloc(page, 'PO-B055|' + PN_B, 100);
+  expect(await leftCell(page, PN_B), 'ตัดเกินยอดที่บรรจุ ต้องเตือน').toContain('เกิน');
+});
+
+test('Wip bal. ต้องเป็นยอดค้างก่อนส่งรอบนี้ ไม่ใช่หลังส่ง', async ({ page }) => {
+  // ในฟอร์มมีสูตร W = G − P (ค้าง ลบ ที่ส่งรอบนี้) ถ้า G หักไปแล้วจะหักซ้ำสองรอบ
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 5000);
+  const row = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-B001' }).innerText();
+  expect(row, 'ยังต้องเป็นยอดเต็มของใบ').toContain('12,000');
 });
 
 test('G2 — ตัวเลือกหน่วยต้องไม่มี "ทั้งหมด" เพราะใบหนึ่งใบเป็นของหน่วยเดียว', async ({ page }) => {
   await open(page, ORDERS, [], null);
-  const opts = await page.locator('#dnUnit option').allInnerTexts();
-  expect(opts, 'ถ้ามี "ทั้งหมด" ตารางจะว่างตั้งแต่เปิดหน้าโดยไม่มีอะไรบอกว่าทำไม')
-    .toEqual(['TUE-H', 'TUE-U']);
-  expect(await page.locator('#dnUnit').inputValue(), 'ต้องเลือกหน่วยแรกให้เลย').toBe('TUE-H');
+  expect(await page.locator('#dnUnit option').allInnerTexts()).toEqual(['TUE-H', 'TUE-U']);
+  expect(await page.locator('#dnUnit').inputValue()).toBe('TUE-H');
 });
 
-test('A1 — ใบที่ส่งครบแล้วต้องหายจากรายการ แต่บรรทัดที่คีย์วันนี้ต้องยังอยู่ให้แก้ได้', async ({ page }) => {
-  await open(page, ORDERS, [{
-    id: 'S1', date: '2026-08-20', orderId: 'PO-A004|9000000004', process: 'shipping', qty: 9000,
-    note: '', deviceName: 't', createdAt: 'x', updatedAt: 'x', voided: false, _dirty: false
-  }]);
-  expect(await col(page, 2), 'ใบที่ส่งครบไปแล้วไม่ต้องโผล่มาให้กรอกอีก').toEqual(['PO-A001']);
+test('G2 — กด Tab ไล่คีย์ทีละช่อง โฟกัสต้องไม่หลุด', async ({ page }) => {
+  // change ยิงตอนกด Tab ซึ่งโฟกัสย้ายไปช่องถัดไปแล้ว ถ้าวาดตารางใหม่ทั้งใบ ช่องนั้นจะถูกทิ้ง
+  await open(page);
+  const i = page.locator(`#dnTable input.dn-pack[data-pn="${PN_B}"][data-f="perBox"]`);
+  await i.fill('50'); await i.press('Tab'); await page.waitForTimeout(200);
 
-  await key(page, 'PO-A001|9000000001', 'perBox', 1);
-  await key(page, 'PO-A001|9000000001', 'boxes', 12000);
-  expect(await col(page, 2), 'ส่งครบแล้วแต่เป็นบรรทัดของวันนี้ ต้องยังอยู่ให้แก้ตัวเลขที่พิมพ์ผิดได้')
-    .toEqual(['PO-A001']);
+  const focused = await page.evaluate(() => {
+    const el = document.activeElement;
+    return el && el.dataset ? { f: el.dataset.f, pn: el.dataset.pn } : null;
+  });
+  expect(focused, 'โฟกัสต้องอยู่ช่องถัดไปของกลุ่มเดิม').toEqual({ f: 'boxes', pn: PN_B });
+  expect((await readState(page)).deliveryNotes[0].perBox, 'และค่าต้องถูกบันทึกจริง').toBe(50);
 });
 
 // ── ออกไฟล์ฟอร์ม FM-ST-07 ──────────────────────────────────────────
@@ -120,12 +148,19 @@ async function exportForm(page, opts = {}) {
   return { src, out: fs.readFileSync(await dl.path()) };
 }
 
+/** กรอกครบหนึ่งกลุ่มสองใบ ให้ยอดตรงกัน จะได้ไม่มีกล่องยืนยันมาขวาง */
+async function fillGroupB(page) {
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 30);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await alloc(page, 'PO-B055|' + PN_B, 500);
+}
+
 test('ไฟล์ของผู้ใช้ต้องไม่ถูกทำลาย — ออกใบแล้วทุกส่วนของฟอร์มต้องอยู่ครบ เปลี่ยนแค่ชีตเดียว', async ({ page }) => {
   await open(page);
-  await key(page, 'PO-A001|9000000001', 'perBox', 50);
-  await key(page, 'PO-A001|9000000001', 'boxes', 30);
-
+  await fillGroupB(page);
   const { src, out } = await exportForm(page);
+
   const za = await JSZip.loadAsync(src), zb = await JSZip.loadAsync(out);
   const names = z => Object.keys(z.files).filter(n => !z.files[n].dir).sort();
   expect(names(zb), 'ห้ามมีส่วนไหนของไฟล์หายไปหรือโผล่เพิ่ม').toEqual(names(za));
@@ -135,15 +170,31 @@ test('ไฟล์ของผู้ใช้ต้องไม่ถูกท�
     if (await za.file(n).async('string') !== await zb.file(n).async('string')) changed.push(n);
   }
   expect(changed, 'ต้องแตะชีตของหน่วยที่ออกใบเท่านั้น').toEqual(['xl/worksheets/sheet1.xml']);
+  expect(out.length / src.length, 'ต้องยังบีบอัดอยู่').toBeLessThan(1.3);
+});
 
-  expect(out.length / src.length, 'ต้องยังบีบอัดอยู่ ไม่ใช่พองขึ้นหลายเท่า').toBeLessThan(1.3);
+test('ยอดบรรจุต้องลงแถวแรกของกลุ่มเท่านั้น และ merge ข้ามแถวให้เหมือนที่ทำมือ', async ({ page }) => {
+  await open(page);
+  await fillGroupB(page);
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>[^<]*<v>([^<]*)</v>').exec(xml) || [])[1];
+
+  expect(at('M10'), 'ยอดบรรจุอยู่แถวแรกของกลุ่ม').toBe('50');
+  expect(at('N10')).toBe('30');
+  expect(at('M11'), 'แถวที่สองของกลุ่มต้องเว้นว่าง ไม่งั้นยอดรวมท้ายตารางจะนับซ้ำ').toBeUndefined();
+
+  for (const c of ['M', 'N', 'O', 'P']) {
+    expect(xml, 'ต้อง merge คอลัมน์ ' + c + ' ข้ามแถวของกลุ่ม')
+      .toContain('<mergeCell ref="' + c + '10:' + c + '11"/>');
+  }
+  expect(xml, 'PO ของแต่ละแถวยังต่างกัน').toContain('PO-B001');
+  expect(xml, 'PO ของแต่ละแถวยังต่างกัน').toContain('PO-B055');
 });
 
 test('ห้ามแตะสูตรของฟอร์ม — Aging · จำนวน/PCS · Fail · ยอดรวมท้ายตาราง ต้องรอดครบ', async ({ page }) => {
   await open(page);
-  await key(page, 'PO-A001|9000000001', 'perBox', 50);
-  await key(page, 'PO-A001|9000000001', 'boxes', 30);
-
+  await fillGroupB(page);
   const { out } = await exportForm(page);
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
 
@@ -151,57 +202,21 @@ test('ห้ามแตะสูตรของฟอร์ม — Aging · จ
   expect((xml.match(/<f>M\d+\*N\d+\+O\d+<\/f>/g) || []).length, 'สูตร จำนวน/PCS ต้องอยู่ครบ').toBe(86);
   expect((xml.match(/<f>G\d+-P\d+<\/f>/g) || []).length, 'สูตร Fail ต้องอยู่ครบ').toBe(86);
   expect(xml, 'ยอดรวมท้ายตารางต้องไม่ถูกแตะ').toContain('SUM(P10:P95)');
-
-  const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>\\s*<v>([^<]*)</v>').exec(xml) || [])[1];
-  expect(at('F10'), 'PO QTY').toBe('12000');
-  expect(at('G10'), 'Wip bal. ต้องเป็นยอดก่อนส่งรอบนี้ ไม่งั้นสูตร Fail หักซ้ำสองรอบ').toBe('12000');
-  expect(at('M10')).toBe('50');
-  expect(at('N10')).toBe('30');
-  expect(xml, 'หัวใบต้องบอกหน่วยและวันที่ของใบนี้').toContain('Date___29/8/26__(WK 34)');
+  expect(xml, 'หัวใบต้องบอกสัปดาห์ของใบนี้').toContain('(WK 34)');
 });
 
-test('แถวที่เหลือจากใบครั้งก่อนต้องถูกล้าง ไม่ให้ของเก่าปนมาในใบใหม่', async ({ page }) => {
+test('แถวและ merge ที่เหลือจากใบครั้งก่อนต้องถูกล้าง ไม่ให้ของเก่าปนมาในใบใหม่', async ({ page }) => {
   await open(page);
-  await key(page, 'PO-A001|9000000001', 'perBox', 50);
-  await key(page, 'PO-A001|9000000001', 'boxes', 30);
-
+  await fillGroupB(page);
   const { out } = await exportForm(page, { stale: true });
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
   expect(xml, 'ข้อความของใบครั้งก่อนต้องหายไป').not.toContain('ของเก่าที่ต้องหาย');
-  expect(xml, 'และตัวเลขบรรจุของเก่าก็ต้องไม่ค้าง').not.toContain('<v>999</v>');
-});
-
-test('G2 — กด Tab ไล่คีย์ทีละช่อง โฟกัสต้องไม่หลุด', async ({ page }) => {
-  // change ยิงตอนกด Tab ซึ่งเบราว์เซอร์ย้ายโฟกัสไปช่องถัดไปแล้ว
-  // ถ้าโค้ดวาดตารางใหม่ทั้งใบตรงนั้น ช่องที่เพิ่งได้โฟกัสจะถูกทิ้ง
-  // แล้วพนักงานต้องคลิกทีละช่องทั้งวัน
-  await open(page);
-  const first = page.locator(`#dnTable input[data-order="PO-A001|9000000001"][data-f="perBox"]`);
-  await first.fill('50');
-  await first.press('Tab');
-  await page.waitForTimeout(200);
-
-  const focused = await page.evaluate(() => {
-    const el = document.activeElement;
-    return el && el.dataset ? { f: el.dataset.f, order: el.dataset.order } : null;
-  });
-  expect(focused, 'โฟกัสต้องอยู่ที่ช่องถัดไปของแถวเดิม ไม่ใช่หลุดไปที่ body')
-    .toEqual({ f: 'boxes', order: 'PO-A001|9000000001' });
-
-  // และค่าที่เพิ่งคีย์ต้องถูกบันทึกไปแล้วจริง ไม่ใช่แค่โฟกัสไม่หลุด
-  const st = await readState(page);
-  expect(st.deliveryNotes[0].perBox).toBe(50);
+  expect(xml, 'ตัวเลขบรรจุของเก่าก็ต้องไม่ค้าง').not.toContain('<v>999</v>');
 });
 
 test('ช่องวันที่ที่แอปสร้างขึ้นใหม่ ต้องได้รูปแบบวันที่ ไม่ใช่โชว์เป็นเลขดิบ', async ({ page }) => {
-  // ฟอร์มจริงมีบางแถวที่ยังไม่มีช่องนั้นอยู่เลย แอปต้องสร้างขึ้นมาเอง
-  // ช่องใหม่ที่ไม่มีรูปแบบจะโชว์ 46237 แทน 03/08/2026 ซึ่งอ่านไม่รู้เรื่องบนกระดาษ
   await open(page);
-  await key(page, 'PO-A001|9000000001', 'perBox', 50);
-  await key(page, 'PO-A001|9000000001', 'boxes', 30);
-  await key(page, 'PO-A004|9000000004', 'perBox', 10);
-  await key(page, 'PO-A004|9000000004', 'boxes', 5);
-
+  await fillGroupB(page);
   const { out } = await exportForm(page);
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
   const styleAt = ref => (new RegExp('<c r="' + ref + '"[^>]*s="([0-9]+)"').exec(xml) || [])[1];
@@ -209,4 +224,52 @@ test('ช่องวันที่ที่แอปสร้างขึ้�
   expect(styleAt('E10'), 'แถวแรกมีรูปแบบอยู่แล้ว ต้องไม่ถูกทำหาย').toBeTruthy();
   expect(styleAt('E11'), 'แถวที่สองแอปสร้างช่องขึ้นใหม่ ต้องหยิบรูปแบบของคอลัมน์เดียวกันมาใช้')
     .toBe(styleAt('E10'));
+});
+
+test('ยอดส่งของต้องมาจากใบส่งสินค้าทางเดียว — ไม่มีการนำเข้าจากไฟล์ใบส่งงานอีกแล้ว', async ({ page }) => {
+  // ตอนนี้โปรแกรมออกใบส่งสินค้าเอง การนำเข้าไฟล์ที่คนอื่นทำมาจึงกลายเป็นยอดคนละชุด
+  // ที่เขียนทับกันเงียบ ๆ เพราะใช้กุญแจ orderId|shipping|date เดียวกัน
+  await open(page, ORDERS, [], null);
+  await page.click('.tab-btn[data-tab="import"]');
+
+  await expect(page.locator('#shipFileInput'), 'ช่องเลือกไฟล์ใบส่งงานต้องไม่มีแล้ว').toHaveCount(0);
+  await expect(page.locator('#btnConfirmShipImport'), 'ปุ่มยืนยันนำเข้ายอดส่งต้องไม่มีแล้ว').toHaveCount(0);
+  await expect(page.locator('#view-import'), 'ต้องบอกคนใช้ว่ายอดส่งของย้ายไปอยู่ที่ไหน')
+    .toContainText('ใบส่งสินค้า');
+});
+
+test('B1 — ยอดที่เคยนำเข้าจากใบส่งงานไว้ ต้องยังอยู่ครบและยังบอกที่มาได้', async ({ page }) => {
+  // เอาความสามารถออก ไม่ใช่เอาข้อมูลของพนักงานออก
+  await open(page, ORDERS, [{
+    id: 'OLD1', date: '2026-08-20', orderId: 'PO-B001|' + PN_B, process: 'shipping', qty: 300,
+    note: 'นำเข้าจากใบส่งงาน', deviceName: 't', batchId: 'B1',
+    createdAt: 'x', updatedAt: 'x', voided: false, _dirty: false
+  }], null);
+
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.fill('#recFilterDate', '2026-08-20');
+  await page.waitForTimeout(200);
+  await expect(page.locator('#recordEditorTable'), 'ป้ายแหล่งที่มาต้องยังบอกว่ามาจากใบส่งงาน')
+    .toContainText('ใบส่งงาน');
+
+  const st = await readState(page);
+  expect(st.records.length, 'ข้อมูลเดิมต้องไม่หายไปไหน').toBe(1);
+});
+
+test('A1 — ใบที่ส่งครบแล้วต้องหายจากรายการ แต่บรรทัดที่คีย์วันนี้ต้องยังอยู่ให้แก้ได้', async ({ page }) => {
+  // เทสข้อนี้เคยมีแล้วหายไปตอนเขียนไฟล์ใหม่ให้เข้ากับการจัดกลุ่มตาม P/N
+  // ผู้ตรวจจับได้ว่าพฤติกรรมยังอยู่ในโค้ดแต่ไม่มีอะไรคุมแล้ว
+  await open(page, ORDERS, [{
+    id: 'S1', date: '2026-08-20', orderId: 'PO-A004|' + PN_A, process: 'shipping', qty: 9000,
+    note: '', deviceName: 't', createdAt: 'x', updatedAt: 'x', voided: false, _dirty: false
+  }]);
+  expect(await page.locator('#dnTable input.dn-alloc').count(),
+    'ใบที่ส่งครบไปแล้วไม่ต้องโผล่มาให้กรอกอีก เหลือแค่สองใบของอีก P/N').toBe(2);
+
+  // คีย์จนครบยอดของใบหนึ่งในวันนี้ แถวต้องยังอยู่ให้แก้ตัวเลขที่พิมพ์ผิดได้
+  await alloc(page, 'PO-B001|' + PN_B, 12000);
+  expect(await page.locator(`#dnTable input.dn-alloc[data-order="PO-B001|${PN_B}"]`).count(),
+    'ส่งครบแล้วแต่เป็นบรรทัดของวันนี้ ต้องยังอยู่').toBe(1);
+  expect(await page.locator(`#dnTable input.dn-alloc[data-order="PO-B001|${PN_B}"]`).inputValue())
+    .toBe('12000');
 });

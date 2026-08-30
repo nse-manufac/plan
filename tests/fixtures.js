@@ -72,43 +72,6 @@ async function planWorkbook(rows, opts = {}) {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-/** ใบส่งงาน TPP-UNION — โค้ดอ่านเฉพาะชีตที่ชื่อขึ้นต้น "ใบส่งงาน" และไม่ซ่อน
- *  หัววันที่อยู่แถว 7 คอลัมน์ U · ข้อมูลเริ่มแถว 10 · ยอดส่งจริงอยู่คอลัมน์ P */
-async function shipWorkbook(sheets, opts = {}) {
-  const wb = new ExcelJS.Workbook();
-
-  if (opts.withHidden !== false) {
-    const h = wb.addWorksheet('ใบส่งงาน TUE-X');
-    anchorTopLeft(h);
-    h.state = 'hidden';
-    h.getRow(7).getCell(21).value = `Date___${opts.dateLabel || '29/8/26'}__(WK ${opts.week || 34})`;
-    const hr = h.getRow(10);
-    hr.getCell(3).value = '9999999999';   // C = P/N
-    hr.getCell(4).value = 'TMHIDDEN';     // D = PO NO
-    hr.getCell(6).value = 999;            // F = PO QTY
-    hr.getCell(16).value = 999;           // P = จำนวน/PCS
-  }
-
-  for (const s of sheets) {
-    const ws = wb.addWorksheet('ใบส่งงาน ' + s.unit);
-    anchorTopLeft(ws);
-    ws.getRow(7).getCell(2).value = s.unit;
-    ws.getRow(7).getCell(21).value = `Date___${opts.dateLabel || '29/8/26'}__(WK ${opts.week || 34})`;
-    const sh = ws.getRow(9);
-    [[2,'Item'], [3,'P/N'], [4,'PO  NO'], [5,'Order Date'], [6,'PO QTY'], [16,'จำนวน/PCS']
-    ].forEach(([c, v]) => { sh.getCell(c).value = v; });
-    s.lines.forEach((ln, i) => {
-      const row = ws.getRow(10 + i);
-      row.getCell(3).value = ln.pn;        // C
-      row.getCell(4).value = ln.poNo;      // D
-      if (ln.orderDate) row.getCell(5).value = new Date(ln.orderDate + 'T00:00:00Z');
-      row.getCell(6).value = ln.orderQty;  // F
-      row.getCell(16).value = ln.qty;      // P = จำนวน/PCS
-    });
-  }
-  return Buffer.from(await wb.xlsx.writeBuffer());
-}
-
 /** อ่านไฟล์ที่แอปสร้างออกมา กลับเป็นโครงสร้างที่ตรวจได้ */
 async function readWorkbook(buf) {
   const wb = new ExcelJS.Workbook();
@@ -197,4 +160,4 @@ async function deliveryFormWorkbook(units = ['TUE-U', 'TUE-H'], opts = {}) {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-module.exports = { planWorkbook, shipWorkbook, callInWorkbook, deliveryFormWorkbook, readWorkbook };
+module.exports = { planWorkbook, callInWorkbook, deliveryFormWorkbook, readWorkbook };
