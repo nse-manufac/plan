@@ -80,7 +80,7 @@ test.describe('เครื่องที่อยู่หลัง UTC', () =
   });
 });
 
-test('B1 — แถวที่ไม่มี PO หรือยอดเป็นศูนย์/ติดลบ ต้องถูกข้าม ไม่ใช่เข้ามาเป็นใบเปล่า', async ({ page }) => {
+test('นำเข้าต้องคัดแถวที่ใช้ไม่ได้ออก — แถวที่ไม่มี PO หรือยอดเป็นศูนย์/ติดลบ ต้องถูกข้าม ไม่ใช่เข้ามาเป็นใบเปล่า', async ({ page }) => {
   await openBlank(page);
   await upload(page, '#fileInput', await planWorkbook([
     PLAN_ROWS[0],
@@ -96,7 +96,7 @@ test('B1 — แถวที่ไม่มี PO หรือยอดเป็
   expect(got.map(o => o.poNo), 'เหลือเฉพาะแถวที่มีทั้ง PO, P/N และยอดมากกว่าศูนย์').toEqual(['TM5267H179']);
 });
 
-test('A2 — PO กับ P/N ซ้ำกันในชีตเดียว ต้องแยกเป็นคนละใบ ไม่ทับกัน', async ({ page }) => {
+test('กุญแจของใบสั่งต้องไม่ชนกัน — PO กับ P/N ซ้ำกันในชีตเดียว ต้องแยกเป็นคนละใบ ไม่ทับกัน', async ({ page }) => {
   await openBlank(page);
   await upload(page, '#fileInput', await planWorkbook([
     { pn: '2870327301', poNo: 'TM5267H179', orderDate: '2026-07-29', qty: 800 },
@@ -111,7 +111,7 @@ test('A2 — PO กับ P/N ซ้ำกันในชีตเดียว �
   expect(got.map(o => o.orderQty)).toEqual([800, 300]);
 });
 
-test('B1 — ชีตที่ซ่อนต้องติดป้ายบอก และห้ามถูกเลือกให้อัตโนมัติ', async ({ page }) => {
+test('ชีตที่ซ่อนคือของที่เขาตั้งใจเก็บไว้ — ต้องติดป้ายบอก และห้ามถูกเลือกให้อัตโนมัติ', async ({ page }) => {
   await openBlank(page);
   await upload(page, '#fileInput', await planWorkbook(PLAN_ROWS), 'แผน.xlsx');
   await expect(page.locator('#sheetSelect')).toBeEnabled();
@@ -148,7 +148,7 @@ test('A2 — นำเข้าใบส่งงานแล้วต้อง�
   expect(ship.every(r => r.note === 'นำเข้าจากใบส่งงาน'), 'ต้องมีที่มากำกับไว้ ไม่งั้นแยกจากยอดที่คีย์มือไม่ออก').toBe(true);
 });
 
-test('B1 — ใบส่งงานชีตที่ซ่อนต้องไม่ถูกอ่านเข้ามา', async ({ page }) => {
+test('ชีตที่ซ่อนคือของที่เขาตั้งใจเก็บไว้ — ใบส่งงานชีตที่ซ่อนต้องไม่ถูกอ่านเข้ามา', async ({ page }) => {
   await openBlank(page);
   await upload(page, '#fileInput', await planWorkbook(PLAN_ROWS), 'แผน.xlsx');
   await page.click('#btnParseSheet');
