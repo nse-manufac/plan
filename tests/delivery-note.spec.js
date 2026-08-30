@@ -225,3 +225,33 @@ test('ช่องวันที่ที่แอปสร้างขึ้�
   expect(styleAt('E11'), 'แถวที่สองแอปสร้างช่องขึ้นใหม่ ต้องหยิบรูปแบบของคอลัมน์เดียวกันมาใช้')
     .toBe(styleAt('E10'));
 });
+
+test('ยอดส่งของต้องมาจากใบส่งสินค้าทางเดียว — ไม่มีการนำเข้าจากไฟล์ใบส่งงานอีกแล้ว', async ({ page }) => {
+  // ตอนนี้โปรแกรมออกใบส่งสินค้าเอง การนำเข้าไฟล์ที่คนอื่นทำมาจึงกลายเป็นยอดคนละชุด
+  // ที่เขียนทับกันเงียบ ๆ เพราะใช้กุญแจ orderId|shipping|date เดียวกัน
+  await open(page, ORDERS, [], null);
+  await page.click('.tab-btn[data-tab="import"]');
+
+  await expect(page.locator('#shipFileInput'), 'ช่องเลือกไฟล์ใบส่งงานต้องไม่มีแล้ว').toHaveCount(0);
+  await expect(page.locator('#btnConfirmShipImport'), 'ปุ่มยืนยันนำเข้ายอดส่งต้องไม่มีแล้ว').toHaveCount(0);
+  await expect(page.locator('#view-import'), 'ต้องบอกคนใช้ว่ายอดส่งของย้ายไปอยู่ที่ไหน')
+    .toContainText('ใบส่งสินค้า');
+});
+
+test('B1 — ยอดที่เคยนำเข้าจากใบส่งงานไว้ ต้องยังอยู่ครบและยังบอกที่มาได้', async ({ page }) => {
+  // เอาความสามารถออก ไม่ใช่เอาข้อมูลของพนักงานออก
+  await open(page, ORDERS, [{
+    id: 'OLD1', date: '2026-08-20', orderId: 'PO-B001|' + PN_B, process: 'shipping', qty: 300,
+    note: 'นำเข้าจากใบส่งงาน', deviceName: 't', batchId: 'B1',
+    createdAt: 'x', updatedAt: 'x', voided: false, _dirty: false
+  }], null);
+
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.fill('#recFilterDate', '2026-08-20');
+  await page.waitForTimeout(200);
+  await expect(page.locator('#recordEditorTable'), 'ป้ายแหล่งที่มาต้องยังบอกว่ามาจากใบส่งงาน')
+    .toContainText('ใบส่งงาน');
+
+  const st = await readState(page);
+  expect(st.records.length, 'ข้อมูลเดิมต้องไม่หายไปไหน').toBe(1);
+});

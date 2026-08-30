@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-30.5">
+<meta name="app-version" content="2026-08-30.6">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -196,31 +196,15 @@
   </div>
 
   <div class="panel">
-    <h2>นำเข้ายอดส่งจากใบส่งงาน (TPP-UNION)</h2>
-    <div class="desc">เลือกไฟล์ เช่น "ส่งงาน TPP-UNION WK 30  31.7.26.xlsx" — ระบบจะดึงยอดส่งจริง (คอลัมน์ "จำนวน/PCS") จากทั้งชีต TUE-H และ TUE-U มาบันทึกเป็นยอด process ส่งของ (Shipping)</div>
-    <div class="row">
-      <div class="field">
-        <label>ไฟล์ใบส่งงาน</label>
-        <input type="file" id="shipFileInput" accept=".xlsx,.xls">
-      </div>
-    </div>
-  </div>
-
-  <div class="panel" id="shipPreviewPanel" style="display:none;">
-    <h2>ตรวจสอบก่อนนำเข้ายอดส่ง</h2>
-    <div class="row">
-      <div class="field">
-        <label>วันที่ส่ง</label>
-        <input type="date" id="shipDate">
-      </div>
-    </div>
-    <div class="desc" id="shipPreviewSummary"></div>
-    <div class="table-wrap">
-      <table id="shipPreviewTable"></table>
-    </div>
-    <div class="row" style="margin-top:14px;">
-      <button class="btn primary" id="btnConfirmShipImport">✅ ยืนยันนำเข้ายอดส่งนี้</button>
-      <button class="btn" id="btnCancelShipImport">ยกเลิก</button>
+    <h2>ยอดส่งของมาจากไหน</h2>
+    <div class="desc">
+      ตั้งแต่ 30 ส.ค. 2026 <b>ยอดส่งของมาจากแท็บ 🚚 ใบส่งสินค้า ที่เดียว</b>
+      — คีย์ยอดบรรจุที่นั่นแล้วยอดจะลงสมุดให้เอง และออกไฟล์ฟอร์ม FM-ST-07 ได้จากหน้าเดียวกัน
+      <br>
+      การนำเข้ายอดส่งจากไฟล์ "ใบส่งงาน TPP-UNION" ถูกเอาออกแล้ว เพราะตอนนี้โปรแกรมเป็นคนออกใบเอง
+      การนำเข้าไฟล์ที่คนอื่นทำมาจึงกลายเป็นยอดคนละชุดที่ทับกันเงียบ ๆ ทั้งสองทางเขียนกุญแจเดียวกัน
+      <br>
+      <b>ยอดที่เคยนำเข้าไว้ยังอยู่ครบ</b> ดูและลบทั้งชุดได้ที่ประวัติการนำเข้าด้านล่างเหมือนเดิม
     </div>
   </div>
 
@@ -1518,54 +1502,6 @@ function parseSelectedSheet(){
   return {items, reportedTotal, sheetName:name};
 }
 
-/** อ่านไฟล์ "ใบส่งงาน" (เช่น ส่งงาน TPP-UNION WK 30 xlsx) — ดึงยอดส่งจริงต่อบรรทัดแผนงาน
- *  ใช้ sheet "ใบส่งงาน TUE-H"/"ใบส่งงาน TUE-U" เท่านั้น (sheet อื่นในไฟล์นี้เป็น X'FRM รายสัปดาห์/ซ่อน)
- *  Convention คอลัมน์เดียวกับใบรับ Order: P/N เป็นตัวเลข, PO No. เป็นรหัส TM... จึงจับคู่ id = poNo|pn ได้ตรง ๆ */
-function parseShipWorkbook(wb){
-  const sheets = wb.worksheets.filter(ws => ws.name.trim().startsWith('ใบส่งงาน') && !isHiddenSheet(ws));
-  if(!sheets.length) return {error:'ไม่พบ sheet "ใบส่งงาน" ในไฟล์นี้ — ตรวจสอบว่าเลือกไฟล์ใบส่งงานถูกต้อง'};
-
-  const lineMap = {}; // id -> line; ถ้า id ซ้ำข้ามหลาย sheet (ไม่ควรเกิดปกติ) จะรวมยอดเป็นบรรทัดเดียว
-  let dateISO = null, week = null;
-
-  for(const ws of sheets){
-    const nm = ws.name;
-    const rows = sheetRows(ws);
-    // แถว 7 (index 6): คอลัมน์ B = Sub-Name (TUE-H/TUE-U) ทั้ง sheet, คอลัมน์ U = "Date___31/7/26__(WK 30)"
-    const headerRow = rows[6];
-    const subName = headerRow && headerRow[1]!=null ? String(headerRow[1]).trim() : nm.trim();
-    if(headerRow && headerRow[20]!=null && !dateISO){
-      const s = String(headerRow[20]);
-      const dm = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-      if(dm){
-        const d = Number(dm[1]), m = Number(dm[2]);
-        let y = dm[3]; if(y.length<=2) y = String(2000+Number(y));
-        dateISO = `${y}-${pad2(m)}-${pad2(d)}`;
-      }
-      const wm = s.match(/WK\s*(\d+)/i);
-      if(wm) week = wm[1];
-    }
-    // แถว 10 เป็นต้นไป (index 9): ต้องมีทั้ง P/N (col C) และ PO No. (col D) — แถว filler มีแค่ Item/Aging/0
-    for(let i=9;i<rows.length;i++){
-      const row = rows[i];
-      if(!row) continue;
-      const pnRaw = row[2], poRaw = row[3], qtyRaw = row[15]; // col P = "จำนวน/PCS" = ยอดส่งจริง
-      if(poRaw==null || poRaw==='' || pnRaw==null || pnRaw==='') continue;
-      const qty = Number(qtyRaw);
-      if(!qty || qty<=0 || isNaN(qty)) continue; // แถวที่ยังไม่ได้ส่งวันนี้ (P ว่าง) ข้ามไป
-
-      const poNo = String(poRaw).trim();
-      const pn = String(pnRaw).trim();
-      const id = poNo+'|'+pn;
-      const orderQty = Number(row[5])||0;       // col F = PO QTY — ใช้กรณีต้องสร้าง order ใหม่เท่านั้น
-      const orderDate = excelValueToISO(row[4]); // col E = Order Date (serial)
-      if(lineMap[id]) lineMap[id].qty += qty;
-      else lineMap[id] = {id, poNo, pn, subName, qty, orderQty, orderDate};
-    }
-  }
-  return {dateISO, week, lines: Object.values(lineMap)};
-}
-
 /* ---------- Cumulative / deadline / status helpers ---------- */
 // Soft-deleted records (voided:true) are excluded from every aggregate below but stay in
 // state.records — a hard delete would resurrect on the next Google Sheets pull, so deletion
@@ -1719,108 +1655,6 @@ function renderImportHistory(){
       toast(`ลบยอดส่งชุดนี้แล้ว ${n} รายการ`);
     });
   });
-}
-
-/* ---------- Import: ใบส่งงาน (Shipping) ---------- */
-let pendingShipData = null; // {lines, dateISO, week}
-
-function renderShipPreview(parsed){
-  if(parsed.error){ toast(parsed.error); return; }
-  if(!parsed.lines.length){ toast('ไม่พบยอดส่งที่ถูกต้องในไฟล์นี้'); return; }
-  pendingShipData = parsed;
-  document.getElementById('shipDate').value = parsed.dateISO || todayISO();
-  document.getElementById('shipPreviewPanel').style.display = '';
-  renderShipPreviewTable();
-}
-
-function renderShipPreviewTable(){
-  if(!pendingShipData) return;
-  const date = document.getElementById('shipDate').value;
-  const existingIds = new Set(state.orders.map(o=>o.id));
-  const allCum = buildCumMap(state.records);
-  const recIndex = buildRecordIndex(state.records);
-  let matchCount=0, newCount=0, sumQty=0;
-
-  const rowsHtml = pendingShipData.lines.map((ln, idx)=>{
-    sumQty += ln.qty;
-    const isNew = !existingIds.has(ln.id);
-    if(isNew) newCount++; else matchCount++;
-    const prevShip = (allCum[ln.id] && allCum[ln.id].shipping) || 0;
-    const existingToday = date ? recIndex[ln.id+'|shipping|'+date] : null;
-    const overwriteNote = existingToday!=null
-      ? `<span class="small muted">ทับยอดเดิมวันนี้ (${numFmt(existingToday)})</span>` : '';
-    const statusCell = isNew
-      ? `<label style="font-weight:500;"><input type="checkbox" class="ship-create-chk" data-idx="${idx}" checked> 🆕 สร้าง order ใหม่</label>`
-      : `<span class="badge green">✅ ตรงกับแผน</span>`;
-    return `<tr>
-      <td class="left">${escapeHtml(ln.subName)}</td>
-      <td class="left">${escapeHtml(ln.poNo)}</td>
-      <td class="left">${escapeHtml(ln.pn)}</td>
-      <td>${numFmt(ln.qty)}</td>
-      <td>${numFmt(prevShip)}</td>
-      <td class="left">${statusCell}</td>
-      <td class="left">${overwriteNote}</td>
-    </tr>`;
-  }).join('');
-  document.getElementById('shipPreviewTable').innerHTML =
-    `<thead><tr><th>Sub-Name</th><th>PO No.</th><th>P/N</th><th>ยอดส่งจากไฟล์</th><th>สะสม Shipping เดิม</th><th>สถานะ</th><th>หมายเหตุ</th></tr></thead>
-     <tbody>${rowsHtml || emptyRow(7,'ไม่พบยอดส่งที่ถูกต้อง')}</tbody>`;
-
-  let summary = `พบ ${pendingShipData.lines.length} รายการ รวม ${numFmt(sumQty)} pcs — ตรงกับแผนเดิม ${matchCount} รายการ, จะสร้าง order ใหม่ ${newCount} รายการ`;
-  if(pendingShipData.week) summary += ` (WK ${pendingShipData.week})`;
-  document.getElementById('shipPreviewSummary').textContent = summary;
-}
-
-function confirmShipImport(){
-  if(!pendingShipData || !pendingShipData.lines.length) return;
-  const date = document.getElementById('shipDate').value;
-  if(!date){ toast('กรุณาเลือกวันที่ส่งก่อนยืนยัน'); return; }
-
-  const now = new Date().toISOString();
-  const batchId = uid(); // tags every record from this one import so the whole batch can be undone together
-  const orderMap = {}; state.orders.forEach((o,i)=>orderMap[o.id]=i);
-  const checkedIdx = new Set(Array.from(document.querySelectorAll('.ship-create-chk:checked')).map(el=>Number(el.dataset.idx)));
-
-  let savedCount=0, createdCount=0, skippedCount=0, sumQty=0;
-  pendingShipData.lines.forEach((ln, idx)=>{
-    if(orderMap[ln.id]==null){
-      if(!checkedIdx.has(idx)){ skippedCount++; return; } // ไม่ติ๊กสร้าง order ใหม่ -> ข้ามทั้งบรรทัด (ไม่มี order ให้ผูกยอดส่ง)
-      state.orders.push({
-        id: ln.id, week: pendingShipData.week ? ('WK '+pendingShipData.week) : 'ใบส่งงาน',
-        poNo: ln.poNo, pn: ln.pn, subName: ln.subName, osc:'', pc:'',
-        orderQty: ln.orderQty, orderDate: ln.orderDate,
-        planWinding: null, planAssembly: null, planSupport: null, planInspection: null,
-        status:'active', importedAt: now, updatedAt: now, _dirty:true
-      });
-      orderMap[ln.id] = state.orders.length-1;
-      createdCount++;
-    }
-    const ri = state.records.findIndex(r=>r.orderId===ln.id && r.process==='shipping' && r.date===date);
-    if(ri>-1){
-      state.records[ri].qty = ln.qty;
-      state.records[ri].updatedAt = now;
-      state.records[ri].deviceName = state.deviceName;
-      state.records[ri].voided = false; // นำเข้าไฟล์เดิมซ้ำทับรายการที่เคยลบ = กู้คืนรายการนั้น
-      state.records[ri].batchId = batchId;
-      state.records[ri]._dirty = true;
-    } else {
-      state.records.push({id:uid(), date, orderId:ln.id, process:'shipping', qty:ln.qty, note:SOURCE_SHIP_IMPORT, deviceName:state.deviceName, createdAt:now, updatedAt:now, voided:false, batchId, _dirty:true});
-    }
-    savedCount++;
-    sumQty += ln.qty;
-  });
-
-  state.importHistory = state.importHistory || [];
-  state.importHistory.push({ts:Date.now(), week:'ส่งของ '+date, newCount:createdCount, updCount:savedCount-createdCount, sumQty, type:'ship', batchId});
-  saveState();
-
-  pendingShipData = null;
-  document.getElementById('shipPreviewPanel').style.display = 'none';
-  document.getElementById('shipFileInput').value = '';
-  toast(`บันทึกยอดส่งสำเร็จ: ${savedCount} รายการ (สร้าง order ใหม่ ${createdCount}) รวม ${numFmt(sumQty)} pcs`
-    + (skippedCount ? ` · ข้าม ${skippedCount} รายการ (ไม่ได้ติ๊กสร้าง order)` : ''));
-  renderAll();
-  doSync();
 }
 
 /* ---------- Render: Entry tab ---------- */
@@ -2868,28 +2702,6 @@ document.getElementById('btnConfirmImport').addEventListener('click', ()=>{
   doSync();
 });
 
-document.getElementById('shipFileInput').addEventListener('change', async (e)=>{
-  const file = e.target.files[0];
-  if(!file) return;
-  if(rejectLegacyXls(file)) return;
-  toast('กำลังอ่านไฟล์...');
-  let wb;
-  try{
-    wb = new ExcelJS.Workbook();
-    await wb.xlsx.load(await file.arrayBuffer());
-  }catch(err){
-    toast('เปิดไฟล์ไม่สำเร็จ: '+err.message);
-    return;
-  }
-  renderShipPreview(parseShipWorkbook(wb));
-});
-document.getElementById('shipDate').addEventListener('change', renderShipPreviewTable);
-document.getElementById('btnCancelShipImport').addEventListener('click', ()=>{
-  pendingShipData = null;
-  document.getElementById('shipPreviewPanel').style.display = 'none';
-  document.getElementById('shipFileInput').value = '';
-});
-document.getElementById('btnConfirmShipImport').addEventListener('click', confirmShipImport);
 
 PROCESSES.forEach(p=>{
   document.getElementById('procBtn-'+p).addEventListener('click', ()=>{
