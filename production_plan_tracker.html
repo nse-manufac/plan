@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-30.3">
+<meta name="app-version" content="2026-08-30.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -156,6 +156,7 @@
 <nav class="tabs">
   <button class="tab-btn active" data-tab="import">📥 นำเข้าแผน</button>
   <button class="tab-btn" data-tab="entry">✍️ บันทึกยอดรายวัน</button>
+  <button class="tab-btn" data-tab="delivery">🚚 ใบส่งสินค้า</button>
   <button class="tab-btn" data-tab="dashboard">📊 Dashboard</button>
   <button class="tab-btn" data-tab="data">🗂️ ข้อมูล &amp; แชร์</button>
 </nav>
@@ -307,6 +308,54 @@
     </div>
     <div class="table-wrap">
       <table id="recordEditorTable"></table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= TAB: DELIVERY NOTE ================= -->
+<section id="view-delivery" class="view">
+  <div class="panel">
+    <h2>ใบส่งสินค้า</h2>
+    <div class="desc">
+      เลือกวันที่กับหน่วย แล้วกรอกยอดบรรจุของแต่ละใบ — <b>ยอดที่กรอกจะลงสมุดเป็นยอดส่งของให้เอง</b>
+      ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน · จำนวน/PCS คิดจาก ต่อกล่อง × กล่อง + เศษ เหมือนในฟอร์ม
+    </div>
+    <div class="row filters">
+      <div class="field">
+        <label>วันที่ส่ง</label>
+        <input type="date" id="dnDate">
+      </div>
+      <div class="field">
+        <label>หน่วย</label>
+        <select id="dnUnit" style="min-width:120px"></select>
+      </div>
+      <div class="field">
+        <label>สัปดาห์ (WK)</label>
+        <input type="number" id="dnWeek" min="1" max="53" style="width:90px" placeholder="เช่น 34">
+      </div>
+    </div>
+    <div class="desc" id="dnSummary"></div>
+    <div class="table-wrap">
+      <table id="dnTable"></table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>ออกใบส่งสินค้าเป็นไฟล์ Excel</h2>
+    <div class="desc">
+      เลือกไฟล์ฟอร์ม FM-ST-07 ของบริษัท — ระบบจะกรอกเฉพาะช่องที่ต้องกรอก
+      <b>ไม่แตะสูตร โลโก้ เส้นขอบ หรือช่องที่ฝ่ายกรุงเทพกรอกเอง</b>
+      แถวที่เหลือจากใบครั้งก่อนจะถูกล้างให้ เพื่อไม่ให้ของเก่าปนมาในใบใหม่
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>ไฟล์ฟอร์ม (.xlsx)</label>
+        <input type="file" id="dnTemplateInput" accept=".xlsx">
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button class="btn primary" id="btnDnExport" disabled>📄 ออกใบส่งสินค้า</button>
+      </div>
     </div>
   </div>
 </section>
@@ -739,6 +788,11 @@ function downloadBlob(content, filename, type){
 // Shipping is tracked as the last daily-recorded stage (goods ship out incrementally, same as
 // production stages), sitting downstream of Inspection.
 // Support แทรกเป็นขั้นที่ 3 ระหว่าง Assembly กับ Inspection (issue #17) — ยังไม่มีชื่อไทยตามที่เจ้าของสั่ง
+// ที่มาของยอดส่งของ เขียนไว้ในช่อง note ของ record
+// ⚠️ ห้ามเปลี่ยนข้อความสองอันนี้ — มันถูกใช้เป็นตัวแยกแหล่งที่มาในตารางแก้ไขรายการ
+const SOURCE_SHIP_IMPORT = 'นำเข้าจากใบส่งงาน';
+const SOURCE_DELIVERY = 'จากใบส่งสินค้า';
+
 const PROCESSES = ['winding','assembly','support','inspection','shipping'];
 const PROCESS_LABELS = {winding:'Winding/Trimming', assembly:'Assembly', support:'Support', inspection:'Inspection', shipping:'ส่งของ (Shipping)'};
 const PREV_PROCESS = {winding:null, assembly:'winding', support:'assembly', inspection:'support', shipping:'inspection'};
@@ -1148,6 +1202,106 @@ function setNumberCell(doc, rowEl, col, num, fallbackStyle){
  *  ใช้สูตรตรงแทนการไล่บวกทีละถัง เพราะทนกว่าเมื่อเจอใบที่คีย์ยอดผิดลำดับ */
 function wipBalance(order, cum){
   return Math.max(0, (order.orderQty||0) - ((cum && cum.shipping) || 0));
+}
+
+/* ---------- ใบส่งสินค้า: ข้อมูลและการคิดยอด ---------- */
+
+/** วันปฏิทิน YYYY-MM-DD -> เลข serial ของ Excel
+ *  กลับทางกับ excelSerialToISO() ที่ใช้ -25569 · ทั้งคู่ยึด UTC เที่ยงคืนเหมือนกัน
+ *  จึงไม่มีทางเลื่อนวันไม่ว่าเครื่องจะอยู่เขตเวลาไหน (INVARIANTS หมวด C) */
+function isoToExcelSerial(iso){
+  const d = dateFromISO(iso);
+  if(!d) return null;
+  return Math.round(d.getTime()/86400000) + 25569;
+}
+
+/** ยอดที่ใบส่งสินค้าของวันนี้จะส่งไปแล้วสำหรับใบสั่งหนึ่ง (รวมทุกหน่วย) */
+function deliveryQtyOnDate(orderId, date){
+  return state.deliveryNotes
+    .filter(d => !d.voided && d.orderId===orderId && d.date===date)
+    .reduce((s,d)=> s + deliveryQty(d), 0);
+}
+
+/** บรรทัดของใบส่งสินค้าในวัน+หน่วยที่เลือก (ไม่รวมที่ยกเลิกแล้ว) */
+function deliveryLinesOf(date, unit){
+  return state.deliveryNotes.filter(d => !d.voided && d.date===date && d.unit===unit);
+}
+
+/** แถวที่จะแสดงบนหน้าจอใบส่งสินค้า
+ *
+ *  รวมสองกลุ่มเข้าด้วยกัน
+ *    1. ใบสั่งของหน่วยนี้ที่ยังส่งไม่ครบ — คือของที่วันนี้อาจต้องส่ง
+ *    2. บรรทัดที่คีย์ไว้แล้วในวันนี้ ถึงจะส่งครบไปแล้วก็ต้องยังเห็นและแก้ได้
+ *       ไม่งั้นพอคีย์ครบปุ๊บแถวจะหายไปทันที แล้วคนแก้ตัวเลขที่พิมพ์ผิดไม่ได้
+ *
+ *  เรียงตามวันสั่งเก่าสุดก่อน = ของที่ค้างนานสุดอยู่บนสุด ตรงกับที่ฟอร์มจริงเรียง */
+function deliveryRows(date, unit){
+  const cum = buildCumMap(state.records);
+  const lineOf = {};
+  deliveryLinesOf(date, unit).forEach(l=>{ lineOf[l.orderId] = l; });
+
+  const rows = state.orders
+    .filter(o => o.subName === unit)
+    .map(o => ({
+      o,
+      line: lineOf[o.id] || null,
+      // ⚠️ Wip bal. บนใบส่งสินค้าคือยอดค้าง "ก่อน" ส่งรอบนี้ ไม่ใช่หลังส่ง
+      //    เพราะในฟอร์มมีสูตร W = G - P คือ ค้าง ลบ ที่ส่งรอบนี้ = เหลือเท่าไหร่
+      //    ถ้าเขียน G เป็นยอดหลังหักไปแล้ว สูตรนั้นจะหักซ้ำสองรอบและอ่านไม่ได้ความ
+      //    ยอดที่คีย์วันนี้ลงสมุดไปแล้ว จึงต้องบวกกลับเข้ามาก่อน
+      wip: wipBalance(o, cum[o.id]) + deliveryQtyOnDate(o.id, date)
+    }))
+    .filter(r => r.wip > 0 || r.line);
+
+  rows.sort((a,b)=> (a.o.orderDate||'').localeCompare(b.o.orderDate||'')
+                 || String(a.o.poNo).localeCompare(String(b.o.poNo)));
+  return rows;
+}
+
+/** บันทึกบรรทัดหนึ่งของใบส่งสินค้า แล้วปรับยอดส่งของในสมุดให้ตรง
+ *
+ *  ⚠️ ยอด shipping ถูก "คิดใหม่ทั้งก้อน" จากบรรทัดของใบทุกครั้ง ไม่ใช่บวกเพิ่ม
+ *     กดซ้ำกี่ครั้งก็ได้ผลเท่าเดิม และแก้ตัวเลขที่พิมพ์ผิดแล้วยอดตามทันที
+ *     ถ้าบวกเพิ่ม ยอดจะเบิ้ลทุกครั้งที่คนแก้ค่า ซึ่งจับไม่ได้เลยจนกว่าจะสิ้นเดือน
+ *
+ *  ยอดที่ได้ลงเป็น record ตามกุญแจ orderId|shipping|date เหมือนทุกขั้น (INVARIANTS A2)
+ *  Dashboard และการ์ด WIP จึงไม่ต้องแก้อะไรเลย */
+function saveDeliveryLine(date, unit, orderId, patch){
+  const now = new Date().toISOString();
+  const i = state.deliveryNotes.findIndex(d => d.date===date && d.unit===unit && d.orderId===orderId);
+  if(i > -1){
+    Object.assign(state.deliveryNotes[i], patch, {voided:false, updatedAt:now, _dirty:true});
+  } else {
+    const o = state.orders.find(x=>x.id===orderId);
+    state.deliveryNotes.push(Object.assign({
+      id: uid(), date, unit, orderId, pn: o? o.pn : '',
+      perBox:0, boxes:0, remainder:0, remark:'', billNo:'',
+      deviceName: state.deviceName, createdAt: now, updatedAt: now, voided:false, _dirty:true
+    }, patch));
+  }
+  syncShippingFromDelivery(orderId, date);
+  saveState();
+  doSync();
+}
+
+/** คิดยอดส่งของของใบสั่งหนึ่งในวันหนึ่งใหม่ทั้งก้อน จากบรรทัดใบส่งสินค้าทุกหน่วย */
+function syncShippingFromDelivery(orderId, date){
+  const qty = deliveryQtyOnDate(orderId, date);
+
+  const now = new Date().toISOString();
+  const ri = state.records.findIndex(r => r.orderId===orderId && r.process==='shipping' && r.date===date);
+  if(ri > -1){
+    state.records[ri].qty = qty;
+    state.records[ri].voided = false;
+    state.records[ri].note = SOURCE_DELIVERY;
+    state.records[ri].updatedAt = now;
+    state.records[ri]._dirty = true;
+  } else if(qty > 0){
+    state.records.push({
+      id: uid(), date, orderId, process:'shipping', qty, note: SOURCE_DELIVERY,
+      deviceName: state.deviceName, createdAt: now, updatedAt: now, voided:false, _dirty:true
+    });
+  }
 }
 
 /* ---------- กรอกฟอร์ม Daily Call In ---------- */
@@ -1768,7 +1922,8 @@ function renderRecordEditor(){
 
   const bodyHtml = limited.map(r=>{
     const o = orderById[r.orderId];
-    const source = r.note==='นำเข้าจากใบส่งงาน' ? 'ใบส่งงาน' : 'กรอกมือ';
+    const source = r.note===SOURCE_SHIP_IMPORT ? 'ใบส่งงาน'
+                 : r.note===SOURCE_DELIVERY ? 'ใบส่งสินค้า' : 'กรอกมือ';
     const actionBtn = r.voided
       ? `<button class="btn small" data-restore="${r.id}">↩️ กู้คืน</button>`
       : `<button class="btn danger small" data-delete="${r.id}">🗑️ ลบ</button>`;
@@ -2239,6 +2394,263 @@ function addSheetFromObjects(wb, name, rows){
   return ws;
 }
 
+/* ---------- กรอกฟอร์มใบส่งสินค้า FM-ST-07 ---------- */
+/*
+ * ใช้วิธีเดียวกับ Call In คือเปิดไฟล์เป็นซิปแล้วแก้เฉพาะช่องที่ต้องแก้
+ * ❗ ห้ามเปลี่ยนไปใช้ ExcelJS เขียนไฟล์นี้ — ทดสอบกับฟอร์มจริงแล้ว xl/drawings/ ถูกตัดทิ้งทั้งหมด
+ *    ไฟล์โลโก้ยังอยู่ในซิปแต่ไม่มีอะไรบอกว่าให้วางตรงไหน โลโก้บริษัทจึงไม่ขึ้นบนกระดาษ
+ *
+ * ผังของฟอร์ม (อ่านจากไฟล์จริง FM-ST-07 ฉบับที่ 01 วันที่บังคับใช้ 14/6/2023)
+ *   B7  หน่วย · U7 "Date___D/M/YY__(WK nn)"
+ *   แถว 9 หัวตาราง · แถว 10-95 ข้อมูล (86 บรรทัด) · แถว 96 ยอดรวม
+ *   B Item(มีอยู่แล้ว) C P/N · D PO NO · E Order Date · F PO QTY · G Wip bal.
+ *   M ต่อกล่อง · N กล่อง · O เศษ · U Remark
+ *
+ * ⚠️ ห้ามแตะ H, P, W และแถว 96 — เป็นสูตรของฟอร์มเอง
+ *    H = TODAY()-E · P = M*N+O · W = G-P · แถว 96 = SUM ของทั้งคอลัมน์
+ *    ถ้าเขียนตัวเลขทับ สูตรจะหายและยอดรวมจะเพี้ยนโดยไม่มีใครรู้
+ */
+
+const DN_FIRST_ROW = 10, DN_LAST_ROW = 95;
+const DN_COL = { pn:'C', po:'D', orderDate:'E', orderQty:'F', wip:'G',
+                 perBox:'M', boxes:'N', remainder:'O', remark:'U' };
+
+/** เขียนข้อความลงช่อง โดยรักษารูปแบบเดิมไว้
+ *  ใช้ inlineStr เพื่อไม่ต้องไปยุ่งกับตาราง sharedStrings ที่ใช้ร่วมกันทั้งไฟล์
+ *  แตะตารางนั้นเมื่อไหร่ ช่องอื่นที่อ้างเลขเดียวกันจะเปลี่ยนตามไปด้วย */
+function setTextCell(doc, rowEl, col, text){
+  const c = ensureCell(doc, rowEl, col);
+  c.setAttribute('t', 'inlineStr');
+  while(c.firstChild) c.removeChild(c.firstChild);
+  const is = doc.createElementNS(XL_NS, 'is');
+  const t = doc.createElementNS(XL_NS, 't');
+  t.textContent = String(text);
+  is.appendChild(t); c.appendChild(is);
+}
+
+/** ล้างค่าในช่องแต่คงรูปแบบ (เส้นขอบ สี) ไว้ — ใช้กับแถวที่เหลือจากใบครั้งก่อน */
+function clearCell(doc, rowEl, col){
+  const ref = col + rowEl.getAttribute('r');
+  for(const el of Array.from(rowEl.children)){
+    if(el.getAttribute('r') === ref){
+      el.removeAttribute('t');
+      while(el.firstChild) el.removeChild(el.firstChild);
+      return;
+    }
+  }
+}
+
+/** หา <c> ของคอลัมน์นี้ สร้างใหม่ให้ถูกลำดับถ้ายังไม่มี */
+function ensureCell(doc, rowEl, col){
+  const ref = col + rowEl.getAttribute('r');
+  for(const el of Array.from(rowEl.children)){
+    if(el.getAttribute('r') === ref) return el;
+  }
+  const c = doc.createElementNS(XL_NS, 'c');
+  c.setAttribute('r', ref);
+  const want = colIndex(col);
+  let before = null;
+  for(const el of Array.from(rowEl.children)){
+    if(colIndex(colOfRef(el.getAttribute('r'))) > want){ before = el; break; }
+  }
+  rowEl.insertBefore(c, before);
+  return c;
+}
+
+/** กรอกฟอร์มแล้วคืนไฟล์ใหม่ · lines = [{o, line, wip}] เรียงตามที่จะพิมพ์ */
+async function fillDeliveryForm(zip, path, unit, date, lines, week){
+  if(lines.length > DN_LAST_ROW - DN_FIRST_ROW + 1){
+    throw new Error(`ฟอร์มมีที่ให้ ${DN_LAST_ROW-DN_FIRST_ROW+1} บรรทัด แต่มี ${lines.length} บรรทัดที่จะส่ง — ต้องแยกเป็นสองใบ`);
+  }
+  const doc = parseXml(await zip.file(path).async('string'));
+  const rowByNo = {};
+  Array.from(doc.getElementsByTagNameNS(XL_NS, 'row'))
+    .forEach(r => { rowByNo[Number(r.getAttribute('r'))] = r; });
+
+  // หัวใบ — หน่วยกับวันที่/สัปดาห์
+  const d = date.split('-');
+  const dateLabel = `Date___${Number(d[2])}/${Number(d[1])}/${d[0].slice(2)}__(WK ${week})`;
+  if(rowByNo[7]){
+    setTextCell(doc, rowByNo[7], 'B', unit);
+    setTextCell(doc, rowByNo[7], 'U', dateLabel);
+  }
+
+  for(let i=0; i<=DN_LAST_ROW-DN_FIRST_ROW; i++){
+    const rowEl = rowByNo[DN_FIRST_ROW + i];
+    if(!rowEl) continue;
+    const row = lines[i];
+    if(!row){
+      // แถวที่เหลือจากใบครั้งก่อนต้องล้าง ไม่งั้นใบใหม่จะมีของเก่าปนโดยไม่มีใครสังเกต
+      Object.values(DN_COL).forEach(col => clearCell(doc, rowEl, col));
+      continue;
+    }
+    const l = row.line;
+    setTextCell(doc, rowEl, DN_COL.pn, row.o.pn);
+    setTextCell(doc, rowEl, DN_COL.po, row.o.poNo);
+    if(row.o.orderDate) setNumberCell(doc, rowEl, DN_COL.orderDate, isoToExcelSerial(row.o.orderDate));
+    else clearCell(doc, rowEl, DN_COL.orderDate);
+    setNumberCell(doc, rowEl, DN_COL.orderQty, Number(row.o.orderQty)||0);
+    setNumberCell(doc, rowEl, DN_COL.wip, row.wip);
+    setNumberCell(doc, rowEl, DN_COL.perBox, Number(l.perBox)||0);
+    setNumberCell(doc, rowEl, DN_COL.boxes, Number(l.boxes)||0);
+    setNumberCell(doc, rowEl, DN_COL.remainder, Number(l.remainder)||0);
+    if(l.remark) setTextCell(doc, rowEl, DN_COL.remark, l.remark);
+    else clearCell(doc, rowEl, DN_COL.remark);
+  }
+
+  zip.file(path, serializeXml(doc));
+  // ⚠️ ต้องสั่ง DEFLATE เอง ค่าเริ่มต้นของ JSZip คือไม่บีบอัดเลย (เคยทำไฟล์โต 5 เท่ามาแล้ว)
+  return await zip.generateAsync({type:'blob', compression:'DEFLATE', compressionOptions:{level:6},
+    mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+
+/* ---------- หน้าจอใบส่งสินค้า ---------- */
+
+const dnDate = () => document.getElementById('dnDate').value;
+const dnUnit = () => document.getElementById('dnUnit').value;
+const dnWeek = () => document.getElementById('dnWeek').value;
+
+/** หน่วยที่มีอยู่จริงในข้อมูล ไม่ fix ไว้ในโค้ด — โรงงานเพิ่มหน่วยใหม่แล้วต้องโผล่เอง
+ *
+ *  ⚠️ ไม่ใช้ fillSelect() เพราะตัวนั้นใส่ตัวเลือก "ทั้งหมด" ให้เสมอ ซึ่งถูกสำหรับตัวกรอง
+ *     แต่ผิดสำหรับที่นี่ — ใบส่งสินค้าหนึ่งใบเป็นของหน่วยเดียว ไม่มีใบ "ทุกหน่วย"
+ *     ถ้าปล่อยให้เลือกได้ ตารางจะว่างเปล่าตั้งแต่เปิดหน้ามาโดยไม่มีอะไรบอกว่าทำไม */
+function renderDnUnits(){
+  const el = document.getElementById('dnUnit');
+  const units = uniqueSorted(state.orders.map(o=>o.subName));
+  const cur = el.value;
+  el.innerHTML = units.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+  if(units.includes(cur)) el.value = cur;
+}
+
+function renderDeliveryNote(){
+  renderDnUnits();
+  const date = dnDate(), unit = dnUnit();
+  if(!date || !unit){
+    document.getElementById('dnTable').innerHTML = '';
+    document.getElementById('dnSummary').textContent = 'เลือกวันที่และหน่วยก่อน';
+    return;
+  }
+  const rows = deliveryRows(date, unit);
+  let item = 0, totalPcs = 0;
+
+  const bodyHtml = rows.map(({o, line, wip})=>{
+    item++;
+    const l = line || {perBox:'', boxes:'', remainder:'', remark:''};
+    const pcs = line ? deliveryQty(line) : 0;
+    totalPcs += pcs;
+    const over = pcs > wip;   // ส่งเกินของที่ยังค้าง = คีย์ผิดหรือมีของคืนมา ต้องเห็น
+    return `<tr>
+      <td>${item}</td>
+      <td class="left">${escapeHtml(o.poNo)}</td>
+      <td class="left">${escapeHtml(o.pn)}</td>
+      <td>${fmtDateTH(o.orderDate)}</td>
+      <td>${numFmt(o.orderQty)}</td>
+      <td><b>${numFmt(wip)}</b></td>
+      <td><input type="number" min="0" class="row-input dn-in" data-f="perBox" data-order="${escapeHtml(o.id)}" value="${l.perBox||''}"></td>
+      <td><input type="number" min="0" class="row-input dn-in" data-f="boxes" data-order="${escapeHtml(o.id)}" value="${l.boxes||''}"></td>
+      <td><input type="number" min="0" class="row-input dn-in" data-f="remainder" data-order="${escapeHtml(o.id)}" value="${l.remainder||''}"></td>
+      <td><b>${pcs? numFmt(pcs) : '—'}</b>${over?' <span class="badge red" title="มากกว่ายอดที่ยังค้างส่ง">⚠ เกิน</span>':''}</td>
+      <td><input type="text" class="row-input dn-in" style="width:110px" data-f="remark" data-order="${escapeHtml(o.id)}" value="${escapeHtml(l.remark||'')}" placeholder="NEW/RETURN"></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('dnTable').innerHTML =
+    `<thead><tr><th style="width:44px">Item</th><th>PO No.</th><th>P/N</th>
+      <th style="width:100px">Order Date</th><th style="width:90px">PO QTY</th><th style="width:90px">Wip bal.</th>
+      <th style="width:90px">ต่อกล่อง</th><th style="width:80px">กล่อง</th><th style="width:80px">เศษ</th>
+      <th style="width:100px">จำนวน/PCS</th><th style="width:120px">หมายเหตุ</th></tr></thead>
+     <tbody>${bodyHtml || emptyRow(11, 'หน่วยนี้ไม่มีใบที่ค้างส่งแล้ว')}</tbody>`;
+
+  document.getElementById('dnSummary').innerHTML =
+    `${numFmt(rows.length)} บรรทัด · รวมที่จะส่งวันนี้ <b>${numFmt(totalPcs)}</b> ชิ้น` +
+    ` · ยอดนี้ลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
+
+  // บันทึกตอนออกจากช่อง ไม่มีปุ่มบันทึก (INVARIANTS G2)
+  document.querySelectorAll('#dnTable .dn-in').forEach(el=>{
+    el.addEventListener('change', function(){
+      const f = this.dataset.f;
+      let v = this.value;
+      if(f !== 'remark'){
+        v = Number(v);
+        if(isNaN(v) || v < 0){ toast('กรุณากรอกตัวเลขที่ถูกต้อง (>= 0)'); renderDeliveryNote(); return; }
+      }
+      saveDeliveryLine(dnDate(), dnUnit(), this.dataset.order, {[f]: v});
+      renderDeliveryNote();
+      renderSyncBadge();
+    });
+  });
+}
+
+/* ---------- ออกไฟล์ใบส่งสินค้า FM-ST-07 ---------- */
+
+let dnTemplate = null;   // {zip, sheetMap, fileName}
+
+document.getElementById('dnTemplateInput').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  dnTemplate = null;
+  document.getElementById('btnDnExport').disabled = true;
+  if(!file) return;
+  if(rejectLegacyXls(file)) return;
+  toast('กำลังอ่านไฟล์...');
+  try{
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    if(!zip.file('xl/workbook.xml')) throw new Error('ไม่ใช่ไฟล์ Excel (.xlsx)');
+    dnTemplate = {zip, sheetMap: await sheetPathMap(zip), fileName: file.name};
+    // เลข WK เป็นสัปดาห์การผลิตของโรงงาน ไม่ตรงกับสัปดาห์ ISO ที่คำนวณเองได้
+    // จึงอ่านจากฟอร์มที่เจ้าของเลือกมาเป็นค่าตั้งต้น แล้วให้แก้บนหน้าจอได้
+    const wk = await weekFromTemplate(zip, await sheetPathMap(zip));
+    if(wk && !dnWeek()) document.getElementById('dnWeek').value = wk;
+  }catch(err){
+    toast('เปิดไฟล์ไม่สำเร็จ: '+err.message);
+    return;
+  }
+  document.getElementById('btnDnExport').disabled = false;
+  toast('อ่านเทมเพลตแล้ว — กดออกใบส่งสินค้าได้');
+});
+
+document.getElementById('btnDnExport').addEventListener('click', async ()=>{
+  if(!dnTemplate){ toast('เลือกไฟล์ฟอร์มก่อนครับ'); return; }
+  const date = dnDate(), unit = dnUnit();
+  const lines = deliveryRows(date, unit).filter(r => r.line && deliveryQty(r.line) > 0);
+  if(!lines.length){ toast('ยังไม่มีบรรทัดที่กรอกยอดไว้ในวันนี้'); return; }
+
+  // ชีตของหน่วยนี้ — ชื่อจริงในไฟล์มีช่องว่างท้ายบ้าง จึงเทียบแบบตัดช่องว่าง
+  const sheetName = Object.keys(dnTemplate.sheetMap)
+    .find(n => n.trim().replace(/\s+/g,' ').toUpperCase().endsWith(unit.toUpperCase()));
+  if(!sheetName){
+    toast(`ไม่พบชีตของหน่วย ${unit} ในฟอร์มนี้ — มีชีต: ${Object.keys(dnTemplate.sheetMap).join(', ')}`);
+    return;
+  }
+
+  if(!dnWeek()){ toast('กรอกเลขสัปดาห์ (WK) ก่อนครับ — อยู่บนหัวใบส่งสินค้า'); return; }
+
+  const btn = document.getElementById('btnDnExport');
+  btn.disabled = true;
+  try{
+    const blob = await fillDeliveryForm(dnTemplate.zip, dnTemplate.sheetMap[sheetName], unit, date, lines, dnWeek());
+    const base = dnTemplate.fileName.replace(/\.xlsx$/i, '');
+    downloadBlob(blob, `${base} (${unit} ${date}).xlsx`,
+                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    toast(`ออกใบส่งสินค้าแล้ว ${lines.length} บรรทัด`);
+  }catch(err){
+    toast('ออกใบไม่สำเร็จ: '+err.message);
+  }finally{ btn.disabled = false; }
+});
+
+/** เลข WK ที่มีอยู่ในฟอร์ม — ใช้เป็นค่าตั้งต้นให้คนไม่ต้องพิมพ์เองทุกครั้ง */
+async function weekFromTemplate(zip, map){
+  const first = Object.values(map)[0];
+  if(!first) return '';
+  const doc = parseXml(await zip.file(first).async('string'));
+  const shared = await readSharedStrings(zip);
+  const row7 = Array.from(doc.getElementsByTagNameNS(XL_NS,'row')).find(r=>r.getAttribute('r')==='7');
+  if(!row7) return '';
+  const cell = Array.from(row7.children).find(c=>c.getAttribute('r')==='U7');
+  const m = /WK\s*(\d+)/i.exec(cellText(cell, shared));
+  return m ? m[1] : '';
+}
+
 /* ---------- Orchestration ---------- */
 function renderAll(){
   renderDashFilterOptions();
@@ -2263,6 +2675,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(tab==='entry'){ renderDashFilterOptions(); renderEntryTable(); renderRecordEditor(); }
     if(tab==='import'){ renderImportHistory(); }
     if(tab==='data'){ loadSettingsIntoForm(); }
+    if(tab==='delivery'){ renderDeliveryNote(); }
   });
 });
 
@@ -2395,6 +2808,8 @@ document.getElementById('dashSubFilter').addEventListener('change', renderDashTa
 document.getElementById('dashStatusFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashWipFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashSearch').addEventListener('input', renderDashTable);
+document.getElementById('dnDate').addEventListener('change', renderDeliveryNote);
+document.getElementById('dnUnit').addEventListener('change', renderDeliveryNote);
 document.getElementById('dashHideDone').addEventListener('change', renderDashTable);
 
 /* พิมพ์ / บันทึก PDF — ใช้ window.print() ของเบราว์เซอร์ล้วน ไม่เพิ่มไลบรารีทำ PDF (INVARIANTS F2)
@@ -2730,6 +3145,7 @@ checkAppUpdate();
 
 /* ---------- Init ---------- */
 document.getElementById('entryDate').value = todayISO();
+document.getElementById('dnDate').value = todayISO();
 document.getElementById('recFilterProcess').innerHTML =
   '<option value="">ทั้งหมด</option>' + PROCESSES.map(p=>`<option value="${p}">${escapeHtml(PROCESS_LABELS[p])}</option>`).join('');
 loadSettingsIntoForm();
