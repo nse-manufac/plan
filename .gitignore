@@ -4,6 +4,7 @@
 # NOTE: because of the deny-all rule, every new tracked file needs a line here.
 /*
 !/.gitignore
+!/.gitattributes
 !/production_plan_tracker.html
 !/CLAUDE.md
 !/INVARIANTS.md
