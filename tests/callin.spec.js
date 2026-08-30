@@ -51,17 +51,17 @@ async function apply(page) {
 }
 
 const ROWS = [
-  { pn: '2877686000', poNo: 'TM4267U041', orderDate: '2026-07-06', qty: 300, wip: 300, commit: 111 },
-  { pn: '2877686400', poNo: 'TM4267U040', orderDate: '2026-07-06', qty: 300, wip: 300, commit: 222 },
-  { pn: '9999999999', poNo: 'TMNOTINAPP', orderDate: '2026-07-06', qty: 500, wip: 500, commit: 333 }
+  { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 300, commit: 111 },
+  { pn: '9100000040', poNo: 'PO-C040', orderDate: '2026-07-06', qty: 300, wip: 300, commit: 222 },
+  { pn: '9100009999', poNo: 'PO-NOTINAPP', orderDate: '2026-07-06', qty: 500, wip: 500, commit: 333 }
 ];
-const ORDERS = [order('TM4267U041', '2877686000', 300), order('TM4267U040', '2877686400', 300)];
+const ORDERS = [order('PO-C041', '9100000041', 300), order('PO-C040', '9100000040', 300)];
 
 test('A1 — Wip bal. ต้องเป็น PO QTY ลบยอดส่งสะสม และไม่นับยอดที่ถูกยกเลิก', async ({ page }) => {
   await openWith(page, ORDERS, [
-    shipped('S1', 'TM4267U041|2877686000', 120),
-    shipped('S2', 'TM4267U040|2877686400', 300),
-    Object.assign(shipped('S3', 'TM4267U041|2877686000', 50), { voided: true, date: '2026-08-21' })
+    shipped('S1', 'PO-C041|9100000041', 120),
+    shipped('S2', 'PO-C040|9100000040', 300),
+    Object.assign(shipped('S3', 'PO-C041|9100000041', 50), { voided: true, date: '2026-08-21' })
   ]);
   await scan(page, await callInWorkbook(ROWS));
   const out = await apply(page);
@@ -77,7 +77,7 @@ test('A1 — Wip bal. ต้องเป็น PO QTY ลบยอดส่ง�
 
 test('ไฟล์ของผู้ใช้ต้องไม่ถูกทำลาย — กรอกแล้วทุกส่วนของไฟล์ต้องอยู่ครบ มีเพียงชีตที่กรอกเท่านั้นที่เปลี่ยน', async ({ page }) => {
   const src = await callInWorkbook(ROWS);
-  await openWith(page, ORDERS, [shipped('S1', 'TM4267U041|2877686000', 120)]);
+  await openWith(page, ORDERS, [shipped('S1', 'PO-C041|9100000041', 120)]);
   await scan(page, src);
   const out = await apply(page);
 
@@ -98,7 +98,7 @@ test('ไฟล์ของผู้ใช้ต้องไม่ถูกท�
   // ⚠️ เคยพลาดมาแล้ว: JSZip ไม่บีบอัดถ้าไม่สั่ง ไฟล์จริง 191 KB โตเป็น 1 MB
   //    เนื้อหาเหมือนเดิมทุกช่อง เปิดได้ปกติ ไม่มี error — จับไม่ได้เลยถ้าดูแต่เนื้อหา
   const src = await callInWorkbook(ROWS);
-  await openWith(page, ORDERS, [shipped('S1', 'TM4267U041|2877686000', 120)]);
+  await openWith(page, ORDERS, [shipped('S1', 'PO-C041|9100000041', 120)]);
   await scan(page, src);
   const out = await apply(page);
 
@@ -108,7 +108,7 @@ test('ไฟล์ของผู้ใช้ต้องไม่ถูกท�
 });
 
 test('ไฟล์ของผู้ใช้ต้องไม่ถูกทำลาย — สูตรและคอลัมน์ที่คนกรอกเอง ต้องรอดมาครบ', async ({ page }) => {
-  await openWith(page, ORDERS, [shipped('S1', 'TM4267U041|2877686000', 120)]);
+  await openWith(page, ORDERS, [shipped('S1', 'PO-C041|9100000041', 120)]);
   await scan(page, await callInWorkbook(ROWS));
   const zip = await JSZip.loadAsync(await apply(page));
   const xml = await zip.file('xl/worksheets/sheet1.xml').async('string');
@@ -124,18 +124,18 @@ test('ไฟล์ของผู้ใช้ต้องไม่ถูกท�
 
 test('ห้ามเดาแทนคน — ใบที่ยังส่งไม่ครบแต่ไม่มีแถวในไฟล์ ต้องบอกให้คนไปเพิ่มเอง ห้ามเพิ่มแถวให้', async ({ page }) => {
   // ใบที่สามไม่มีอยู่ในไฟล์ — แถวใหม่ที่แอปสร้างจะไม่มีสูตรประจำแถว ยอดรวมท้ายตารางจะผิด
-  await openWith(page, ORDERS.concat([order('TM4268U099', '2870000000', 700)]),
-                 [shipped('S1', 'TM4267U041|2877686000', 120)]);
+  await openWith(page, ORDERS.concat([order('PO-C099', '9100000099', 700)]),
+                 [shipped('S1', 'PO-C041|9100000041', 120)]);
   await scan(page, await callInWorkbook(ROWS));
 
   const summary = await page.locator('#callInSummary').innerText();
   expect(summary, 'ต้องบอกจำนวนใบที่ต้องไปเพิ่มแถวเอง').toContain('ต้องเพิ่มแถวเอง');
   await expect(page.locator('#callInTable'), 'และต้องบอกว่าเป็นใบไหน พร้อมยอดที่ควรใส่')
-    .toContainText('TM4268U099');
+    .toContainText('PO-C099');
 
   const zip = await JSZip.loadAsync(await apply(page));
   const xml = await zip.file('xl/worksheets/sheet1.xml').async('string');
-  expect(xml, 'ห้ามแอบเพิ่มแถวใหม่ลงไปในไฟล์').not.toContain('TM4268U099');
+  expect(xml, 'ห้ามแอบเพิ่มแถวใหม่ลงไปในไฟล์').not.toContain('PO-C099');
 });
 
 test('G1 — เลือกชีตผิดต้องขึ้นข้อความภาษาไทยบอกตรง ๆ ไม่ใช่เงียบหรือเขียนมั่ว', async ({ page }) => {

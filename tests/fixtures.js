@@ -155,4 +155,46 @@ async function callInWorkbook(rows, opts = {}) {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-module.exports = { planWorkbook, shipWorkbook, callInWorkbook, readWorkbook };
+/** ฟอร์มใบส่งสินค้า FM-ST-07 — โครงเหมือนของจริงเท่าที่โค้ดอ้างถึง
+ *  B7 หน่วย · U7 Date___D/M/YY__(WK nn) · แถว 9 หัวตาราง · แถว 10-95 ข้อมูล · แถว 96 ยอดรวม
+ *  H, P, W เป็นสูตรประจำแถว และแถว 96 เป็น SUM — ทั้งหมดนี้แอปห้ามแตะ */
+async function deliveryFormWorkbook(units = ['TUE-U', 'TUE-H'], opts = {}) {
+  const wb = new ExcelJS.Workbook();
+  for (const unit of units) {
+    const ws = wb.addWorksheet('ใบส่งงาน ' + unit);
+    anchorTopLeft(ws);
+    ws.getCell('F2').value = 'ใบส่งสินค้า';
+    ws.getRow(7).getCell(2).value = unit;
+    ws.getRow(7).getCell(21).value = `Date___1/1/26__(WK ${opts.week || 34})`;
+    const head = ws.getRow(9);
+    [[2,'Item'], [3,'P/N'], [4,'PO  NO'], [5,'Order Date'], [6,'PO QTY'], [7,'Wip bal.'], [8,'Aging'],
+     [13,'จำนวนต่อกล่อง'], [14,'จำนวนกล่อง'], [15,'จำนวนเศษ'], [16,'จำนวน/PCS'], [21,'Remark'], [23,'Fail']
+    ].forEach(([c, v]) => { head.getCell(c).value = v; });
+
+    for (let n = 10; n <= 95; n++) {
+      const row = ws.getRow(n);
+      row.getCell(2).value = n - 9;                              // Item มีอยู่แล้วในฟอร์ม
+      row.getCell(8).value  = { formula: `TODAY()-E${n}` };      // Aging
+      // ⚠️ ตั้งรูปแบบวันที่ไว้ที่แถวแรกแถวเดียว เลียนแบบฟอร์มจริงที่บางแถวยังไม่มีช่องนั้นเลย
+      //    แถวถัดไปที่แอปต้องสร้างช่องขึ้นมาใหม่ ต้องหยิบรูปแบบนี้ไปใช้ ไม่งั้นวันที่จะโชว์เป็นเลขดิบ
+      if (n === 10) {
+        row.getCell(5).value = new Date('2020-01-01T00:00:00Z');   // ของสัปดาห์ก่อนที่ค้างอยู่
+        row.getCell(5).numFmt = 'dd/mm/yyyy';
+      }
+      row.getCell(16).value = { formula: `M${n}*N${n}+O${n}` };  // จำนวน/PCS
+      row.getCell(23).value = { formula: `G${n}-P${n}` };        // Fail
+    }
+    const total = ws.getRow(96);
+    total.getCell(2).value = 'รวม';
+    total.getCell(6).value = { formula: 'SUM(F10:F95)' };
+    total.getCell(16).value = { formula: 'SUM(P10:P95)' };
+    // ของที่เหลือจากใบครั้งก่อน ต้องถูกล้างตอนออกใบใหม่
+    if (opts.stale) {
+      ws.getRow(10).getCell(3).value = 'ของเก่าที่ต้องหาย';
+      ws.getRow(10).getCell(13).value = 999;
+    }
+  }
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+module.exports = { planWorkbook, shipWorkbook, callInWorkbook, deliveryFormWorkbook, readWorkbook };
