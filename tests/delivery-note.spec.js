@@ -255,3 +255,21 @@ test('B1 — ยอดที่เคยนำเข้าจากใบส่�
   const st = await readState(page);
   expect(st.records.length, 'ข้อมูลเดิมต้องไม่หายไปไหน').toBe(1);
 });
+
+test('A1 — ใบที่ส่งครบแล้วต้องหายจากรายการ แต่บรรทัดที่คีย์วันนี้ต้องยังอยู่ให้แก้ได้', async ({ page }) => {
+  // เทสข้อนี้เคยมีแล้วหายไปตอนเขียนไฟล์ใหม่ให้เข้ากับการจัดกลุ่มตาม P/N
+  // ผู้ตรวจจับได้ว่าพฤติกรรมยังอยู่ในโค้ดแต่ไม่มีอะไรคุมแล้ว
+  await open(page, ORDERS, [{
+    id: 'S1', date: '2026-08-20', orderId: 'PO-A004|' + PN_A, process: 'shipping', qty: 9000,
+    note: '', deviceName: 't', createdAt: 'x', updatedAt: 'x', voided: false, _dirty: false
+  }]);
+  expect(await page.locator('#dnTable input.dn-alloc').count(),
+    'ใบที่ส่งครบไปแล้วไม่ต้องโผล่มาให้กรอกอีก เหลือแค่สองใบของอีก P/N').toBe(2);
+
+  // คีย์จนครบยอดของใบหนึ่งในวันนี้ แถวต้องยังอยู่ให้แก้ตัวเลขที่พิมพ์ผิดได้
+  await alloc(page, 'PO-B001|' + PN_B, 12000);
+  expect(await page.locator(`#dnTable input.dn-alloc[data-order="PO-B001|${PN_B}"]`).count(),
+    'ส่งครบแล้วแต่เป็นบรรทัดของวันนี้ ต้องยังอยู่').toBe(1);
+  expect(await page.locator(`#dnTable input.dn-alloc[data-order="PO-B001|${PN_B}"]`).inputValue())
+    .toBe('12000');
+});
