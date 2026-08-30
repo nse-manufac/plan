@@ -33,6 +33,7 @@ jobs:
         env:
           HEAD_REF: ${{ github.head_ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           set -euo pipefail
           BASE="origin/${{ github.base_ref }}"
@@ -113,15 +114,29 @@ jobs:
               fi
           fi
 
-          # ── 4. ห้ามแตะบรรทัด vendor SheetJS (INVARIANTS F2) ──
-          # ~800 KB จาก 990 KB ของไฟล์แอปคือ SheetJS ที่ vendor ไว้ในบรรทัดยาวมาก
-          # ถ้าเครื่องมือ format หรือ agent เผลอแตะ diff จะบวมมหาศาลและแอปอาจพังแบบเงียบ ๆ
+          # ── 4. ห้ามแตะบรรทัด vendor โดยไม่ได้ตั้งใจ (INVARIANTS F2) ──
+          # ไฟล์แอปเกือบทั้งไฟล์คือไลบรารีที่ vendor ไว้ในบรรทัดยาวมาก (ตอนนี้คือ ExcelJS กับ JSZip)
+          # ถ้าเครื่องมือจัดรูปแบบหรือ agent เผลอแตะ diff จะบวมมหาศาลและแอปอาจพังแบบเงียบ ๆ
           # ตรวจจากความยาวบรรทัด ไม่ต้องรู้เลขบรรทัด — เลขเลื่อนได้ แต่ความยาวไม่โกหก
           # `|| true` จำเป็น — grep คืน 1 เมื่อไม่เจอ ซึ่งกับ set -e + pipefail จะทำให้ step ล้มทั้งที่ผลคือ "สะอาด"
           VENDORHIT=$(git diff -U0 "$BASE...HEAD" -- '*.html' | grep '^[+-]' | awk 'length($0)>20000' | wc -l || true)
           if [ "$VENDORHIT" -gt 0 ]; then
-            echo "::error::PR นี้แตะบรรทัด vendor SheetJS ($VENDORHIT บรรทัด) — ห้ามแก้ ห้าม format ดู INVARIANTS F2"
-            FAIL=1
+            # ⚠️ ด่านนี้กัน "อุบัติเหตุ" เป็นหลัก ไม่ใช่กันคนที่ตั้งใจ
+            #    การเปลี่ยนหรือเพิ่มไลบรารีที่ฝังไว้เป็นเรื่องที่นาน ๆ ทีและตั้งใจทำ ห้ามขาดไม่ได้
+            #    แต่ต้องประกาศไว้ในหัว PR — เพราะเครื่องมือจัดรูปแบบที่เผลอไปรีโฟลว์บรรทัด vendor
+            #    ไม่มีทางเขียนคำประกาศนั้นให้ตัวเอง คำประกาศจึงแยกสองกรณีนี้ออกจากกันได้จริง
+            #
+            #    ของจริง 30 ส.ค. 2026 — PR ที่ฝัง JSZip เพิ่มถูกด่านนี้ตีตก และ enforce_admins
+            #    ที่เพิ่งเปิดทำให้ข้ามด้วยสิทธิ์เจ้าของไม่ได้อีก ด่านที่ไม่มีทางออกจึงกลายเป็นทางตัน
+            if printf '%s' "$PR_BODY" | grep -q 'vendor-change:'; then
+              echo "::warning::PR นี้แตะบรรทัด vendor $VENDORHIT บรรทัด และประกาศไว้ในหัว PR แล้ว"
+              echo "::warning::  ต้องอ่านด้วยตาว่าเปลี่ยนไลบรารีอะไรเป็นอะไร และขนาดไฟล์เปลี่ยนไปเท่าไหร่"
+            else
+              echo "::error::PR นี้แตะบรรทัด vendor ($VENDORHIT บรรทัด) — ห้ามแก้ ห้าม format ดู INVARIANTS F2"
+              echo "::error::  ถ้าตั้งใจเปลี่ยนไลบรารีที่ฝังไว้จริง ให้เขียนบรรทัดที่ขึ้นต้นว่า"
+              echo "::error::  vendor-change: <เปลี่ยนอะไรเป็นอะไร เพราะอะไร>   ไว้ในหัว PR"
+              FAIL=1
+            fi
           fi
 
           # ── 5. ห้ามเปลี่ยนไปโหลด library จากเน็ต (INVARIANTS F2) ──
