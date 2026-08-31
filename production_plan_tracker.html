@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-31.3">
+<meta name="app-version" content="2026-09-01.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1309,10 +1309,22 @@ function allocOf(orderId, date){
   return r ? (Number(r.qty)||0) : 0;
 }
 
+/** P/N เทียบกันเป็นข้อความเสมอ
+ *
+ *  ⚠️ P/N มาถึงแอปได้สองทาง และชนิดข้อมูลไม่เหมือนกัน
+ *       นำเข้าไฟล์ Excel → ผ่าน String(...).trim() จึงเป็นข้อความ
+ *       ซิงค์จาก Google Sheets → คัดลอกมาตรง ๆ ถ้าชีตเก็บเป็นตัวเลข ก็ได้ตัวเลขมา
+ *     แถมค่าที่อ่านจาก DOM (dataset) เป็นข้อความเสมอ
+ *
+ *  ถ้าเทียบด้วย === ตรง ๆ เครื่องที่รับข้อมูลมาจากการซิงค์จะหายอดบรรจุของตัวเองไม่เจอ
+ *  กรอกต่อกล่องแล้วหายตอนรีเฟรช · กล่องกับเศษไม่ขึ้น · และใบที่ออกมามีจำนวนเป็น 0
+ *  พนักงานเจอของจริง 1 ก.ย. 2026 บนมือถือ ส่วนเครื่องที่นำเข้าไฟล์เองไม่เจอเลย */
+const samePn = (a, b) => String(a == null ? '' : a) === String(b == null ? '' : b);
+
 /** ยอดบรรจุของกลุ่ม P/N ในวัน+หน่วยนั้น (ถ้ายังไม่เคยกรอกจะคืน null) */
 function packingOf(date, unit, pn){
   return state.deliveryNotes.find(d => !d.voided && d.date===date && d.unit===unit
-                                    && !d.orderId && d.pn===pn) || null;
+                                    && !d.orderId && samePn(d.pn, pn)) || null;
 }
 
 /** จัดกลุ่มตาม P/N — โครงเดียวกับที่ใบจริงเรียง
@@ -1339,8 +1351,10 @@ function deliveryGroups(date, unit){
     // Wip bal. คือยอดค้าง "ก่อน" ส่งรอบนี้ จึงบวกของที่ตัดเข้าใบวันนี้กลับเข้าไป
     const wip = wipBalance(o, cum[o.id]) + alloc;
     if(wip <= 0 && alloc <= 0) return;
-    if(!byPn.has(o.pn)) byPn.set(o.pn, []);
-    byPn.get(o.pn).push({o, wip, alloc});
+    // จัดกลุ่มด้วยข้อความเสมอ ไม่งั้น P/N เดียวกันที่มาคนละทางจะแตกเป็นสองกลุ่ม
+    const key = String(o.pn == null ? '' : o.pn);
+    if(!byPn.has(key)) byPn.set(key, []);
+    byPn.get(key).push({o, wip, alloc});
   });
 
   const groups = [];
@@ -1376,12 +1390,12 @@ function deliveryGroups(date, unit){
 function savePacking(date, unit, pn, patch){
   const now = new Date().toISOString();
   const i = state.deliveryNotes.findIndex(d => d.date===date && d.unit===unit
-                                            && !d.orderId && d.pn===pn);
+                                            && !d.orderId && samePn(d.pn, pn));
   if(i > -1){
     Object.assign(state.deliveryNotes[i], patch, {voided:false, updatedAt:now, _dirty:true});
   } else {
     state.deliveryNotes.push(Object.assign({
-      id: uid(), date, unit, orderId:'', pn,
+      id: uid(), date, unit, orderId:'', pn: String(pn),
       perBox:0, boxes:0, remainder:0, remark:'', billNo:'',
       deviceName: state.deviceName, createdAt: now, updatedAt: now, voided:false, _dirty:true
     }, patch));
@@ -2720,7 +2734,7 @@ function bindDnRecalc(root){
 /** อัปเดตเฉพาะตัวเลขของกลุ่มที่เพิ่งแก้ ไม่แตะโฟกัส */
 function refreshDnGroup(pn){
   const groups = deliveryGroups(dnDate(), dnUnit());
-  const g = groups.find(x => x.pn === pn);
+  const g = groups.find(x => samePn(x.pn, pn));
   if(g){
     const pcs = document.querySelector(`#dnTable td[data-pcs="${CSS.escape(pn)}"]`);
     if(pcs) pcs.innerHTML = `<b>${g.qty? numFmt(g.qty) : '—'}</b>`;
