@@ -137,6 +137,99 @@ test('G2 — กด Tab ไล่คีย์ทีละช่อง โฟก�
   expect((await readState(page)).deliveryNotes[0].perBox, 'และค่าต้องถูกบันทึกจริง').toBe(50);
 });
 
+// ── ค้นหา ─────────────────────────────────────
+//
+// พนักงานแจ้ง 31 ส.ค. 2026 ว่าไล่หา PO กับ P/N ในรายการยาว ๆ ลำบาก
+// ตัวค้นหานี้กรองแค่สิ่งที่เห็น ไม่ได้กรองสิ่งที่ลงไปในไฟล์ — เทสข้อ "ออกใบไม่สนใจตัวค้นหา" คือข้อสำคัญที่สุด
+
+const search = async (page, q) => {
+  await page.fill('#dnSearch', q);
+  await page.waitForTimeout(150);
+};
+
+test('ค้นหาด้วย P/N — เจอกลุ่มเดียว ที่เหลือถูกซ่อน', async ({ page }) => {
+  await open(page);
+  await search(page, PN_A);
+  expect(await page.locator('#dnTable tr.dn-group').count()).toBe(1);
+  expect(await page.locator('#dnTable tbody').innerText()).toContain('PO-A004');
+});
+
+test('ค้นหาด้วย PO — ต้องโชว์ทั้งกลุ่มของ P/N นั้น ไม่ใช่เฉพาะใบที่ตรงกับคำค้น', async ({ page }) => {
+  // ยอดบรรจุเป็นของทั้งกลุ่ม ถ้าซ่อนใบพี่น้องไป ช่อง "เหลือต้องตัดอีก" จะดูเหมือนกรอกผิดทั้งที่ถูก
+  // แล้วคนจะไปแก้ตัวเลขที่ถูกอยู่แล้วให้ผิด
+  await open(page);
+  await search(page, 'PO-B001');
+  const body = await page.locator('#dnTable tbody').innerText();
+  expect(body, 'ใบที่ค้นหา').toContain('PO-B001');
+  expect(body, 'ใบพี่น้องใน P/N เดียวกันต้องอยู่ด้วย').toContain('PO-B055');
+  expect(body, 'ส่วนกลุ่มอื่นต้องหายไป').not.toContain('PO-A004');
+});
+
+test('ค้นหาแบบพิมพ์บางส่วน และไม่สนตัวพิมพ์เล็กใหญ่', async ({ page }) => {
+  await open(page);
+  await search(page, 'b055');
+  expect(await page.locator('#dnTable tbody').innerText()).toContain('PO-B055');
+  await search(page, '0004');
+  expect(await page.locator('#dnTable tbody').innerText()).toContain('PO-A004');
+});
+
+test('หาไม่เจอ ต้องบอกว่าหาอะไรอยู่ ไม่ใช่ตารางว่างเปล่าเฉย ๆ', async ({ page }) => {
+  await open(page);
+  await search(page, 'ไม่มีจริง');
+  expect(await page.locator('#dnTable tbody').innerText()).toContain('ไม่พบ');
+  expect(await page.locator('#dnTable tbody').innerText()).toContain('ไม่มีจริง');
+});
+
+test('ยอดรวมกับจำนวนกลุ่มต้องเป็นของทั้งวัน ไม่ใช่เฉพาะที่ค้นหาเจอ', async ({ page }) => {
+  // ถ้านับตามที่เห็น คนจะกดออกใบโดยเข้าใจว่ากรอกไปเท่าที่เห็น
+  await open(page);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 30);           // 1,500
+  await pack(page, PN_A, 'perBox', 10);
+  await pack(page, PN_A, 'boxes', 7);            // 70
+
+  await search(page, PN_A);
+  const sum = await page.locator('#dnSummary').innerText();
+  expect(sum, 'ยอดรวมต้องเป็นของทั้งวัน').toContain('1,570');
+  expect(sum, 'จำนวนกลุ่มต้องเป็นของทั้งวัน').toContain('2 กลุ่ม P/N');
+  expect(sum, 'ต้องบอกว่าซ่อนอะไรไว้บ้าง').toContain('ซ่อนอยู่ 1 กลุ่ม');
+  expect(sum, 'และต้องบอกว่ากลุ่มที่ซ่อนไว้มีคนกรอกไปแล้ว').toContain('กรอกไว้แล้ว 1 กลุ่ม');
+});
+
+test('ออกใบต้องไม่สนใจตัวค้นหา — ของที่ถูกซ่อนต้องยังลงในไฟล์', async ({ page }) => {
+  await open(page);
+  await fillGroupB(page);
+  await pack(page, PN_A, 'perBox', 10);
+  await pack(page, PN_A, 'boxes', 7);
+  await alloc(page, 'PO-A004|' + PN_A, 70);
+
+  await search(page, PN_A);                       // ซ่อนกลุ่ม B ไว้
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  expect(xml, 'กลุ่มที่ค้นหาเจอ').toContain('PO-A004');
+  expect(xml, 'กลุ่มที่ถูกซ่อนก็ต้องอยู่ในไฟล์ด้วย').toContain('PO-B001');
+  expect(xml, 'ครบทุกใบของกลุ่มที่ถูกซ่อน').toContain('PO-B055');
+});
+
+test('G2 — พิมพ์ในช่องค้นหาแล้วโฟกัสต้องไม่หลุด', async ({ page }) => {
+  await open(page);
+  await page.click('#dnSearch');
+  await page.keyboard.type('PO-B0');
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() => document.activeElement.id),
+    'ตารางวาดใหม่ทุกตัวอักษร ช่องค้นหาต้องยังถือโฟกัสอยู่').toBe('dnSearch');
+  expect(await page.inputValue('#dnSearch'), 'และตัวอักษรต้องครบ ไม่หายระหว่างพิมพ์').toBe('PO-B0');
+});
+
+test('เลข Item ต้องเป็นลำดับจริงของทั้งวัน ไม่ใช่ลำดับที่เห็นตอนกรอง', async ({ page }) => {
+  // เลขนี้ตรงกับเลขบรรทัดบนกระดาษที่ปริ้นออกมา ถ้าเปลี่ยนตามตัวกรองจะอ้างอิงกันไม่ได้
+  await open(page);
+  const before = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-A004' }).innerText();
+  await search(page, PN_A);
+  const after = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-A004' }).innerText();
+  expect(after.split(String.fromCharCode(9))[0]).toBe(before.split(String.fromCharCode(9))[0]);
+});
+
 // ── ออกไฟล์ฟอร์ม FM-ST-07 ──────────────────────────────────────────
 
 async function exportForm(page, opts = {}) {
