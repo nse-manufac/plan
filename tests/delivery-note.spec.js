@@ -169,7 +169,9 @@ test('ไฟล์ของผู้ใช้ต้องไม่ถูกท�
   for (const n of names(za)) {
     if (await za.file(n).async('string') !== await zb.file(n).async('string')) changed.push(n);
   }
-  expect(changed, 'ต้องแตะชีตของหน่วยที่ออกใบเท่านั้น').toEqual(['xl/worksheets/sheet1.xml']);
+  // workbook.xml เปลี่ยนเพราะต้องสั่งให้ Excel คิดสูตรใหม่ตอนเปิด (ตั้งค่าเดียว ไม่แตะชีตอื่น)
+  expect(changed, 'ต้องแตะชีตของหน่วยที่ออกใบเท่านั้น')
+    .toEqual(['xl/workbook.xml', 'xl/worksheets/sheet1.xml']);
   expect(out.length / src.length, 'ต้องยังบีบอัดอยู่').toBeLessThan(1.3);
 });
 
@@ -203,6 +205,56 @@ test('ห้ามแตะสูตรของฟอร์ม — Aging · จ
   expect((xml.match(/<f>G\d+-P\d+<\/f>/g) || []).length, 'สูตร Fail ต้องอยู่ครบ').toBe(86);
   expect(xml, 'ยอดรวมท้ายตารางต้องไม่ถูกแตะ').toContain('SUM(P10:P95)');
   expect(xml, 'หัวใบต้องบอกสัปดาห์ของใบนี้').toContain('(WK 34)');
+});
+
+// ── สูตรต้องถูกคิดใหม่ ไม่ใช่โชว์ค่าที่แคชไว้ ────────────────────
+//
+// พนักงานเจอของจริง 31 ส.ค. 2026 — กรอกยอดบรรจุครบแต่ใบที่ปริ้นออกมามีจำนวนเป็น 0
+// เพราะฟอร์มเก็บ <f>M10*N10+O10</f><v>0</v> ไว้ แล้ว Excel โชว์เลข 0 ที่แคชไว้ตัวนั้น
+// อาการเงียบสนิท ไฟล์เปิดได้ ไม่มี error สูตรก็ยังอยู่ครบ
+
+test('BUG — กรอกยอดบรรจุแล้วยังไม่ตัดเข้าใบ ยอดในไฟล์ต้องไม่กลายเป็น 0', async ({ page }) => {
+  page.on('dialog', d => d.accept());          // จะมีกล่องเตือนว่ายังตัดเข้าใบไม่ครบ
+  await open(page);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 30);
+  await pack(page, PN_B, 'remainder', 7);      // 1,507 ชิ้น
+
+  expect(await page.locator(`#dnTable td[data-pcs="${PN_B}"]`).innerText(),
+    'บนจอคิดถูกอยู่แล้ว — ที่พังคือตอนออกไฟล์').toBe('1,507');
+
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const cell = ref => (new RegExp('<c r="' + ref + '"[^>]*>.*?</c>').exec(xml) || [])[0] || '';
+
+  expect(cell('P10'), 'ช่องจำนวน/PCS ต้องไม่มีค่าเก่าค้างอยู่ ไม่งั้น Excel โชว์เลขนั้น')
+    .not.toMatch(/<v>[^<]*<\/v>/);
+  expect(cell('P10'), 'แต่สูตรต้องยังอยู่').toContain('<f>M10*N10+O10</f>');
+  expect(cell('P96'), 'ยอดรวมท้ายตารางก็ต้องไม่ค้างค่าเก่า').not.toMatch(/<v>[^<]*<\/v>/);
+});
+
+test('ไม่มีช่องสูตรไหนในชีตที่เราเขียนทับ ที่ยังค้างค่าเก่าไว้', async ({ page }) => {
+  await open(page);
+  await fillGroupB(page);
+  const { src, out } = await exportForm(page);
+
+  const cached = xml => (xml.match(/<c[^>]*>(?:(?!<\/c>).)*?<f[^>]*>(?:(?!<\/c>).)*?<v>/g) || []).length;
+  const before = await (await JSZip.loadAsync(src)).file('xl/worksheets/sheet1.xml').async('string');
+  const after  = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+
+  expect(cached(before), 'fixture ต้องมีค่าที่แคชไว้จริง ไม่งั้นเทสนี้ไม่ได้พิสูจน์อะไรเลย')
+    .toBeGreaterThan(0);
+  expect(cached(after), 'ออกไฟล์แล้วต้องไม่เหลือช่องสูตรที่ค้างค่าเก่า').toBe(0);
+});
+
+test('ต้องสั่ง Excel ให้คิดสูตรใหม่ทั้งไฟล์ตอนเปิด', async ({ page }) => {
+  await open(page);
+  await fillGroupB(page);
+  const { out } = await exportForm(page);
+  const wb = await (await JSZip.loadAsync(out)).file('xl/workbook.xml').async('string');
+  expect(wb, 'คลุมสูตรในชีตอื่นที่อ้างถึงชีตที่เราแก้ด้วย').toContain('fullCalcOnLoad="1"');
+  expect(wb, 'calcCompleted ที่ค้างอยู่ต้องถูกเอาออก ไม่ให้สถานะขัดกันเอง')
+    .not.toContain('calcCompleted');
 });
 
 test('แถวและ merge ที่เหลือจากใบครั้งก่อนต้องถูกล้าง ไม่ให้ของเก่าปนมาในใบใหม่', async ({ page }) => {

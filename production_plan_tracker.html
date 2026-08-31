@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-30.6">
+<meta name="app-version" content="2026-08-31.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1099,6 +1099,68 @@ const XL_REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relatio
 const parseXml = t => new DOMParser().parseFromString(t, 'application/xml');
 const serializeXml = doc => new XMLSerializer().serializeToString(doc);
 
+/* ---------- ทำให้ Excel คิดสูตรใหม่หลังเราแก้ช่องต้นทาง ----------
+ *
+ * ⚠️ Excel เชื่อ "ค่าที่แคชไว้" ในช่องสูตร ไม่ได้คิดใหม่ให้เองเสมอไป
+ *
+ * ในไฟล์ FM-ST-07 จริง ช่องจำนวน/PCS เก็บไว้แบบนี้
+ *     <c r="P10"><f>M10*N10+O10</f><v>0</v></c>
+ * เลข 0 ตัวหลังคือค่าที่ Excel คำนวณไว้ครั้งสุดท้ายตอนที่ M/N/O ยังว่าง
+ * เราเติม M/N/O ด้วยการเขียน XML ตรง ๆ Excel จึงไม่รู้ว่าค่าที่แคชไว้เก่าไปแล้ว
+ * แล้วโชว์ 0 ทั้งที่ช่องต้นทางมีเลขครบ · ยอดรวมท้ายตารางก็ 0 ตามกันทั้งใบ
+ *
+ * พนักงานเจอของจริงเมื่อ 31 ส.ค. 2026 — ใบส่งของที่ปริ้นออกมามีจำนวนเป็น 0
+ * อาการนี้เงียบสนิท ไฟล์เปิดได้ปกติ ไม่มี error และสูตรยังอยู่ครบถ้าคลิกเข้าไปดูในช่อง
+ * จึงดูไม่ออกจากตัวไฟล์ว่าผิด ต้องเอาไปเทียบกับที่คีย์ไว้ในโปรแกรมถึงจะรู้
+ *
+ * ปิดสองชั้น เพราะชั้นเดียวไม่พอ
+ *   1. ล้างค่าที่แคชไว้ในชีตที่เราเขียนทับ — ช่องว่างคือ "ยังไม่ได้คิด" ซึ่งคนดูออก
+ *      ต่างจากเลข 0 ที่หน้าตาเหมือนยอดจริง แล้วหลุดไปถึงลูกค้าได้
+ *   2. สั่งให้คิดใหม่ทั้งไฟล์ตอนเปิด — คลุมสูตรในชีตอื่นที่อ้างถึงชีตที่เราแก้ด้วย
+ *
+ * ห้ามแก้ด้วยการให้แอปคำนวณค่าใส่ลงไปเอง — นั่นคือการมีสูตรสองชุดที่ต้องตรงกันตลอดไป
+ * ถ้าวันหนึ่งฟอร์มเปลี่ยนสูตร ยอดในไฟล์จะผิดเงียบ ๆ อีกแบบหนึ่ง
+ */
+
+/** ล้างค่าที่แคชไว้ในช่องสูตรทุกช่องของชีตหนึ่ง · คืนจำนวนช่องที่ล้าง */
+function clearCachedFormulaValues(doc){
+  let n = 0;
+  Array.from(doc.getElementsByTagNameNS(XL_NS, 'c')).forEach(c=>{
+    if(!c.getElementsByTagNameNS(XL_NS, 'f').length) return;
+    Array.from(c.getElementsByTagNameNS(XL_NS, 'v')).forEach(v=> c.removeChild(v));
+    // t="str" บอกว่าค่าที่แคชไว้เป็นข้อความ พอไม่มีค่าแล้วก็ต้องเอาออกด้วย
+    if(c.getAttribute('t') === 'str') c.removeAttribute('t');
+    n++;
+  });
+  return n;
+}
+
+/** ลำดับลูกของ <workbook> ที่ต้องอยู่ "หลัง" calcPr ตามสเปค OOXML
+ *  ถ้าแทรกผิดลำดับ Excel จะฟ้องว่าไฟล์เสียและขอซ่อมให้ ซึ่งน่าตกใจกว่าเลขผิด */
+const WB_AFTER_CALCPR = ['oleSize','customWorkbookViews','pivotCaches','smartTagPr',
+  'smartTagTypes','webPublishing','fileRecoveryPr','webPublishObjects','extLst'];
+
+/** สั่ง Excel ให้คิดสูตรใหม่ทั้งไฟล์ตอนเปิด */
+async function setFullCalcOnLoad(zip){
+  const f = zip.file('xl/workbook.xml');
+  if(!f) return false;
+  const doc = parseXml(await f.async('string'));
+  const wb = doc.getElementsByTagNameNS(XL_NS, 'workbook')[0];
+  if(!wb) return false;
+  let calcPr = doc.getElementsByTagNameNS(XL_NS, 'calcPr')[0];
+  if(!calcPr){
+    calcPr = doc.createElementNS(XL_NS, 'calcPr');
+    const after = Array.from(wb.children)
+      .find(el => WB_AFTER_CALCPR.indexOf(el.localName) > -1) || null;
+    wb.insertBefore(calcPr, after);
+  }
+  calcPr.setAttribute('fullCalcOnLoad', '1');
+  // calcCompleted="0" ค้างอยู่ในฟอร์มจริง แปลว่ารอบคำนวณล่าสุดไม่จบ — ลบทิ้งให้สถานะไม่ขัดกันเอง
+  calcPr.removeAttribute('calcCompleted');
+  zip.file('xl/workbook.xml', serializeXml(doc));
+  return true;
+}
+
 /** 'AB12' -> 'AB' · 'AB' -> 28 (A คือ 1) */
 const colOfRef = ref => String(ref||'').replace(/[0-9]+$/, '');
 function colIndex(col){
@@ -1374,6 +1436,9 @@ async function applyCallIn(zip, path, doc, plan, wipStyle){
   plan.update.forEach(u=>{
     setNumberCell(doc, u.it.rowEl, CALLIN_COL.wip, u.wip, wipStyle);
   });
+  // Aging กับยอดรวม SUBTOTAL อ้างถึงช่องที่เราเพิ่งแก้ — ถ้าไม่สั่งคิดใหม่จะโชว์ค่าเก่า
+  clearCachedFormulaValues(doc);
+  await setFullCalcOnLoad(zip);
   zip.file(path, serializeXml(doc));
   // ⚠️ ต้องสั่ง DEFLATE เอง — ค่าเริ่มต้นของ JSZip คือ STORE ที่ไม่บีบอัดเลย
   //    ไฟล์ Call In จริงจะโตจาก 191 KB เป็น 1 MB ทั้งที่เนื้อหาเหมือนเดิมทุกช่อง
@@ -2396,6 +2461,9 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
   }
 
   setDataMerges(doc, merges);
+  // ต้องทำหลังเติมค่าเสร็จ ไม่งั้นช่องสูตรที่เราเพิ่งแตะจะแคชค่าเก่าไว้อีก
+  clearCachedFormulaValues(doc);
+  await setFullCalcOnLoad(zip);
   zip.file(path, serializeXml(doc));
   // ⚠️ ต้องสั่ง DEFLATE เอง ค่าเริ่มต้นของ JSZip คือไม่บีบอัดเลย (เคยทำไฟล์โต 5 เท่ามาแล้ว)
   return await zip.generateAsync({type:'blob', compression:'DEFLATE', compressionOptions:{level:6},
