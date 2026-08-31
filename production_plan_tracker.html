@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-31.1">
+<meta name="app-version" content="2026-08-31.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -317,6 +317,10 @@
       <div class="field">
         <label>สัปดาห์ (WK)</label>
         <input type="number" id="dnWeek" min="1" max="53" style="width:90px" placeholder="เช่น 34">
+      </div>
+      <div class="field" style="flex:1;min-width:220px">
+        <label>ค้นหา P/N หรือ PO</label>
+        <input type="search" id="dnSearch" placeholder="พิมพ์บางส่วนก็ได้ เช่น 0004 หรือ B055" autocomplete="off">
       </div>
     </div>
     <div class="desc" id="dnSummary"></div>
@@ -2489,6 +2493,23 @@ function renderDnUnits(){
   if(units.includes(cur)) el.value = cur;
 }
 
+const dnQuery = () => document.getElementById('dnSearch').value.trim();
+
+/** กรองกลุ่มที่จะแสดงตามคำค้น — ตรงกับ P/N หรือ PO ใบไหนก็ได้ในกลุ่ม
+ *
+ *  ⚠️ เจอกลุ่มแล้วต้องโชว์ "ทั้งกลุ่ม" ไม่ใช่เฉพาะใบที่ตรงกับคำค้น
+ *     เพราะยอดบรรจุเป็นของทั้งกลุ่ม ถ้าซ่อนบางใบไป ช่อง "เหลือต้องตัดอีก"
+ *     จะดูเหมือนกรอกผิดทั้งที่ถูก แล้วคนจะไปแก้ตัวเลขที่ถูกอยู่แล้วให้ผิด
+ *
+ *  ⚠️ นี่คือการกรองสิ่งที่ "เห็น" อย่างเดียว การออกใบไม่ผ่านทางนี้
+ *     ห้ามเอาผลของฟังก์ชันนี้ไปใช้ตอนสร้างไฟล์ ไม่งั้นของที่ถูกซ่อนจะหายจากใบจริง */
+function dnFilter(groups){
+  const q = dnQuery().toLowerCase();
+  if(!q) return groups;
+  return groups.filter(g => String(g.pn).toLowerCase().includes(q)
+                         || g.orders.some(({o}) => String(o.poNo).toLowerCase().includes(q)));
+}
+
 function renderDeliveryNote(){
   renderDnUnits();
   const date = dnDate(), unit = dnUnit();
@@ -2497,12 +2518,27 @@ function renderDeliveryNote(){
     document.getElementById('dnSummary').textContent = 'เลือกวันที่และหน่วยก่อน';
     return;
   }
-  const groups = deliveryGroups(date, unit);
+  const all = deliveryGroups(date, unit);
   let item = 0, totalPcs = 0, mismatch = 0;
 
-  const html = groups.map(g=>{
+  // ⚠️ นับยอดรวมจากทุกกลุ่มของวันนั้นเสมอ ไม่ใช่เฉพาะกลุ่มที่ค้นหาเจอ
+  //    ถ้านับตามที่เห็นบนจอ คนจะกดออกใบโดยเข้าใจว่ากรอกไปเท่าที่เห็น
+  //    แต่ไฟล์ที่ออกมามีของที่ถูกกรองซ่อนอยู่ด้วย เพราะการออกใบไม่สนใจตัวค้นหา
+  all.forEach(g=>{
     totalPcs += g.pcs;
     if(g.pcs !== g.allocated) mismatch++;
+  });
+
+  // เลข Item ต้องนับจากลำดับจริงของทั้งวัน ไม่ใช่ลำดับที่เห็นตอนกรอง
+  // ไม่งั้นเลขบนจอกับเลขบนกระดาษที่ปริ้นออกมาจะไม่ตรงกัน
+  const itemOf = new Map();
+  all.forEach(g=> g.orders.forEach(({o})=> itemOf.set(o.id, ++item)));
+
+  const groups = dnFilter(all);
+  const hidden = all.length - groups.length;
+  const hiddenFilled = all.filter(g => groups.indexOf(g) < 0 && (g.pcs > 0 || g.allocated > 0)).length;
+
+  const html = groups.map(g=>{
     const p = g.pack || {perBox:'', boxes:'', remainder:'', remark:''};
     const pn = escapeHtml(g.pn);
 
@@ -2518,9 +2554,8 @@ function renderDeliveryNote(){
     </tr>`;
 
     const rows = g.orders.map(({o, wip, alloc})=>{
-      item++;
       return `<tr>
-        <td>${item}</td>
+        <td>${itemOf.get(o.id)}</td>
         <td class="left">${escapeHtml(o.poNo)}</td>
         <td>${fmtDateTH(o.orderDate)}</td>
         <td>${numFmt(o.orderQty)}</td>
@@ -2537,11 +2572,18 @@ function renderDeliveryNote(){
       <th style="width:100px">Order Date</th><th style="width:90px">PO QTY</th>
       <th style="width:95px">ต่อกล่อง</th><th style="width:85px">กล่อง</th><th style="width:85px">เศษ</th>
       <th style="width:110px">จำนวน/PCS</th><th style="width:190px">ตัดเข้าใบ</th></tr></thead>
-     <tbody>${html || emptyRow(9, 'หน่วยนี้ไม่มีใบที่ค้างส่งแล้ว')}</tbody>`;
+     <tbody>${html || emptyRow(9, dnQuery()
+        ? `ไม่พบ P/N หรือ PO ที่ตรงกับ "${escapeHtml(dnQuery())}" ในหน่วยนี้`
+        : 'หน่วยนี้ไม่มีใบที่ค้างส่งแล้ว')}</tbody>`;
 
   document.getElementById('dnSummary').innerHTML =
-    `${numFmt(groups.length)} กลุ่ม P/N · รวมที่จะส่งวันนี้ <b id="dnTotal">${numFmt(totalPcs)}</b> ชิ้น` +
+    `${numFmt(all.length)} กลุ่ม P/N · รวมที่จะส่งวันนี้ <b id="dnTotal">${numFmt(totalPcs)}</b> ชิ้น` +
     (mismatch? ` · <b style="color:var(--red)">มี ${numFmt(mismatch)} กลุ่มที่ตัดเข้าใบยังไม่ครบ</b>` : '') +
+    // ต้องบอกว่ามีของถูกซ่อนอยู่ และซ่อนของที่กรอกไว้แล้วกี่กลุ่ม
+    // เพราะการออกใบไม่สนใจตัวค้นหา ของที่มองไม่เห็นก็ยังลงไปในไฟล์
+    (hidden ? ` · <b id="dnHidden">ตัวค้นหาซ่อนอยู่ ${numFmt(hidden)} กลุ่ม` +
+       (hiddenFilled ? ` (กรอกไว้แล้ว ${numFmt(hiddenFilled)} กลุ่ม)` : '') +
+       ` — การออกใบไม่สนใจตัวค้นหา ของที่ซ่อนอยู่ก็ลงในไฟล์ด้วย</b>` : '') +
     ` · ยอดที่ตัดเข้าใบลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
 
   bindDnInputs();
@@ -2803,6 +2845,8 @@ document.getElementById('dashStatusFilter').addEventListener('change', renderDas
 document.getElementById('dashWipFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashSearch').addEventListener('input', renderDashTable);
 document.getElementById('dnDate').addEventListener('change', renderDeliveryNote);
+// ช่องค้นหาอยู่นอกตาราง การวาดตารางใหม่จึงไม่แย่งโฟกัสไปจากมัน พิมพ์รัวได้ (INVARIANTS G2)
+document.getElementById('dnSearch').addEventListener('input', renderDeliveryNote);
 document.getElementById('dnUnit').addEventListener('change', renderDeliveryNote);
 document.getElementById('dashHideDone').addEventListener('change', renderDashTable);
 
