@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-08-31.2">
+<meta name="app-version" content="2026-08-31.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -63,7 +63,10 @@
   table td{padding:6px;border:1px solid var(--border);text-align:center;white-space:nowrap;}
   table td.left{text-align:left;}
   .table-wrap{overflow:auto;max-height:70vh;border-radius:8px;}
-  .badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;}
+  .btn-mini{font-size:11px;padding:2px 8px;border:1px solid var(--line);border-radius:5px;
+  background:var(--card);color:var(--ink);cursor:pointer;vertical-align:middle}
+.btn-mini:hover{background:var(--bg)}
+.badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;}
   .badge.green{background:var(--green-light);color:var(--green);}
   .badge.amber{background:var(--amber-light);color:var(--amber);}
   .badge.red{background:var(--red-light);color:var(--red);}
@@ -302,8 +305,15 @@
   <div class="panel">
     <h2>ใบส่งสินค้า</h2>
     <div class="desc">
-      เลือกวันที่กับหน่วย แล้วกรอกยอดบรรจุของแต่ละใบ — <b>ยอดที่กรอกจะลงสมุดเป็นยอดส่งของให้เอง</b>
-      ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน · จำนวน/PCS คิดจาก ต่อกล่อง × กล่อง + เศษ เหมือนในฟอร์ม
+      เลือกวันที่กับหน่วย แล้ว<b>กรอกจำนวนที่ส่งของแต่ละ PO</b> — ยอดที่กรอกจะลงสมุดเป็นยอดส่งของให้เอง
+      ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน
+      <br>
+      กรอก <b>ต่อกล่อง</b> ของแต่ละ P/N แล้ว<b>โปรแกรมจะแบ่งเป็นกล่องกับเศษให้เอง</b> จากผลบวกของทุก PO ในกลุ่มนั้น
+      · ช่อง <b>กล่อง</b> ในฟอร์มหมายถึงกล่องที่เต็ม ส่วน <b>เศษ</b> คือชิ้นที่เหลือ ไม่ใช่กล่องที่เหลือ
+      <br>
+      ถ้าแพ็คมาไม่ตรงกับที่หารได้ แก้กล่องกับเศษทับได้ แต่ <b>ผลคูณต้องเท่ากับยอดที่คีย์</b>
+      ไม่งั้นจะออกใบไม่ได้ — เพราะเลขที่ Excel พิมพ์คือ ต่อกล่อง × กล่อง + เศษ และนั่นคือจำนวนที่ลูกค้านับ
+      · กรณีแพ็คไม่เต็มหลายกล่อง ให้เขียนบอกไว้ที่ช่อง <b>Remark</b>
     </div>
     <div class="row filters">
       <div class="field">
@@ -813,6 +823,19 @@ function deliveryQty(l){
   return n(l.perBox) * n(l.boxes) + n(l.remainder);
 }
 
+/** แบ่งยอดรวมออกเป็น กล่องเต็ม + ชิ้นที่เหลือ ตามที่ฟอร์มเข้าใจ
+ *
+ *  ในฟอร์ม ช่อง "กล่อง" หมายถึงกล่องที่เต็ม และ "เศษ" หมายถึงชิ้นที่เหลือ ไม่ใช่กล่องที่เหลือ
+ *  เพราะ Excel คิดเอง จำนวน/PCS = ต่อกล่อง × กล่อง + เศษ แล้วเลขนั้นคือจำนวนที่ลูกค้านับ
+ *
+ *  ถ้ายังไม่ได้บอกว่ากล่องละเท่าไหร่ ให้ทุกชิ้นเป็นเศษ — ผลคูณยังได้ยอดที่ถูกต้อง
+ *  ใบที่ออกไปก่อนกรอกต่อกล่องจึงยังมีจำนวนถูก แค่ไม่บอกว่าแบ่งกี่กล่อง */
+function canonicalPack(qty, perBox){
+  const q = Math.max(0, Number(qty) || 0), p = Number(perBox) || 0;
+  if(p <= 0) return {boxes: 0, remainder: q};
+  return {boxes: Math.floor(q / p), remainder: q % p};
+}
+
 /** ซ่อมฟิลด์วันที่ในแถวเดียวให้เป็น YYYY-MM-DD · คืน true ถ้ามีการเปลี่ยนแปลงจริง */
 function normalizeRowDates(row, fields){
   let changed = false;
@@ -1294,7 +1317,18 @@ function packingOf(date, unit, pn){
 
 /** จัดกลุ่มตาม P/N — โครงเดียวกับที่ใบจริงเรียง
  *
- *  แต่ละกลุ่มมี ยอดบรรจุหนึ่งชุด และใบสั่งหลายใบที่ต้องตัดยอดเข้า
+ *  ⚠️ ทิศทางของตัวเลข (เปลี่ยนเมื่อ 31 ส.ค. 2026 ตามที่พนักงานเสนอ)
+ *
+ *     ยอดที่คนกรอกคือ "จำนวนที่ส่งของแต่ละ PO" · ยอดรวมของกลุ่มคือผลบวกของ PO ทุกใบ
+ *     แล้วโปรแกรมแบ่งเป็นกล่องกับเศษให้จาก ต่อกล่อง ที่กรอกไว้
+ *
+ *     ของเดิมกลับทาง คือกรอกยอดรวมของกลุ่มก่อนแล้วค่อยมาแบ่งเข้า PO ทีหลัง
+ *     ซึ่งทำให้มีเลขสองชุดที่ต้องตรงกันเอง และเกิดสถานะ "ตัดยังไม่ครบ / ตัดเกิน" ได้ตลอด
+ *     ทางใหม่ทำให้สถานะนั้นหายไปโดยโครงสร้าง ไม่ใช่แค่กันไว้
+ *
+ *  กลุ่มที่ "แก้กล่องเอง" คือกลุ่มที่เลขกล่อง/เศษที่เก็บไว้ ไม่ตรงกับที่ canonicalPack คิดให้
+ *  ไม่ต้องเก็บธงบอกโหมด จึงไม่ต้องเพิ่มคอลัมน์ในตารางที่ซิงค์ และไม่ต้อง deploy Apps Script ใหม่
+ *
  *  เรียงกลุ่มตามใบที่เก่าสุดในกลุ่ม และเรียงใบในกลุ่มตามวันสั่งเก่าสุดก่อน */
 function deliveryGroups(date, unit){
   const cum = buildCumMap(state.records);
@@ -1314,10 +1348,24 @@ function deliveryGroups(date, unit){
     orders.sort((a,b)=> (a.o.orderDate||'').localeCompare(b.o.orderDate||'')
                      || String(a.o.poNo).localeCompare(String(b.o.poNo)));
     const pack = packingOf(date, unit, pn);
+    // ยอดรวมของกลุ่มคือผลบวกของที่ส่งแต่ละ PO — เป็นตัวเลขต้นทางเพียงตัวเดียว
+    const qty = orders.reduce((s,x)=> s + x.alloc, 0);
+    const perBox = Number(pack && pack.perBox) || 0;
+    const auto = canonicalPack(qty, perBox);
+    // ⚠️ กติกา: ข้อมูลเก็บเฉพาะสิ่งที่ "คนพิมพ์" เท่านั้น
+    //    กล่อง 0 เศษ 0 = ยังไม่มีใครแก้ ให้โปรแกรมคิดสดจากยอดรวมทุกครั้ง
+    //    ห้ามเก็บค่าที่โปรแกรมคิดให้ลงข้อมูล — เคยทำแล้วพัง เพราะพอยอดเปลี่ยน
+    //    ค่าที่เก็บไว้จะไม่ตรงกับที่ควรคิดได้ใหม่ ระบบเลยเข้าใจผิดว่าคนแก้เองแล้วหยุดคิดให้
+    const kept = {boxes: Number(pack && pack.boxes)||0, remainder: Number(pack && pack.remainder)||0};
+    const manual = kept.boxes !== 0 || kept.remainder !== 0;
+    const boxes = manual ? kept.boxes : auto.boxes;
+    const remainder = manual ? kept.remainder : auto.remainder;
     groups.push({
-      pn, pack, orders,
-      pcs: pack ? deliveryQty(pack) : 0,
-      allocated: orders.reduce((s,x)=> s + x.alloc, 0)
+      pn, pack, orders, qty, perBox, boxes, remainder,
+      // ยอดที่กระดาษจะพิมพ์ออกมา — Excel คิดเองจาก ต่อกล่อง × กล่อง + เศษ
+      packQty: perBox * boxes + remainder,
+      manual,
+      remark: (pack && pack.remark) || ''
     });
   });
   groups.sort((a,b)=> (a.orders[0].o.orderDate||'').localeCompare(b.orders[0].o.orderDate||''));
@@ -1342,7 +1390,13 @@ function savePacking(date, unit, pn, patch){
   doSync();
 }
 
-/** บันทึกยอดที่ตัดเข้าใบสั่งใบหนึ่ง — ลงเป็น record ยอดส่งของตามกุญแจเดิม (INVARIANTS A2)
+/** ทางกลับออกจากโหมดแก้กล่องเอง — ล้างเลขที่คนพิมพ์ไว้ทิ้ง แล้วโปรแกรมจะคิดสดให้เอง
+ *  ไม่ได้เขียนค่าที่คิดได้ลงไปแทน เพราะนั่นจะกลายเป็น "คนพิมพ์" อีกครั้งในสายตาของระบบ */
+function resetPacking(date, unit, pn){
+  savePacking(date, unit, pn, {boxes: 0, remainder: 0});
+}
+
+/** บันทึกจำนวนที่ส่งของใบสั่งใบหนึ่ง — ลงเป็น record ยอดส่งของตามกุญแจเดิม (INVARIANTS A2)
  *  เขียนทับค่าเดิมเสมอ ไม่บวกเพิ่ม แก้ตัวเลขที่พิมพ์ผิดแล้วยอดตามทันที */
 function saveAllocation(orderId, date, qty){
   const now = new Date().toISOString();
@@ -2442,10 +2496,10 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
         // ยอดบรรจุลงเฉพาะแถวแรกของกลุ่ม แถวที่เหลือเว้นว่าง
         // สูตร P ของแถวที่เหลือจึงได้ 0 และยอดรวมท้ายตารางยังถูกต้อง
         if(n === first){
-          setNumberCell(doc, rowEl, DN_COL.perBox, Number(g.pack && g.pack.perBox)||0, styleOf[DN_COL.perBox]);
-          setNumberCell(doc, rowEl, DN_COL.boxes, Number(g.pack && g.pack.boxes)||0, styleOf[DN_COL.boxes]);
-          setNumberCell(doc, rowEl, DN_COL.remainder, Number(g.pack && g.pack.remainder)||0, styleOf[DN_COL.remainder]);
-          const remark = g.pack && g.pack.remark;
+          setNumberCell(doc, rowEl, DN_COL.perBox, g.perBox, styleOf[DN_COL.perBox]);
+          setNumberCell(doc, rowEl, DN_COL.boxes, g.boxes, styleOf[DN_COL.boxes]);
+          setNumberCell(doc, rowEl, DN_COL.remainder, g.remainder, styleOf[DN_COL.remainder]);
+          const remark = g.remark;
           if(remark) setTextCell(doc, rowEl, DN_COL.remark, remark, styleOf[DN_COL.remark]);
           else clearCell(doc, rowEl, DN_COL.remark);
         } else {
@@ -2519,37 +2573,32 @@ function renderDeliveryNote(){
     return;
   }
   const all = deliveryGroups(date, unit);
-  let item = 0, totalPcs = 0, mismatch = 0;
-
-  // ⚠️ นับยอดรวมจากทุกกลุ่มของวันนั้นเสมอ ไม่ใช่เฉพาะกลุ่มที่ค้นหาเจอ
-  //    ถ้านับตามที่เห็นบนจอ คนจะกดออกใบโดยเข้าใจว่ากรอกไปเท่าที่เห็น
-  //    แต่ไฟล์ที่ออกมามีของที่ถูกกรองซ่อนอยู่ด้วย เพราะการออกใบไม่สนใจตัวค้นหา
-  all.forEach(g=>{
-    totalPcs += g.pcs;
-    if(g.pcs !== g.allocated) mismatch++;
-  });
 
   // เลข Item ต้องนับจากลำดับจริงของทั้งวัน ไม่ใช่ลำดับที่เห็นตอนกรอง
   // ไม่งั้นเลขบนจอกับเลขบนกระดาษที่ปริ้นออกมาจะไม่ตรงกัน
+  let item = 0;
   const itemOf = new Map();
   all.forEach(g=> g.orders.forEach(({o})=> itemOf.set(o.id, ++item)));
 
   const groups = dnFilter(all);
-  const hidden = all.length - groups.length;
-  const hiddenFilled = all.filter(g => groups.indexOf(g) < 0 && (g.pcs > 0 || g.allocated > 0)).length;
 
   const html = groups.map(g=>{
-    const p = g.pack || {perBox:'', boxes:'', remainder:'', remark:''};
     const pn = escapeHtml(g.pn);
+    // v === 0 ต้องโชว์เลข 0 ไม่ใช่ช่องว่าง เพราะเป็นค่าที่โปรแกรมคิดให้ ไม่ใช่ค่าที่ยังไม่มี
+    const num = (f, v, ph) => `<input type="number" min="0" class="row-input dn-pack" data-f="${f}" data-pn="${pn}" value="${(v === '' || v == null) ? '' : v}" placeholder="${ph}">`;
 
     // แถวหัวกลุ่ม = ยอดบรรจุของ P/N นี้ กรอกครั้งเดียวใช้ทั้งกลุ่ม เหมือนช่องที่ merge ในใบจริง
+    // กล่องกับเศษโปรแกรมคิดให้ แต่แก้ทับได้ถ้าแพ็คมาไม่ตรงกับที่หารได้
     const head = `<tr class="dn-group">
       <td colspan="4" class="left"><b>P/N ${pn}</b>
-        <span class="hint">· ${g.orders.length} ใบสั่ง</span></td>
-      <td><input type="number" min="0" class="row-input dn-pack" data-f="perBox" data-pn="${pn}" value="${p.perBox||''}" placeholder="ต่อกล่อง"></td>
-      <td><input type="number" min="0" class="row-input dn-pack" data-f="boxes" data-pn="${pn}" value="${p.boxes||''}" placeholder="กล่อง"></td>
-      <td><input type="number" min="0" class="row-input dn-pack" data-f="remainder" data-pn="${pn}" value="${p.remainder||''}" placeholder="เศษ"></td>
-      <td data-pcs="${pn}"><b>${g.pcs? numFmt(g.pcs) : '—'}</b></td>
+        <span class="hint">· ${g.orders.length} ใบสั่ง</span>
+        <input type="text" class="row-input dn-pack" data-f="remark" data-pn="${pn}" value="${escapeHtml(g.remark)}"
+               style="margin-left:8px;width:200px" placeholder="Remark (ลงในใบ)"
+               title="ลงช่อง Remark ของใบส่งสินค้า เช่น NEW / RETURN / แพค 3 กล่องไม่เต็ม"></td>
+      <td>${num('perBox', g.perBox || '', 'ต่อกล่อง')}</td>
+      <td>${num('boxes', g.qty ? g.boxes : '', 'กล่อง')}</td>
+      <td>${num('remainder', g.qty ? g.remainder : '', 'เศษ')}</td>
+      <td data-pcs="${pn}"><b>${g.qty? numFmt(g.qty) : '—'}</b></td>
       <td data-left="${pn}">${dnLeftCell(g)}</td>
     </tr>`;
 
@@ -2560,7 +2609,7 @@ function renderDeliveryNote(){
         <td>${fmtDateTH(o.orderDate)}</td>
         <td>${numFmt(o.orderQty)}</td>
         <td colspan="3" class="left hint">ค้างส่ง ${numFmt(wip)}</td>
-        <td><input type="number" min="0" class="row-input dn-alloc" data-order="${escapeHtml(o.id)}" data-pn="${pn}" value="${alloc||''}" placeholder="ตัดเข้าใบนี้"></td>
+        <td><input type="number" min="0" class="row-input dn-alloc" data-order="${escapeHtml(o.id)}" data-pn="${pn}" value="${alloc||''}" placeholder="จำนวนที่ส่ง"></td>
         <td class="hint">${alloc > wip ? '<span class="badge red" title="มากกว่ายอดที่ยังค้างส่ง">⚠ เกิน</span>' : ''}</td>
       </tr>`;
     }).join('');
@@ -2571,32 +2620,60 @@ function renderDeliveryNote(){
     `<thead><tr><th style="width:44px">Item</th><th>PO No.</th>
       <th style="width:100px">Order Date</th><th style="width:90px">PO QTY</th>
       <th style="width:95px">ต่อกล่อง</th><th style="width:85px">กล่อง</th><th style="width:85px">เศษ</th>
-      <th style="width:110px">จำนวน/PCS</th><th style="width:190px">ตัดเข้าใบ</th></tr></thead>
+      <th style="width:110px">จำนวน/PCS</th><th style="width:200px">จำนวนที่ส่ง</th></tr></thead>
      <tbody>${html || emptyRow(9, dnQuery()
         ? `ไม่พบ P/N หรือ PO ที่ตรงกับ "${escapeHtml(dnQuery())}" ในหน่วยนี้`
         : 'หน่วยนี้ไม่มีใบที่ค้างส่งแล้ว')}</tbody>`;
 
-  document.getElementById('dnSummary').innerHTML =
+  renderDnSummary();
+  bindDnInputs();
+}
+
+/** ยอดสรุปเหนือตาราง — แยกออกมาเพราะต้องอัปเดตทุกครั้งที่ตัวเลขเปลี่ยน
+ *  ไม่ใช่เฉพาะตอนวาดตารางใหม่ ไม่งั้นคำเตือน "ออกใบไม่ได้" จะขึ้นช้าไปหนึ่งจังหวะ
+ *  อยู่นอกตารางจึงเขียนใหม่ได้ทั้งก้อนโดยไม่กระทบโฟกัสของช่องที่กำลังคีย์ */
+function renderDnSummary(){
+  const el = document.getElementById('dnSummary');
+  if(!el) return;
+  const all = deliveryGroups(dnDate(), dnUnit());
+  const groups = dnFilter(all);
+
+  // ⚠️ นับยอดรวมจากทุกกลุ่มของวันนั้นเสมอ ไม่ใช่เฉพาะกลุ่มที่ค้นหาเจอ
+  //    ถ้านับตามที่เห็นบนจอ คนจะกดออกใบโดยเข้าใจว่ากรอกไปเท่าที่เห็น
+  //    แต่ไฟล์ที่ออกมามีของที่ถูกกรองซ่อนอยู่ด้วย เพราะการออกใบไม่สนใจตัวค้นหา
+  const totalPcs = all.reduce((s,g)=> s + g.qty, 0);
+  const mismatch = all.filter(g => g.packQty !== g.qty).length;
+  const hidden = all.length - groups.length;
+  const hiddenFilled = all.filter(g => groups.indexOf(g) < 0 && g.qty > 0).length;
+
+  el.innerHTML =
     `${numFmt(all.length)} กลุ่ม P/N · รวมที่จะส่งวันนี้ <b id="dnTotal">${numFmt(totalPcs)}</b> ชิ้น` +
-    (mismatch? ` · <b style="color:var(--red)">มี ${numFmt(mismatch)} กลุ่มที่ตัดเข้าใบยังไม่ครบ</b>` : '') +
+    (mismatch? ` · <b style="color:var(--red)">มี ${numFmt(mismatch)} กลุ่มที่กล่อง/เศษไม่ตรงกับยอดที่คีย์ — ออกใบไม่ได้จนกว่าจะแก้</b>` : '') +
     // ต้องบอกว่ามีของถูกซ่อนอยู่ และซ่อนของที่กรอกไว้แล้วกี่กลุ่ม
     // เพราะการออกใบไม่สนใจตัวค้นหา ของที่มองไม่เห็นก็ยังลงไปในไฟล์
     (hidden ? ` · <b id="dnHidden">ตัวค้นหาซ่อนอยู่ ${numFmt(hidden)} กลุ่ม` +
        (hiddenFilled ? ` (กรอกไว้แล้ว ${numFmt(hiddenFilled)} กลุ่ม)` : '') +
        ` — การออกใบไม่สนใจตัวค้นหา ของที่ซ่อนอยู่ก็ลงในไฟล์ด้วย</b>` : '') +
-    ` · ยอดที่ตัดเข้าใบลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
-
-  bindDnInputs();
+    ` · ยอดที่กรอกลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
 }
 
-/** ช่องบอกว่ากลุ่มนี้ตัดเข้าใบครบหรือยัง — ตัวเลขที่คนต้องมองก่อนกดออกใบ */
+/** ช่องสถานะของกลุ่ม — ตัวเลขที่คนต้องมองก่อนกดออกใบ
+ *
+ *  สิ่งที่ต้องเตือนคือ "เลขที่กระดาษจะพิมพ์ ไม่ตรงกับที่คีย์ไว้"
+ *  เพราะสิ่งที่ลูกค้านับคือเลขบนกระดาษ ซึ่ง Excel คิดเองจาก ต่อกล่อง × กล่อง + เศษ
+ *  ถ้าปล่อยให้ไม่ตรง ยอดที่ส่งจริงกับยอดที่แจ้งลูกค้าจะคนละตัว โดยไม่มีใครเห็น */
 function dnLeftCell(g){
-  if(!g.pcs && !g.allocated) return '<span class="hint">ยังไม่กรอก</span>';
-  const left = g.pcs - g.allocated;
-  if(left === 0) return `<span class="badge green">ตัดครบแล้ว</span>`;
-  return left > 0
-    ? `<span class="badge amber">เหลือต้องตัดอีก ${numFmt(left)}</span>`
-    : `<span class="badge red">ตัดเข้าใบเกินไป ${numFmt(-left)}</span>`;
+  const recalc = `<button type="button" class="btn-mini dn-recalc" data-pn="${escapeHtml(g.pn)}">คำนวณให้</button>`;
+  if(!g.qty && !g.packQty) return '<span class="hint">ยังไม่กรอก</span>';
+  const diff = g.packQty - g.qty;
+  if(diff !== 0){
+    return `<span class="badge red" title="กระดาษจะพิมพ์ ${numFmt(g.packQty)} แต่คีย์ไว้ ${numFmt(g.qty)}">`
+         + `กล่อง/เศษ ไม่ตรงยอด ${diff > 0 ? '+' : ''}${numFmt(diff)}</span> ` + recalc;
+  }
+  if(g.manual){
+    return `<span class="badge amber" title="โปรแกรมจะไม่คิดกล่องให้ใหม่เอง จนกว่าจะกดคำนวณให้">แก้กล่องเอง</span> ` + recalc;
+  }
+  return `<span class="badge green">ยอดตรง</span>`;
 }
 
 /** ⚠️ ห้ามวาดตารางใหม่ทั้งใบตอน change — change ยิงตอนกด Tab ซึ่งโฟกัสย้ายไปช่องถัดไปแล้ว
@@ -2612,10 +2689,31 @@ function bindDnInputs(){
   });
 
   document.querySelectorAll('#dnTable .dn-pack').forEach(el=>{
-    num(el, function(v){ savePacking(dnDate(), dnUnit(), this.dataset.pn, {[this.dataset.f]: v}); });
+    if(el.dataset.f === 'remark'){
+      el.addEventListener('change', function(){
+        savePacking(dnDate(), dnUnit(), this.dataset.pn, {remark: this.value.trim()});
+        renderSyncBadge();
+      });
+      return;
+    }
+    num(el, function(v){
+      savePacking(dnDate(), dnUnit(), this.dataset.pn, {[this.dataset.f]: v});
+    });
   });
   document.querySelectorAll('#dnTable .dn-alloc').forEach(el=>{
     num(el, function(v){ saveAllocation(this.dataset.order, dnDate(), v); });
+  });
+  bindDnRecalc(document);
+}
+
+/** ทางกลับออกจากโหมดแก้กล่องเอง — ต้องมีเสมอ ไม่งั้นคนติดอยู่กับเลขที่ตัวเองแก้ไว้
+ *  ปุ่มนี้ถูกวาดใหม่ทุกครั้งที่สถานะกลุ่มเปลี่ยน จึงต้องผูกใหม่ทุกครั้งด้วย */
+function bindDnRecalc(root){
+  root.querySelectorAll('.dn-recalc').forEach(el=>{
+    el.addEventListener('click', function(){
+      resetPacking(dnDate(), dnUnit(), this.dataset.pn);
+      renderDeliveryNote();
+    });
   });
 }
 
@@ -2625,12 +2723,20 @@ function refreshDnGroup(pn){
   const g = groups.find(x => x.pn === pn);
   if(g){
     const pcs = document.querySelector(`#dnTable td[data-pcs="${CSS.escape(pn)}"]`);
-    if(pcs) pcs.innerHTML = `<b>${g.pcs? numFmt(g.pcs) : '—'}</b>`;
+    if(pcs) pcs.innerHTML = `<b>${g.qty? numFmt(g.qty) : '—'}</b>`;
     const left = document.querySelector(`#dnTable td[data-left="${CSS.escape(pn)}"]`);
-    if(left) left.innerHTML = dnLeftCell(g);
+    if(left){ left.innerHTML = dnLeftCell(g); bindDnRecalc(left); }
+
+    // กล่องกับเศษถูกคิดใหม่ให้ ต้องอัปเดตช่องตามไปด้วย
+    // อัปเดตแม้ช่องนั้นกำลังโฟกัสอยู่ — คนเพิ่งกด Tab เข้ามา ยังไม่ได้พิมพ์อะไร
+    // และต้องเห็นเลขที่โปรแกรมคิดให้ทันที ไม่ใช่ช่องว่างที่ดูเหมือนโปรแกรมไม่ทำงาน
+    // เหตุการณ์ change ยิงตอนออกจากช่องเท่านั้น จึงไม่มีทางทับเลขที่กำลังพิมพ์ค้างอยู่
+    ['boxes','remainder'].forEach(f=>{
+      const inp = document.querySelector(`#dnTable input.dn-pack[data-pn="${CSS.escape(pn)}"][data-f="${f}"]`);
+      if(inp) inp.value = g.qty ? String(g[f]) : '';
+    });
   }
-  const el = document.getElementById('dnTotal');
-  if(el) el.textContent = numFmt(groups.reduce((s,x)=> s + x.pcs, 0));
+  renderDnSummary();
 }
 
 /* ---------- ออกไฟล์ใบส่งสินค้า FM-ST-07 ---------- */
@@ -2663,14 +2769,22 @@ document.getElementById('dnTemplateInput').addEventListener('change', async (e)=
 document.getElementById('btnDnExport').addEventListener('click', async ()=>{
   if(!dnTemplate){ toast('เลือกไฟล์ฟอร์มก่อนครับ'); return; }
   const date = dnDate(), unit = dnUnit();
-  const groups = deliveryGroups(date, unit).filter(g => g.pcs > 0 || g.allocated > 0);
+  const groups = deliveryGroups(date, unit).filter(g => g.qty > 0);
   if(!groups.length){ toast('ยังไม่มีกลุ่มไหนกรอกยอดไว้ในวันนี้'); return; }
-  const bad = groups.filter(g => g.pcs !== g.allocated);
+
+  // ⚠️ ด่านนี้ห้ามเป็นแค่คำถามให้กดผ่าน — ต้องกันจริง
+  //    เลขที่ Excel พิมพ์คือ ต่อกล่อง × กล่อง + เศษ ถ้ามันไม่ตรงกับยอดที่คีย์
+  //    ใบที่ส่งลูกค้าจะแจ้งจำนวนคนละตัวกับของที่ส่งจริง โดยไม่มีใครเห็นบนจอ
+  //    ทางออกอยู่ใกล้มือ — ปุ่ม "คำนวณให้" ในแถวของกลุ่มนั้น จึงไม่ใช่การกันแล้วติดตาย
+  const bad = groups.filter(g => g.packQty !== g.qty);
   if(bad.length){
     // ไม่ใช้ตัวหนีบรรทัดใหม่ตรง ๆ เพราะเคยถูกกลืนจนสตริงไม่ปิดมาแล้ว
     const nl = String.fromCharCode(10);
-    const detail = bad.map(g=>`  P/N ${g.pn} — บรรจุ ${numFmt(g.pcs)} ตัดเข้าใบ ${numFmt(g.allocated)}`).join(nl);
-    if(!confirm(`มี ${bad.length} กลุ่มที่ยอดบรรจุกับยอดที่ตัดเข้าใบไม่เท่ากัน${nl}${nl}${detail}${nl}${nl}ยังจะออกใบต่อไหม`)) return;
+    const detail = bad.map(g=>`  P/N ${g.pn} — กระดาษจะพิมพ์ ${numFmt(g.packQty)} แต่คีย์ไว้ ${numFmt(g.qty)}`).join(nl);
+    alert(`ออกใบไม่ได้ — มี ${bad.length} กลุ่มที่กล่องกับเศษไม่ตรงกับยอดที่คีย์${nl}${nl}${detail}`
+        + `${nl}${nl}กดปุ่ม "คำนวณให้" ในแถวของกลุ่มนั้น เพื่อให้โปรแกรมแบ่งกล่องใหม่`
+        + `${nl}หรือแก้กล่อง/เศษเองให้ผลคูณตรงกับยอดที่คีย์`);
+    return;
   }
 
   // ชีตของหน่วยนี้ — ชื่อจริงในไฟล์มีช่องว่างท้ายบ้าง จึงเทียบแบบตัดช่องว่าง
