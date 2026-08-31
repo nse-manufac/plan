@@ -233,6 +233,59 @@ test('G2 — กด Tab ไล่คีย์ทีละช่อง โฟก�
   expect((await readState(page)).deliveryNotes[0].perBox, 'และค่าต้องถูกบันทึกจริง').toBe(50);
 });
 
+// ── P/N ที่มาจากการซิงค์เป็น "ตัวเลข" ไม่ใช่ข้อความ ──────────────
+//
+// พนักงานเจอของจริง 1 ก.ย. 2026 บนมือถือ — กรอกจำนวนราย PO และต่อกล่องแล้ว
+// กล่องไม่ขึ้น · ยอดรวมของกลุ่มเป็น "—" · และพอรีเฟรช ต่อกล่องที่กรอกไว้ก็หายไป
+//
+// เพราะ P/N เข้ามาได้สองทางที่ให้ชนิดข้อมูลไม่เหมือนกัน
+//   นำเข้าไฟล์ Excel → String(...).trim() จึงเป็นข้อความ
+//   ซิงค์จาก Google Sheets → คัดลอกมาตรง ๆ ชีตเก็บเป็นตัวเลข ก็ได้ตัวเลข
+// ส่วนค่าที่อ่านกลับจาก DOM เป็นข้อความเสมอ · เทียบด้วย === จึงไม่มีวันตรงกัน
+//
+// ⚠️ fixture ของเทสทุกข้อข้างบนใช้ P/N เป็นข้อความ บั๊กนี้จึงลอดไปได้ทั้งชุด
+//    เทสสองข้อนี้จงใจใช้ตัวเลข เพื่อเดินเส้นทางเดียวกับเครื่องที่รับข้อมูลจากการซิงค์
+
+const PN_SYNCED = 9000000002;   // ไม่มีเครื่องหมายคำพูด — เป็นตัวเลขจริง ๆ
+const syncedOrders = [
+  { ...order('PO-B001', String(PN_SYNCED), 2000, '2026-08-03'), pn: PN_SYNCED },
+  { ...order('PO-B055', String(PN_SYNCED), 2000, '2026-08-10'), pn: PN_SYNCED }
+];
+
+test('P/N ที่เป็นตัวเลข — กรอกยอดแล้วกล่องต้องขึ้น และยอดรวมต้องไม่เป็น "—"', async ({ page }) => {
+  await open(page, syncedOrders);
+  await alloc(page, 'PO-B001|' + PN_SYNCED, 388);
+  await alloc(page, 'PO-B055|' + PN_SYNCED, 458);        // รวม 846
+  await pack(page, PN_SYNCED, 'perBox', 43);             // 846 ÷ 43 = 19 เศษ 29
+
+  expect(await page.locator(`#dnTable td[data-pcs="${PN_SYNCED}"]`).innerText(),
+    'ยอดรวมของกลุ่มต้องขึ้นทันที ไม่ใช่ขีด').toBe('846');
+  expect(await boxOf(page, PN_SYNCED, 'boxes')).toBe('19');
+  expect(await boxOf(page, PN_SYNCED, 'remainder')).toBe('29');
+  expect(await leftCell(page, PN_SYNCED)).toContain('ยอดตรง');
+});
+
+test('P/N ที่เป็นตัวเลข — ต่อกล่องที่กรอกไว้ต้องไม่หายตอนรีเฟรช', async ({ page }) => {
+  await open(page, syncedOrders);
+  await alloc(page, 'PO-B001|' + PN_SYNCED, 388);
+  await pack(page, PN_SYNCED, 'perBox', 43);
+
+  // ⚠️ open() หว่าน state ตั้งต้นด้วย addInitScript ซึ่งทำงานใหม่ทุกครั้งที่โหลดหน้า
+  //    ถ้า reload เฉย ๆ ของที่เพิ่งบันทึกจะถูกทับด้วยค่าตั้งต้น แล้วเทสจะฟ้องผิดจุด
+  //    จึงหว่านสิ่งที่บันทึกไว้จริงทับเข้าไปอีกชั้น ให้เหมือนเปิดแอปใหม่พร้อมข้อมูลเดิม
+  const saved = await readState(page);
+  await page.addInitScript(([k, st]) => localStorage.setItem(k, JSON.stringify(st)), [K_STATE, saved]);
+  await page.reload();
+  await page.click('.tab-btn[data-tab="delivery"]');
+  await page.fill('#dnDate', DATE);
+  await page.waitForTimeout(150);
+  await page.selectOption('#dnUnit', 'TUE-U');
+  await page.waitForTimeout(200);
+
+  expect(await boxOf(page, PN_SYNCED, 'perBox'), 'ต่อกล่องต้องยังอยู่').toBe('43');
+  expect(await page.locator(`#dnTable td[data-pcs="${PN_SYNCED}"]`).innerText()).toBe('388');
+});
+
 // ── ค้นหา ─────────────────────────────────────
 //
 // พนักงานแจ้ง 31 ส.ค. 2026 ว่าไล่หา PO กับ P/N ในรายการยาว ๆ ลำบาก
