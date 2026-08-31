@@ -1,8 +1,11 @@
 // เทสหน้าจอใบส่งสินค้า และการกรอกฟอร์ม FM-ST-07
 //
-// ⚠️ หน่วยของการกรอกคือ P/N ไม่ใช่ PO — ตรงกับใบจริงที่ใช้อยู่หน้างาน
-//    ของถูกบรรจุรวมกันตาม P/N (ช่องต่อกล่อง/กล่อง/เศษ ถูก merge ข้ามแถวในใบจริง)
-//    แล้ว "คน" เป็นคนตัดยอดเข้าใบสั่งแต่ละใบเอง — ระบบห้ามเฉลี่ยให้
+// ⚠️ ทิศทางของตัวเลข (เปลี่ยน 31 ส.ค. 2026 ตามที่พนักงานเสนอหลังลองใช้จริง)
+//    คนกรอก "จำนวนที่ส่ง" ของแต่ละ PO · ยอดรวมของกลุ่ม P/N คือผลบวก
+//    แล้วโปรแกรมแบ่งเป็นกล่องกับเศษให้จาก ต่อกล่อง ที่กรอกไว้
+//
+//    ช่อง "กล่อง" ในฟอร์มหมายถึงกล่องที่เต็ม "เศษ" คือชิ้นที่เหลือ ไม่ใช่กล่องที่เหลือ
+//    เพราะ Excel คิดเอง จำนวน/PCS = ต่อกล่อง × กล่อง + เศษ และนั่นคือจำนวนที่ลูกค้านับ
 //
 // หน้านี้เป็นที่แรกที่การคีย์ของพนักงานไปสร้าง record ยอดส่งของ
 // ถ้ายอดคิดผิด Dashboard · การ์ด WIP · และยอดที่ส่งลูกค้าจะผิดตามกันหมดโดยไม่มีใครรู้
@@ -56,6 +59,8 @@ async function alloc(page, orderId, value) {
 }
 
 const readState = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)), K_STATE);
+/** ค่าที่โปรแกรมเติมให้ในช่องกล่อง/เศษ */
+const boxOf = (page, pn, f) => page.inputValue(`#dnTable input.dn-pack[data-pn="${pn}"][data-f="${f}"]`);
 const leftCell = (page, pn) => page.locator(`#dnTable td[data-left="${pn}"]`).innerText();
 const ships = st => st.records.filter(r => r.process === 'shipping' && !r.voided);
 
@@ -96,17 +101,108 @@ test('A2 — แก้ตัวเลขที่พิมพ์ผิด ต้
   expect(s[0].qty, '400 ไม่ใช่ 1,400').toBe(400);
 });
 
-test('ยอดบรรจุกับยอดที่ตัดเข้าใบไม่ตรงกัน ต้องเห็นบนจอ ไม่ใช่รู้ตอนใบออกไปแล้ว', async ({ page }) => {
+test('โปรแกรมแบ่งกล่องกับเศษให้จากผลบวกของทุก PO ในกลุ่ม', async ({ page }) => {
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await alloc(page, 'PO-B055|' + PN_B, 507);        // รวม 1,507
+  await pack(page, PN_B, 'perBox', 50);
+
+  expect(await boxOf(page, PN_B, 'boxes'), '1,507 ÷ 50 = 30 กล่องเต็ม').toBe('30');
+  expect(await boxOf(page, PN_B, 'remainder'), 'เหลือ 7 ชิ้น').toBe('7');
+  expect(await leftCell(page, PN_B)).toContain('ยอดตรง');
+});
+
+test('แก้ยอดของ PO แล้วกล่องกับเศษต้องขยับตาม ไม่ต้องไปแก้เอง', async ({ page }) => {
   await open(page);
   await pack(page, PN_B, 'perBox', 50);
-  await pack(page, PN_B, 'boxes', 30);
-  expect(await leftCell(page, PN_B), 'ยังไม่ได้ตัดเข้าใบเลย').toContain('เหลือต้องตัดอีก');
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  expect(await boxOf(page, PN_B, 'boxes')).toBe('20');
 
-  await alloc(page, 'PO-B001|' + PN_B, 1500);
-  expect(await leftCell(page, PN_B), 'ตัดครบพอดี').toContain('ตัดครบแล้ว');
+  await alloc(page, 'PO-B001|' + PN_B, 1225);
+  expect(await boxOf(page, PN_B, 'boxes'), '1,225 ÷ 50 = 24 กล่องเต็ม').toBe('24');
+  expect(await boxOf(page, PN_B, 'remainder'), 'เหลือ 25 ชิ้น').toBe('25');
+});
 
-  await alloc(page, 'PO-B055|' + PN_B, 100);
-  expect(await leftCell(page, PN_B), 'ตัดเกินยอดที่บรรจุ ต้องเตือน').toContain('เกิน');
+test('ยังไม่ได้กรอกต่อกล่อง — ทุกชิ้นต้องเป็นเศษ ยอดบนกระดาษจึงยังถูก', async ({ page }) => {
+  // ผลคูณ 0 × 0 + 1000 = 1000 ใบที่ออกก่อนกรอกต่อกล่องจึงมีจำนวนถูก แค่ไม่บอกว่าแบ่งกี่กล่อง
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  expect(await boxOf(page, PN_B, 'remainder')).toBe('1000');
+  expect(await leftCell(page, PN_B), 'ยอดยังตรง ไม่ใช่สถานะผิด').toContain('ยอดตรง');
+});
+
+// ── แก้กล่องเอง — กรณีไม่ปกติ ที่เจ้าของสั่งให้ทำได้แต่ต้องล็อกยอดรวม ──
+
+test('แก้กล่องเองแล้วผลคูณยังตรงยอด ต้องยอมให้ทำ และจำไว้ว่าคนแก้เอง', async ({ page }) => {
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 100);
+  await pack(page, PN_B, 'perBox', 50);            // อัตโนมัติได้ 2 กล่อง 0 เศษ
+  expect(await boxOf(page, PN_B, 'boxes')).toBe('2');
+
+  await pack(page, PN_B, 'boxes', 1);              // 1 × 50 + 50 = 100 ยังตรง
+  await pack(page, PN_B, 'remainder', 50);
+  expect(await leftCell(page, PN_B)).toContain('แก้กล่องเอง');
+
+  // ต้องไม่ถูกคิดใหม่ทับเงียบ ๆ ตอนแตะยอดของ PO อีกครั้ง
+  await alloc(page, 'PO-B001|' + PN_B, 100);
+  expect(await boxOf(page, PN_B, 'boxes'), 'ของที่คนตั้งใจแก้ไว้ต้องอยู่').toBe('1');
+});
+
+test('แก้กล่องเองแล้วผลคูณไม่ตรงยอด ต้องขึ้นแดงและออกใบไม่ได้', async ({ page }) => {
+  // นี่คือกรณีที่กระดาษจะแจ้งลูกค้าคนละจำนวนกับของที่ส่งจริง
+  const dialogs = [];
+  page.on('dialog', d => { dialogs.push(d.message()); d.accept(); });
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 100);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 3);              // 3 × 50 + 0 = 150 เกินไป 50
+
+  expect(await leftCell(page, PN_B)).toContain('ไม่ตรงยอด');
+  expect(await page.locator('#dnSummary').innerText()).toContain('ออกใบไม่ได้');
+
+  const src = await deliveryFormWorkbook(['TUE-U', 'TUE-H']);
+  await page.setInputFiles('#dnTemplateInput', { name: 'FM-ST-07.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: src });
+  await expect(page.locator('#btnDnExport')).toBeEnabled();
+
+  let downloaded = false;
+  page.on('download', () => { downloaded = true; });
+  await page.click('#btnDnExport');
+  await page.waitForTimeout(600);
+
+  expect(downloaded, 'ต้องไม่ได้ไฟล์ออกมาเลย ไม่ใช่แค่ถามแล้วให้กดผ่าน').toBe(false);
+  expect(dialogs.join(' '), 'และต้องบอกว่ากลุ่มไหน ต่างกันเท่าไหร่').toContain('P/N ' + PN_B);
+  expect(dialogs.join(' ')).toContain('150');
+});
+
+test('ปุ่มคำนวณให้ ต้องพากลับออกจากโหมดแก้กล่องเองได้', async ({ page }) => {
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 100);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 3);
+  expect(await leftCell(page, PN_B)).toContain('ไม่ตรงยอด');
+
+  await page.click(`#dnTable td[data-left="${PN_B}"] .dn-recalc`);
+  await page.waitForTimeout(200);
+
+  expect(await boxOf(page, PN_B, 'boxes')).toBe('2');
+  expect(await boxOf(page, PN_B, 'remainder')).toBe('0');
+  expect(await leftCell(page, PN_B)).toContain('ยอดตรง');
+});
+
+test('ช่อง Remark ต้องกรอกได้ และลงไปในไฟล์', async ({ page }) => {
+  // ช่องนี้เคยมีในโครงข้อมูลและเขียนลงคอลัมน์ U ให้อยู่แล้ว แต่ไม่มีที่ให้กรอกบนจอเลย
+  // เป็นทางออกของกรณีแพ็คไม่เต็มหลายกล่อง ซึ่งฟอร์มแสดงด้วยตัวเลขไม่ได้
+  await open(page);
+  await fillGroupB(page);
+  const i = page.locator(`#dnTable input.dn-pack[data-pn="${PN_B}"][data-f="remark"]`);
+  await i.fill('แพ็ค 3 กล่องไม่เต็ม'); await i.press('Tab');
+  await page.waitForTimeout(150);
+
+  expect((await readState(page)).deliveryNotes[0].remark).toBe('แพ็ค 3 กล่องไม่เต็ม');
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  expect(xml, 'ต้องไปโผล่ในช่อง Remark ของใบ').toContain('แพ็ค 3 กล่องไม่เต็ม');
 });
 
 test('Wip bal. ต้องเป็นยอดค้างก่อนส่งรอบนี้ ไม่ใช่หลังส่ง', async ({ page }) => {
@@ -183,10 +279,8 @@ test('หาไม่เจอ ต้องบอกว่าหาอะไร�
 test('ยอดรวมกับจำนวนกลุ่มต้องเป็นของทั้งวัน ไม่ใช่เฉพาะที่ค้นหาเจอ', async ({ page }) => {
   // ถ้านับตามที่เห็น คนจะกดออกใบโดยเข้าใจว่ากรอกไปเท่าที่เห็น
   await open(page);
-  await pack(page, PN_B, 'perBox', 50);
-  await pack(page, PN_B, 'boxes', 30);           // 1,500
-  await pack(page, PN_A, 'perBox', 10);
-  await pack(page, PN_A, 'boxes', 7);            // 70
+  await alloc(page, 'PO-B001|' + PN_B, 1500);
+  await alloc(page, 'PO-A004|' + PN_A, 70);
 
   await search(page, PN_A);
   const sum = await page.locator('#dnSummary').innerText();
@@ -199,9 +293,8 @@ test('ยอดรวมกับจำนวนกลุ่มต้องเ�
 test('ออกใบต้องไม่สนใจตัวค้นหา — ของที่ถูกซ่อนต้องยังลงในไฟล์', async ({ page }) => {
   await open(page);
   await fillGroupB(page);
-  await pack(page, PN_A, 'perBox', 10);
-  await pack(page, PN_A, 'boxes', 7);
   await alloc(page, 'PO-A004|' + PN_A, 70);
+  await pack(page, PN_A, 'perBox', 10);
 
   await search(page, PN_A);                       // ซ่อนกลุ่ม B ไว้
   const { out } = await exportForm(page);
@@ -241,12 +334,11 @@ async function exportForm(page, opts = {}) {
   return { src, out: fs.readFileSync(await dl.path()) };
 }
 
-/** กรอกครบหนึ่งกลุ่มสองใบ ให้ยอดตรงกัน จะได้ไม่มีกล่องยืนยันมาขวาง */
+/** กรอกครบหนึ่งกลุ่มสองใบ — กรอกยอดราย PO แล้วโปรแกรมแบ่งกล่องให้เอง (รวม 1,500 = 30 กล่อง) */
 async function fillGroupB(page) {
-  await pack(page, PN_B, 'perBox', 50);
-  await pack(page, PN_B, 'boxes', 30);
   await alloc(page, 'PO-B001|' + PN_B, 1000);
   await alloc(page, 'PO-B055|' + PN_B, 500);
+  await pack(page, PN_B, 'perBox', 50);
 }
 
 test('ไฟล์ของผู้ใช้ต้องไม่ถูกทำลาย — ออกใบแล้วทุกส่วนของฟอร์มต้องอยู่ครบ เปลี่ยนแค่ชีตเดียว', async ({ page }) => {
