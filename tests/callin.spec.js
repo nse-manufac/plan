@@ -91,7 +91,10 @@ test('ไฟล์ของผู้ใช้ต้องไม่ถูกท�
     const b = await zb.file(n).async('string');
     if (a !== b) changed.push(n);
   }
-  expect(changed, 'ต้องแตะชีตเดียวเท่านั้น ส่วนที่เหลือห้ามถูกเขียนใหม่').toEqual(['xl/worksheets/sheet1.xml']);
+  // workbook.xml เปลี่ยนเพราะต้องสั่งให้ Excel คิดสูตรใหม่ตอนเปิด
+  // ไม่งั้น Aging กับยอดรวม SUBTOTAL จะโชว์ค่าเก่าที่แคชไว้ ทั้งที่ Wip bal. เปลี่ยนไปแล้ว
+  expect(changed, 'ต้องแตะชีตเดียวเท่านั้น ส่วนที่เหลือห้ามถูกเขียนใหม่')
+    .toEqual(['xl/workbook.xml', 'xl/worksheets/sheet1.xml']);
 });
 
 test('ไฟล์ของผู้ใช้ต้องไม่ถูกทำลาย — ไฟล์ที่ได้กลับมาต้องไม่บวม เพราะต้องส่งเข้าเมลให้ลูกค้าทุกวัน', async ({ page }) => {

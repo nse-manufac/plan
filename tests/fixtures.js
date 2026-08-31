@@ -107,7 +107,7 @@ async function callInWorkbook(rows, opts = {}) {
     if (r.orderDate) row.getCell(3).value = new Date(r.orderDate + 'T00:00:00Z');
     row.getCell(4).value = r.qty;
     if (r.wip !== undefined) row.getCell(5).value = r.wip;
-    row.getCell(6).value = { formula: `TODAY()-C${n}` };
+    row.getCell(6).value = { formula: `TODAY()-C${n}`, result: 0 };  // ดู result ที่ deliveryFormWorkbook
     if (r.commit !== undefined) row.getCell(10).value = r.commit;   // ของที่คนวางแผนกรอกเอง
   });
 
@@ -137,20 +137,23 @@ async function deliveryFormWorkbook(units = ['TUE-U', 'TUE-H'], opts = {}) {
     for (let n = 10; n <= 95; n++) {
       const row = ws.getRow(n);
       row.getCell(2).value = n - 9;                              // Item มีอยู่แล้วในฟอร์ม
-      row.getCell(8).value  = { formula: `TODAY()-E${n}` };      // Aging
+      // ⚠️ ต้องใส่ result ให้ทุกสูตร เลียนแบบฟอร์มจริงที่เก็บ <f>M10*N10+O10</f><v>0</v>
+      //    เลข 0 ที่แคชไว้นี่แหละคือตัวที่ทำให้ใบส่งของโชว์จำนวนเป็น 0 (พนักงานเจอ 31 ส.ค. 2026)
+      //    fixture เดิมไม่ใส่ result ExcelJS จึงไม่เขียน <v> เลย บั๊กนี้จึงลอดเทสทั้งชุดไปได้
+      row.getCell(8).value  = { formula: `TODAY()-E${n}`, result: 0 };      // Aging
       // ⚠️ ตั้งรูปแบบวันที่ไว้ที่แถวแรกแถวเดียว เลียนแบบฟอร์มจริงที่บางแถวยังไม่มีช่องนั้นเลย
       //    แถวถัดไปที่แอปต้องสร้างช่องขึ้นมาใหม่ ต้องหยิบรูปแบบนี้ไปใช้ ไม่งั้นวันที่จะโชว์เป็นเลขดิบ
       if (n === 10) {
         row.getCell(5).value = new Date('2020-01-01T00:00:00Z');   // ของสัปดาห์ก่อนที่ค้างอยู่
         row.getCell(5).numFmt = 'dd/mm/yyyy';
       }
-      row.getCell(16).value = { formula: `M${n}*N${n}+O${n}` };  // จำนวน/PCS
-      row.getCell(23).value = { formula: `G${n}-P${n}` };        // Fail
+      row.getCell(16).value = { formula: `M${n}*N${n}+O${n}`, result: 0 };  // จำนวน/PCS
+      row.getCell(23).value = { formula: `G${n}-P${n}`, result: 0 };        // Fail
     }
     const total = ws.getRow(96);
     total.getCell(2).value = 'รวม';
-    total.getCell(6).value = { formula: 'SUM(F10:F95)' };
-    total.getCell(16).value = { formula: 'SUM(P10:P95)' };
+    total.getCell(6).value = { formula: 'SUM(F10:F95)', result: 0 };
+    total.getCell(16).value = { formula: 'SUM(P10:P95)', result: 0 };
     // ของที่เหลือจากใบครั้งก่อน ต้องถูกล้างตอนออกใบใหม่
     if (opts.stale) {
       ws.getRow(10).getCell(3).value = 'ของเก่าที่ต้องหาย';
