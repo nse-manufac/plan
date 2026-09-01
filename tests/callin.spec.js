@@ -1,14 +1,17 @@
-// เทสการกรอกฟอร์ม Daily Call In
+// เทสการเทียบยอด Wip bal. กับไฟล์ Call In ของ Delta
 //
-// ── สิ่งที่เทสชุดนี้คุ้มอยู่จริง ๆ ────────────────────────────────
-// ไฟล์ Call In ตัวจริงมีสูตร VLOOKUP ข้ามไฟล์ 698 สูตร คอมเมนต์ในเซลล์ ค่าตั้งเครื่องพิมพ์
-// และคอลัมน์ commit ตามวันที่ที่คนวางแผนกรอกเอง — ของพวกนี้แอปไม่รู้จักสักอย่าง
-// ถ้าวันหนึ่งมีคนเปลี่ยนวิธีเขียนไฟล์ไปเป็น "อ่านทั้งไฟล์แล้วเขียนใหม่" ของพวกนั้นจะหายเงียบ ๆ
-// เทสข้อ "ทุกส่วนของไฟล์ต้องอยู่ครบ" คือด่านที่จะจับเรื่องนั้นได้
+// ── หน้านี้เคยเป็นอะไร และตอนนี้เป็นอะไร ──────────────────────────
+// เดิมเป็นตัวกรอกฟอร์ม Call In ให้ Delta — เจ้าของแจ้ง 1 ก.ย. 2026 ว่าสร้างมาจากความเข้าใจผิด
+// ไม่ได้ใช้ จึงถอดตัวเขียนไฟล์ออก เหลือเฉพาะการอ่านและเทียบยอด
+//
+// ตัวเทียบยอดสำคัญขึ้นกว่าเดิม ไม่ใช่น้อยลง — เพราะยอด Wip bal. บนใบส่งสินค้า
+// กำลังจะเปลี่ยนไปใช้เลขของ Delta หน้านี้จึงเป็นที่เดียวที่จะรู้ว่า
+// ข้อมูลการผลิตของเรากับบัญชีของ Delta เริ่มห่างกันแล้ว
+//
+// ⚠️ เทสสามข้อที่เคยตรวจว่า "ไฟล์ของผู้ใช้ต้องไม่ถูกทำลาย" ถูกลบไปพร้อมตัวเขียนไฟล์
+//    การคุ้มกันแบบเดียวกันยังอยู่ครบใน delivery-note.spec.js ซึ่งยังเขียนไฟล์จริงอยู่
 
 const { test, expect } = require('@playwright/test');
-const fs = require('fs');
-const JSZip = require('jszip');
 const { callInWorkbook } = require('./fixtures');
 
 const APP = '/production_plan_tracker.html';
@@ -35,7 +38,7 @@ async function openWith(page, orders, records = []) {
   await page.click('.tab-btn[data-tab="data"]');
 }
 
-/** อัปโหลดไฟล์ → เลือกชีต → กดตรวจ */
+/** อัปโหลดไฟล์ → เลือกชีต → กดเทียบยอด */
 async function scan(page, buf, sheet) {
   await page.setInputFiles('#callInFileInput',
     { name: 'callin.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: buf });
@@ -45,10 +48,8 @@ async function scan(page, buf, sheet) {
   await expect(page.locator('#callInPreviewPanel')).toBeVisible();
 }
 
-async function apply(page) {
-  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#btnCallInApply')]);
-  return fs.readFileSync(await dl.path());
-}
+/** ข้อความในแถวของ PO นั้นบนตารางผลเทียบ */
+const rowOf = (page, po) => page.locator('#callInTable tbody tr').filter({ hasText: po }).innerText();
 
 const ROWS = [
   { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 300, commit: 111 },
@@ -57,88 +58,64 @@ const ROWS = [
 ];
 const ORDERS = [order('PO-C041', '9100000041', 300), order('PO-C040', '9100000040', 300)];
 
-test('A1 — Wip bal. ต้องเป็น PO QTY ลบยอดส่งสะสม และไม่นับยอดที่ถูกยกเลิก', async ({ page }) => {
+test('A1 — ยอดค้างของเราต้องเป็น PO QTY ลบยอดส่งสะสม และไม่นับยอดที่ถูกยกเลิก', async ({ page }) => {
+  // เทสข้อนี้เคยตรวจผ่านไฟล์ที่ดาวน์โหลดมา ตอนนี้ไม่มีไฟล์แล้ว จึงตรวจที่ตารางผลเทียบแทน
+  // สิ่งที่คุ้มยังเป็นเรื่องเดียวกัน คือสูตรของยอดค้าง ซึ่งเป็นเลขที่เอาไปเถียงกับ Delta
   await openWith(page, ORDERS, [
     shipped('S1', 'PO-C041|9100000041', 120),
     shipped('S2', 'PO-C040|9100000040', 300),
     Object.assign(shipped('S3', 'PO-C041|9100000041', 50), { voided: true, date: '2026-08-21' })
   ]);
   await scan(page, await callInWorkbook(ROWS));
-  const out = await apply(page);
 
-  const zip = await JSZip.loadAsync(out);
-  const xml = await zip.file('xl/worksheets/sheet1.xml').async('string');
-  const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>\\s*<v>([^<]*)</v>').exec(xml) || [])[1];
+  const r41 = await rowOf(page, 'PO-C041');
+  expect(r41, 'สั่ง 300 ส่งแล้ว 120 (ยอดที่ยกเลิก 50 ห้ามนับ) ยอดเราต้องเหลือ 180').toContain('180');
+  expect(r41, 'และต้องโชว์ยอดของ Delta คู่กันให้เห็นว่าต่างกัน').toContain('300');
 
-  expect(at('E7'), 'สั่ง 300 ส่งแล้ว 120 (ยอดที่ยกเลิก 50 ห้ามนับ) ต้องเหลือ 180').toBe('180');
-  expect(at('E8'), 'ส่งครบแล้วต้องเป็น 0 ไม่ใช่ค่าเดิมที่ค้างอยู่').toBe('0');
-  expect(at('E9'), 'แถวที่ไม่มีใบนั้นในแอป ห้ามแตะ ต้องยังเป็น 500').toBe('500');
+  const r40 = await rowOf(page, 'PO-C040');
+  expect(r40, 'ส่งครบแล้วยอดเราต้องเป็น 0').toContain('0');
 });
 
-test('ไฟล์ของผู้ใช้ต้องไม่ถูกทำลาย — กรอกแล้วทุกส่วนของไฟล์ต้องอยู่ครบ มีเพียงชีตที่กรอกเท่านั้นที่เปลี่ยน', async ({ page }) => {
-  const src = await callInWorkbook(ROWS);
-  await openWith(page, ORDERS, [shipped('S1', 'PO-C041|9100000041', 120)]);
-  await scan(page, src);
-  const out = await apply(page);
-
-  const za = await JSZip.loadAsync(src), zb = await JSZip.loadAsync(out);
-  const names = z => Object.keys(z.files).filter(n => !z.files[n].dir).sort();
-  expect(names(zb), 'ห้ามมีส่วนไหนของไฟล์หายไปหรือโผล่เพิ่ม').toEqual(names(za));
-
-  const changed = [];
-  for (const n of names(za)) {
-    const a = await za.file(n).async('string');
-    const b = await zb.file(n).async('string');
-    if (a !== b) changed.push(n);
-  }
-  // workbook.xml เปลี่ยนเพราะต้องสั่งให้ Excel คิดสูตรใหม่ตอนเปิด
-  // ไม่งั้น Aging กับยอดรวม SUBTOTAL จะโชว์ค่าเก่าที่แคชไว้ ทั้งที่ Wip bal. เปลี่ยนไปแล้ว
-  expect(changed, 'ต้องแตะชีตเดียวเท่านั้น ส่วนที่เหลือห้ามถูกเขียนใหม่')
-    .toEqual(['xl/workbook.xml', 'xl/worksheets/sheet1.xml']);
-});
-
-test('ไฟล์ของผู้ใช้ต้องไม่ถูกทำลาย — ไฟล์ที่ได้กลับมาต้องไม่บวม เพราะต้องส่งเข้าเมลให้ลูกค้าทุกวัน', async ({ page }) => {
-  // ⚠️ เคยพลาดมาแล้ว: JSZip ไม่บีบอัดถ้าไม่สั่ง ไฟล์จริง 191 KB โตเป็น 1 MB
-  //    เนื้อหาเหมือนเดิมทุกช่อง เปิดได้ปกติ ไม่มี error — จับไม่ได้เลยถ้าดูแต่เนื้อหา
-  const src = await callInWorkbook(ROWS);
-  await openWith(page, ORDERS, [shipped('S1', 'PO-C041|9100000041', 120)]);
-  await scan(page, src);
-  const out = await apply(page);
-
-  expect(out.length / src.length,
-    `ไฟล์ออก ${out.length} ไบต์ จากไฟล์เข้า ${src.length} ไบต์ — โตผิดปกติแปลว่าลืมสั่งบีบอัด`)
-    .toBeLessThan(1.3);
-});
-
-test('ไฟล์ของผู้ใช้ต้องไม่ถูกทำลาย — สูตรและคอลัมน์ที่คนกรอกเอง ต้องรอดมาครบ', async ({ page }) => {
-  await openWith(page, ORDERS, [shipped('S1', 'PO-C041|9100000041', 120)]);
+test('ยอดที่ตรงกันแล้วต้องไม่ขึ้นในตาราง — ตารางนี้มีไว้ดูเฉพาะที่ต่าง', async ({ page }) => {
+  // ไฟล์บอก 300 เราก็ 300 ทั้งสองใบ ไม่มีอะไรต้องคุยกับ Delta
+  await openWith(page, ORDERS);
   await scan(page, await callInWorkbook(ROWS));
-  const zip = await JSZip.loadAsync(await apply(page));
-  const xml = await zip.file('xl/worksheets/sheet1.xml').async('string');
 
-  expect((xml.match(/<f>TODAY\(\)-C\d+<\/f>/g) || []).length,
-    'สูตร Aging ประจำแถวต้องอยู่ครบทุกแถว').toBe(ROWS.length);
-  expect(xml, 'คอลัมน์ commit ที่คนวางแผนกรอกไว้ ห้ามหาย').toContain('<v>111</v>');
-  expect(xml, 'คอลัมน์ commit ของแถวที่แอปไม่รู้จักก็ห้ามหาย').toContain('<v>333</v>');
-
-  const other = await zip.file('xl/worksheets/sheet2.xml').async('string');
-  expect(other, 'ชีตอื่นในไฟล์เดียวกันต้องไม่ถูกแตะเลย').toContain('B2*2');
+  const body = await page.locator('#callInTable tbody').innerText();
+  expect(body, 'ใบที่ยอดตรงกันไม่ต้องโผล่').not.toContain('PO-C041');
+  expect(await page.locator('#callInSummary').innerText()).toContain('ยอดไม่ตรงกัน 0 แถว');
 });
 
-test('ห้ามเดาแทนคน — ใบที่ยังส่งไม่ครบแต่ไม่มีแถวในไฟล์ ต้องบอกให้คนไปเพิ่มเอง ห้ามเพิ่มแถวให้', async ({ page }) => {
-  // ใบที่สามไม่มีอยู่ในไฟล์ — แถวใหม่ที่แอปสร้างจะไม่มีสูตรประจำแถว ยอดรวมท้ายตารางจะผิด
+test('ต้องรายงานทั้งสองทิศ — PO ที่มีเฉพาะฝั่ง Delta และที่มีเฉพาะฝั่งเรา', async ({ page }) => {
   await openWith(page, ORDERS.concat([order('PO-C099', '9100000099', 700)]),
                  [shipped('S1', 'PO-C041|9100000041', 120)]);
   await scan(page, await callInWorkbook(ROWS));
 
   const summary = await page.locator('#callInSummary').innerText();
-  expect(summary, 'ต้องบอกจำนวนใบที่ต้องไปเพิ่มแถวเอง').toContain('ต้องเพิ่มแถวเอง');
-  await expect(page.locator('#callInTable'), 'และต้องบอกว่าเป็นใบไหน พร้อมยอดที่ควรใส่')
-    .toContainText('PO-C099');
+  expect(summary, 'ใบที่เรารู้จัก แต่ Delta ไม่มี').toContain('Delta ไม่มี');
+  expect(summary, 'ใบที่ Delta รู้จัก แต่เราไม่มี').toContain('Delta รู้จัก เราไม่รู้จัก');
 
-  const zip = await JSZip.loadAsync(await apply(page));
-  const xml = await zip.file('xl/worksheets/sheet1.xml').async('string');
-  expect(xml, 'ห้ามแอบเพิ่มแถวใหม่ลงไปในไฟล์').not.toContain('PO-C099');
+  await expect(page.locator('#callInTable'), 'และต้องบอกว่าเป็นใบไหน').toContainText('PO-C099');
+  await expect(page.locator('#callInTable')).toContainText('PO-NOTINAPP');
+});
+
+test('PO QTY ไม่ตรงกัน ต้องเตือนแยกจากยอดค้างไม่ตรง เพราะร้ายแรงกว่า', async ({ page }) => {
+  // ยอดสั่งคนละเลข แปลว่าสองฝั่งมองใบสั่งเดียวกันไม่เหมือนกันตั้งแต่ต้น
+  await openWith(page, [order('PO-C041', '9100000041', 250), ORDERS[1]]);
+  await scan(page, await callInWorkbook(ROWS));
+
+  expect(await page.locator('#callInSummary').innerText()).toContain('PO QTY ไม่ตรงกัน');
+});
+
+test('หน้านี้ต้องอ่านอย่างเดียว — ห้ามมีปุ่มที่เขียนไฟล์หรือแก้ข้อมูล', async ({ page }) => {
+  // เจ้าของสั่งถอดตัวสร้างไฟล์ออก ถ้ามีใครใส่กลับมาโดยไม่ได้ถาม เทสข้อนี้จะจับได้
+  await openWith(page, ORDERS, [shipped('S1', 'PO-C041|9100000041', 120)]);
+  const before = await page.evaluate(k => localStorage.getItem(k), K_STATE);
+  await scan(page, await callInWorkbook(ROWS));
+
+  expect(await page.locator('#btnCallInApply').count(), 'ปุ่มกรอกไฟล์ต้องไม่มีแล้ว').toBe(0);
+  expect(await page.evaluate(k => localStorage.getItem(k), K_STATE),
+    'เทียบยอดแล้วข้อมูลในเครื่องต้องไม่เปลี่ยนแม้แต่ตัวอักษรเดียว').toBe(before);
 });
 
 test('G1 — เลือกชีตผิดต้องขึ้นข้อความภาษาไทยบอกตรง ๆ ไม่ใช่เงียบหรือเขียนมั่ว', async ({ page }) => {
@@ -151,5 +128,5 @@ test('G1 — เลือกชีตผิดต้องขึ้นข้อ�
   await page.click('#btnCallInScan');
 
   await expect(page.locator('#toast'), 'ชีตที่ไม่มีหัวตาราง P/N ต้องขึ้นข้อความบอก').toContainText('P/N');
-  await expect(page.locator('#callInPreviewPanel'), 'และต้องไม่เปิดหน้าตรวจให้กดกรอกต่อ').toBeHidden();
+  await expect(page.locator('#callInPreviewPanel'), 'และต้องไม่เปิดหน้าผลเทียบให้ดูต่อ').toBeHidden();
 });
