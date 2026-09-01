@@ -12,12 +12,23 @@
 
 งานหลักที่ระบบทำ:
 - **นำเข้าแผนงาน** จากไฟล์ Excel ของลูกค้า
-- **คีย์ยอดรายวัน** ว่าแต่ละใบสั่งซื้อเดินไปถึงไหนในแต่ละขั้นตอน
-- **Dashboard** แถบความคืบหน้า · สถานะล่าช้า/ใกล้ครบกำหนด · กราฟ
-- **นำเข้าใบส่งงาน** เพื่อบันทึกยอดส่งของ
+- **คีย์ยอดรายวัน** ว่าแต่ละใบสั่งซื้อเดินไปถึงไหน — หน้านี้มีปุ่มครบทั้ง 5 ขั้น
+- **ใบส่งสินค้า** คีย์จำนวนที่ส่งราย PO และกรอกฟอร์ม FM-ST-07 ให้
+- **กรอกฟอร์ม Daily Call In** เติมยอดค้างลงไฟล์ที่ส่งลูกค้า
+- **Dashboard** แถบความคืบหน้า · Aging · สถานะล่าช้า/ใกล้ครบกำหนด · กราฟ
 - **รวมข้อมูลจากไฟล์** ที่ export มาจากเครื่องอื่น (มีหน้าจอสรุปก่อนรวม)
 - **ออกรายงาน Excel**
 - **ซิงค์หลายเครื่อง** ผ่าน Google Sheets (ไม่บังคับ ใช้ offline ได้)
+
+> ⚠️ **ยอดส่งของนำเข้าจากไฟล์ไม่ได้แล้ว** ตั้งแต่ 30 ส.ค. 2026 (PR #34)
+> การนำเข้าจากไฟล์ "ใบส่งงาน TPP-UNION" ถูกตัดออก เพราะเขียนกุญแจ `orderId|shipping|date`
+> ชนกับหน้าใบส่งสินค้า จึงทับกันเงียบ ๆ โดยไม่มีใครรู้ว่าอันไหนถูก
+> ยอดที่เคยนำเข้าไว้ยังอยู่ครบและยังบอกที่มาได้
+>
+> **แต่ยังเหลือสองทางที่เขียนกุญแจเดียวกันได้** — หน้าใบส่งสินค้า (`saveAllocation()`)
+> คือทางที่ควรใช้ ส่วนแท็บ `🚚 ส่งของ` ในหน้าคีย์ยอดรายวัน **ยังเปิดอยู่โดยตั้งใจ**
+> เป็นทางสำรองระหว่างเปลี่ยนผ่าน · ทั้งสองทางทับกันได้ตาม A2 ระวังเวลาแก้ฝั่งใดฝั่งหนึ่ง
+> (การปิดทางคีย์มือเป็นงานที่เลื่อนไว้ ยังไม่ได้ทำ)
 
 **ขั้นตอนการผลิต 5 ขั้น:** `winding` → `assembly` → `support` → `inspection` → `shipping`
 
@@ -52,8 +63,8 @@ agent **ห้าม push ขึ้น `main` เด็ดขาด** ทุก�
 
 ## 4. หาที่แก้ยังไงโดยไม่ต้องอ่านทั้งไฟล์
 
-ไฟล์ยาว ~2,300 บรรทัด แต่ **~925 KB จาก 1.03 MB เป็นโค้ด ExcelJS ที่ vendor ไว้**
-อยู่ในบรรทัดยาวมาก ๆ ช่วงกลางไฟล์ (บรรทัดละ 20,000–500,000 ตัวอักษร)
+ไฟล์ยาว ~3,350 บรรทัด แต่ **~1,014 KB จาก 1,227 KB เป็นโค้ด ExcelJS + JSZip ที่ vendor ไว้**
+กระจุกอยู่ใน **5 บรรทัด** ช่วงกลางไฟล์ (บรรทัดละ 20,000–500,000 ตัวอักษร)
 
 > ⚠️ **ห้ามอ่าน ห้ามแก้ ห้าม format บรรทัดเหล่านั้น** และห้ามอ่านทั้งไฟล์เข้า context
 > วิธีเช็กว่าบรรทัดไหนเป็น vendor: ถ้าบรรทัดยาวเกิน 20,000 ตัวอักษร คือ vendor
@@ -67,18 +78,26 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 | Section banner | มีอะไร |
 |---|---|
 | `Basic helpers` | `normalizeDateOnly` `fmtDateTH` `addDaysISO` `daysBetween` `escapeHtml` `uid` `toast` |
-| `Processes` | `PROCESSES` `PREV_PROCESS` `ORDER_DATE_FIELDS` `RECORD_DATE_FIELDS` `normalizeRowDates` |
+| `Processes` | `PROCESSES` `PREV_PROCESS` `ORDER_DATE_FIELDS` `RECORD_DATE_FIELDS` |
 | `State` | `STORAGE_KEY` `defaultState` `loadState` `saveState` `migrateCorruptedDates` |
 | `Google Sheets sync` | `gsApi` `cleanForPush` `doSync` และการ merge ตอน pull |
+| `แก้ไฟล์ Excel เฉพาะช่องที่ต้องแก้` | ตัวช่วยแก้ XML ในไฟล์ .xlsx ผ่าน JSZip |
+| `ทำให้ Excel คิดสูตรใหม่หลังเราแก้ช่องต้นทาง` | `clearCachedFormulaValues` `setFullCalcOnLoad` ← อ่านคอมเมนต์ก่อนแตะ |
+| `ใบส่งสินค้า` | โครงข้อมูลใบส่งสินค้า · `deliveryQty` `canonicalPack` · และ `normalizeRowDates` ที่มานอนอยู่ตรงนี้ |
+| `ใบส่งสินค้า: ข้อมูลและการคิดยอด` | `deliveryGroups` `savePacking` `saveAllocation` `resetPacking` `samePn` |
+| `กรอกฟอร์ม Daily Call In` | อ่านและเติมยอดค้างลงไฟล์ Call In |
 | `Excel parsing` | อ่านไฟล์แผนงานจากลูกค้า |
 | `Cumulative / deadline / status helpers` | `buildCumMap` `buildCumSplitMap` `computeDeadlines` `computeStatus` ← **หัวใจของ A1–A5** |
 | `Render: Import tab` | หน้านำเข้า |
-| `Import: ใบส่งงาน (Shipping)` | นำเข้าใบส่งงาน |
-| `Render: Entry tab` | หน้าคีย์ยอดรายวัน · `saveEntryValue` |
-| `Record editor` | แก้ไข/ยกเลิกรายการที่บันทึกแล้ว |
+| `Render: Entry tab` | หน้าคีย์ยอดรายวัน (ปุ่มเลือกขั้นตอนครบ 5 ขั้น) |
+| `Record editor` | แก้ไข/ยกเลิกรายการที่บันทึกแล้ว · `saveEntryValue` อยู่ในบล็อกนี้ |
 | `Render: Dashboard tab` | ตารางหลัก + กราฟ |
-| `Merge logic` | `computeMergePlan` `showMergeModal` `applyMerge` |
+| `Render: Data tab` / `Merge logic` | หน้าข้อมูล · `computeMergePlan` `showMergeModal` `applyMerge` |
 | `Excel report export` | ออกรายงาน |
+| `กรอกฟอร์มใบส่งสินค้า FM-ST-07` | `fillDeliveryForm` `setDataMerges` — เขียนลงฟอร์มจริง |
+| `หน้าจอใบส่งสินค้า` | `renderDeliveryNote` `dnFilter` `bindDnInputs` `refreshDnGroup` |
+| `ออกไฟล์ใบส่งสินค้า FM-ST-07` | ด่านกันออกใบตอนกล่อง/เศษไม่ตรงยอด |
+| `หน้าจอ: กรอกฟอร์ม Daily Call In` | หน้าตรวจก่อนกรอกและปุ่มดาวน์โหลด |
 | `Orchestration` / `Event bindings` / `Init` | ผูก event และเริ่มระบบ |
 
 ---
@@ -100,7 +119,7 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
   deviceName: '',
   deadlineOffsets: { winding:10, assembly:17, support:null, inspection:24, shipping:28 },  // ซิงค์ข้ามเครื่อง (null = ยังไม่กำหนด)
   chartPref:  { mode:'14', from:'', to:'' },                                 // เครื่องนี้เท่านั้น ห้ามซิงค์
-  orders: [], records: [], importHistory: []
+  orders: [], records: [], deliveryNotes: [], importHistory: []
 }
 ```
 
@@ -173,7 +192,17 @@ npm install && npx playwright install chromium && npm test
 
 ### 8.2 ทดสอบด้วยมือเพิ่ม (สำหรับสิ่งที่เทสยังไม่ครอบคลุม)
 
-smoke test ครอบการคีย์ยอด/audit trail/วันที่/ออฟไลน์ แต่ **ยังไม่ครอบการนำเข้า Excel และกราฟ**
+ชุดเทสตอนนี้มี **89 ข้อใน 5 ไฟล์** ครอบการคีย์ยอด · audit trail · วันที่ · ออฟไลน์ ·
+การนำเข้า/ออกไฟล์ Excel · ใบส่งสินค้า · การกรอกฟอร์ม Call In
+
+**สิ่งที่เทสยังตรวจแทนตาไม่ได้ และต้องทำด้วยมือทุกครั้งที่แตะ**
+
+- **เปิดไฟล์ Excel ที่โปรแกรมออกมาด้วย Excel จริง** — เทียบ XML ได้ แต่บอกไม่ได้ว่าคนเปิดแล้วเห็นอะไร
+  ช่องที่ merge · โลโก้ · เส้นขอบ · และยอดรวมท้ายตารางว่าไม่นับซ้ำ
+- **กราฟบน Dashboard**
+- **เครื่องที่รับข้อมูลมาจากการซิงค์** — ชนิดข้อมูลของ P/N ต่างจากเครื่องที่นำเข้าไฟล์เอง
+  บั๊กที่เจอ 1 ก.ย. 2026 โผล่เฉพาะบนเครื่องแบบนั้น
+
 ถ้า PR แตะส่วนนั้น ให้ทดสอบด้วยมือแล้วเขียนผลใน PR:
 
 1. เปิด `production_plan_tracker.html` ในเบราว์เซอร์ ไม่ต้องตั้งค่า sync
