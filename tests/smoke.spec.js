@@ -684,6 +684,58 @@ test('C1 — ใบที่ไม่มี Order Date ต้องขึ้น�
   expect(await agingColumn(page), 'ไม่มีวันสั่ง = คำนวณอายุงานไม่ได้ ต้องบอกตรง ๆ ว่าไม่มี').toEqual(['—']);
 });
 
+/** สีของช่อง Aging แต่ละแถว — '' แปลว่าไม่ได้ระบายสี */
+function agingColors(page) {
+  return page.locator('#dashTable tbody tr td:nth-child(7)').evaluateAll(
+    tds => tds.map(td => {
+      const b = td.querySelector('.badge');
+      return b ? b.className.replace('badge', '').trim() : '';
+    }));
+}
+
+/** ใบเดียว ตั้งวันสั่งย้อนหลังได้ตามใจ — ใช้ตรวจสีช่อง Aging */
+function agingOrder(id, daysAgo) {
+  return { id, week: 'W31', poNo: `PO-${id}`, pn: `PN-${id}`, orderQty: 100,
+    orderDate: isoDaysAgo(daysAgo), status: 'active',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false };
+}
+
+test('A4 — สีช่อง Aging ต้องมาจาก deadlineOffsets.shipping ไม่ใช่เลขตายตัว', async ({ page }) => {
+  // seedState ตั้ง shipping = 28 → ค้างเกิน 28 วันแดง · เหลือถึงกำหนด ≤3 วันเหลือง · นอกนั้นเขียว
+  // เรียงตาม orderDate จากเก่าไปใหม่ → 30, 26, 5 วัน
+  await openApp(page, [], [agingOrder('O1', 30), agingOrder('O2', 26), agingOrder('O3', 5)]);
+  await gotoDashboard(page);
+
+  expect(await agingColumn(page), 'ตัวเลขอายุงานต้องไม่เปลี่ยนเพราะการระบายสี').toEqual(['30', '26', '5']);
+  expect(await agingColors(page), 'ค้างเกินกำหนดส่งของต้องแดง · ใกล้ถึงกำหนดต้องเหลือง · ยังสบายต้องเขียว')
+    .toEqual(['red', 'amber', 'green']);
+});
+
+test('A4 — ยังไม่ตั้งจำนวนวันกำหนดส่งของ ช่อง Aging ต้องไม่ระบายสี ห้ามเดาว่าเป็น 0', async ({ page }) => {
+  // shipping = null คือ "ยังไม่กำหนด" ถ้าเผลอตีความเป็น 0 ทุกใบจะแดงตั้งแต่วันสั่ง
+  const st = seedState([], [agingOrder('O1', 30), agingOrder('O2', 1)]);
+  st.deadlineOffsets.shipping = null;
+  await page.addInitScript(([key, s]) => {
+    localStorage.setItem(key, JSON.stringify(s));
+  }, [K_STATE, st]);
+  await page.goto(APP);
+  await page.waitForSelector('.tab-btn[data-tab="entry"]');
+  await gotoDashboard(page);
+
+  expect(await agingColumn(page), 'ตัวเลขยังต้องขึ้นตามปกติ').toEqual(['30', '1']);
+  expect(await agingColors(page), 'ไม่มีเกณฑ์ให้เทียบ ก็ห้ามตัดสินว่าช้าหรือไม่ช้า').toEqual(['', '']);
+});
+
+test('A5 — ใบที่ส่งของครบแล้ว ช่อง Aging ต้องเขียว ไม่ขัดกับคอลัมน์สถานะ', async ({ page }) => {
+  // ค้างมา 30 วันก็จริง แต่ส่งครบแล้ว = งานจบ ถ้าขึ้นแดงจะขัดกับป้ายสถานะสีเขียวข้าง ๆ
+  await openApp(page, [rec('R1', 'O1', 'shipping', TEST_DATE, 100)], [agingOrder('O1', 30)]);
+  await gotoDashboard(page);
+  await page.uncheck('#dashHideDone');
+  await page.waitForTimeout(100);
+
+  expect(await agingColors(page), 'งานที่จบแล้วต้องเขียว ไม่ใช่แดง').toEqual(['green']);
+});
+
 test('ซ่อนงานที่ส่งของครบแล้ว — ติ๊กแล้วต้องเหลือเฉพาะใบที่ยังไม่จบ', async ({ page }) => {
   // O1 ส่งครบ 100 แล้ว · O2 ยังไม่ส่งเลย
   await openApp(page, [rec('R1', 'O1', 'shipping', TEST_DATE, 100)]);
