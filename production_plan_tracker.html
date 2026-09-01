@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-01.5">
+<meta name="app-version" content="2026-09-01.6">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -961,7 +961,34 @@ let syncCfg = loadSyncCfg();
 let syncing = false;
 let syncIntervalId = null;
 
-function cleanForPush(obj){ const o = Object.assign({}, obj); delete o._dirty; return o; }
+/** คอลัมน์ที่ซิงค์ขึ้น Google Sheets — ต้องตรงกับ google-apps-script.gs ทุกตัว
+ *
+ *  ⚠️ ฝั่งเซิร์ฟเวอร์เป็นคนตัดสินว่าเก็บคอลัมน์ไหน ฟิลด์ที่ฝั่งโน้นไม่รู้จักจะหายเงียบ ๆ
+ *     ไม่มี error ไม่มีอะไรร้อง — เกิดขึ้นจริงมาแล้วกับ planSupport ที่ไม่เคยซิงค์
+ *     เลยตั้งแต่ issue #17 กว่าจะรู้ก็หลายเดือน
+ *
+ *  รายการนี้ไม่ใช่คำอธิบายเฉย ๆ — cleanForPush() ใช้มันจริงตอนส่ง
+ *  ฟิลด์ที่ไม่อยู่ในนี้จะไม่ถูกส่ง จึงโกหกไม่ได้
+ *  และ tests/sync-contract.spec.js อ่านทั้งไฟล์นี้กับ .gs มาเทียบกันทุกครั้งที่รันเทส */
+const SYNC_COLS = {
+  Orders: ['id','week','poNo','pn','subName','osc','pc','orderQty','orderDate',
+           'planWinding','planAssembly','planSupport','planInspection','status','importedAt','updatedAt'],
+  Records: ['id','date','orderId','process','qty','note','deviceName',
+            'createdAt','updatedAt','voided','batchId'],
+  DeliveryNotes: ['id','date','unit','orderId','pn','perBox','boxes','remainder','remark','billNo',
+                  'deviceName','createdAt','updatedAt','voided'],
+  DeltaWip: ['id','orderId','week','wip','fileName',
+             'deviceName','createdAt','updatedAt','voided']
+};
+
+/** เอาเฉพาะคอลัมน์ที่ประกาศไว้ขึ้นไป — ฟิลด์ภายในเครื่องอย่าง _dirty ไม่ถูกส่ง (D2) */
+function cleanForPush(obj, table){
+  const cols = SYNC_COLS[table];
+  if(!cols){ const o = Object.assign({}, obj); delete o._dirty; return o; }
+  const out = {};
+  cols.forEach(c=>{ if(obj[c] !== undefined) out[c] = obj[c]; });
+  return out;
+}
 
 // text/plain avoids a CORS preflight request, which Apps Script Web Apps don't handle.
 async function gsApi(action, body){
@@ -1028,12 +1055,12 @@ async function doSync(silent = true){
   try{
     const dirtyOrders = state.orders.filter(o=>o._dirty);
     if(dirtyOrders.length){
-      const res = await gsApi('pushRows', {table:'Orders', rows: dirtyOrders.map(cleanForPush)});
+      const res = await gsApi('pushRows', {table:'Orders', rows: dirtyOrders.map(r=>cleanForPush(r, 'Orders'))});
       dirtyOrders.forEach(o=>{ o._dirty=false; if(res.serverTime) o.updatedAt=res.serverTime; });
     }
     const dirtyRecords = state.records.filter(r=>r._dirty);
     if(dirtyRecords.length){
-      const res = await gsApi('pushRows', {table:'Records', rows: dirtyRecords.map(cleanForPush)});
+      const res = await gsApi('pushRows', {table:'Records', rows: dirtyRecords.map(r=>cleanForPush(r, 'Records'))});
       dirtyRecords.forEach(r=>{ r._dirty=false; if(res.serverTime) r.updatedAt=res.serverTime; });
     }
 
@@ -1045,7 +1072,7 @@ async function doSync(silent = true){
     try{
       const dirtyNotes = state.deliveryNotes.filter(d=>d._dirty);
       if(dirtyNotes.length){
-        const res = await gsApi('pushRows', {table:'DeliveryNotes', rows: dirtyNotes.map(cleanForPush)});
+        const res = await gsApi('pushRows', {table:'DeliveryNotes', rows: dirtyNotes.map(r=>cleanForPush(r, 'DeliveryNotes'))});
         dirtyNotes.forEach(d=>{ d._dirty=false; if(res.serverTime) d.updatedAt=res.serverTime; });
       }
       const pulledNotes = await gsApi('pullRows', {table:'DeliveryNotes', since: syncCfg.lastPullDeliveryNotes});
@@ -1061,7 +1088,7 @@ async function doSync(silent = true){
     try{
       const dirtyWip = state.deltaWip.filter(d=>d._dirty);
       if(dirtyWip.length){
-        const res = await gsApi('pushRows', {table:'DeltaWip', rows: dirtyWip.map(cleanForPush)});
+        const res = await gsApi('pushRows', {table:'DeltaWip', rows: dirtyWip.map(r=>cleanForPush(r, 'DeltaWip'))});
         dirtyWip.forEach(d=>{ d._dirty=false; if(res.serverTime) d.updatedAt=res.serverTime; });
       }
       const pulledWip = await gsApi('pullRows', {table:'DeltaWip', since: syncCfg.lastPullDeltaWip});
