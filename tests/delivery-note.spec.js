@@ -432,6 +432,39 @@ test('ยอดบรรจุต้องลงแถวแรกของก�
   expect(xml, 'PO ของแต่ละแถวยังต่างกัน').toContain('PO-B055');
 });
 
+test('ใบสั่งที่ไม่ได้ส่งวันนี้ ต้องไม่มีบรรทัดบนกระดาษ', async ({ page }) => {
+  // เจ้าของแจ้ง 1 ก.ย. 2026 — ใบส่งของดึงมาทุก PO ของ P/N ที่ส่ง แม้ใบนั้นจะส่ง 0
+  // ใบส่งสินค้าคือรายการ "ของที่ส่งไปกับรอบนี้" ไม่ใช่รายการใบสั่งที่ยังค้าง
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);      // ส่งใบเดียวจากสองใบของกลุ่ม
+  await pack(page, PN_B, 'perBox', 50);
+
+  expect(await page.locator('#dnTable input.dn-alloc').count(),
+    'บนจอต้องยังเห็นครบทุกใบ ไม่งั้นไม่มีช่องให้กรอก').toBe(3);
+
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+
+  expect(xml, 'ใบที่ส่งจริงต้องอยู่').toContain('PO-B001');
+  expect(xml, 'ใบที่ส่ง 0 ต้องไม่มีบรรทัด').not.toContain('PO-B055');
+  expect(xml, 'กลุ่มอื่นที่ไม่ได้ส่งเลยก็ต้องไม่มี').not.toContain('PO-A004');
+});
+
+test('กลุ่มที่เหลือใบเดียวหลังกรองแล้ว ต้องไม่ merge ช่องบรรจุ', async ({ page }) => {
+  // merge คร่อมสองแถวทั้งที่มีบรรทัดเดียว จะทำให้ใบเสียและดูเหมือนใบที่ไม่ได้ส่งก็อยู่ในรอบนี้
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await pack(page, PN_B, 'perBox', 50);
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+
+  for (const c of ['M', 'N', 'O', 'P']) {
+    expect(xml, 'ไม่ควรมี merge ของคอลัมน์ ' + c + ' เพราะเหลือแถวเดียว')
+      .not.toContain('<mergeCell ref="' + c + '10:' + c + '11"/>');
+  }
+  expect(xml, 'ยอดบรรจุยังต้องลงแถวแรก').toMatch(/<c r="M10"[^>]*>[^<]*<v>50<\/v>/);
+});
+
 test('ห้ามแตะสูตรของฟอร์ม — Aging · จำนวน/PCS · Fail · ยอดรวมท้ายตาราง ต้องรอดครบ', async ({ page }) => {
   await open(page);
   await fillGroupB(page);
