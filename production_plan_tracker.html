@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-01.6">
+<meta name="app-version" content="2026-09-01.7">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -804,9 +804,20 @@ function emptyCum(){ return {winding:0, assembly:0, support:0, inspection:0, shi
 
 // ฟิลด์ที่เก็บ "วันปฏิทินล้วน" (YYYY-MM-DD) — ต้อง normalize ทุกครั้งที่รับค่าจากภายนอก
 // (อย่าใส่ importedAt/createdAt/updatedAt ที่นี่ — พวกนั้นต้องคง timestamp ISO เต็มไว้)
-const ORDER_DATE_FIELDS = ['orderDate','planWinding','planAssembly','planSupport','planInspection'];
-const RECORD_DATE_FIELDS = ['date'];
-const DELIVERY_DATE_FIELDS = ['date'];
+/** คอลัมน์ที่เก็บ "วันปฏิทินล้วน" แยกตามตาราง — ต้องตรงกับ DATE_ONLY_COLS ใน google-apps-script.gs
+ *
+ *  ⚠️ ลืมเติมฝั่งใดฝั่งหนึ่งแล้ว Sheets จะแปลงสตริงวันที่เป็นเซลล์ชนิดวันที่ให้เอง
+ *     พออ่านกลับมาจะได้ Date object แทนสตริง แล้วการคำนวณ deadline ฝั่งแอปจะพัง (INVARIANTS หมวด C)
+ *     เป็นบั๊กเงียบคลาสเดียวกับ planSupport — tests/sync-contract.spec.js เทียบสองฝั่งให้แล้ว */
+const SYNC_DATE_COLS = {
+  Orders: ['orderDate','planWinding','planAssembly','planSupport','planInspection'],
+  Records: ['date'],
+  DeliveryNotes: ['date']
+};
+// ชื่อเดิมอ้างจากรายการเดียวข้างบน ไม่ใช่ประกาศซ้ำ — มีที่เดียวจึงหลุดจากกันไม่ได้
+const ORDER_DATE_FIELDS = SYNC_DATE_COLS.Orders;
+const RECORD_DATE_FIELDS = SYNC_DATE_COLS.Records;
+const DELIVERY_DATE_FIELDS = SYNC_DATE_COLS.DeliveryNotes;
 
 /* ---------- ใบส่งสินค้า ---------- */
 /*
@@ -984,7 +995,13 @@ const SYNC_COLS = {
 /** เอาเฉพาะคอลัมน์ที่ประกาศไว้ขึ้นไป — ฟิลด์ภายในเครื่องอย่าง _dirty ไม่ถูกส่ง (D2) */
 function cleanForPush(obj, table){
   const cols = SYNC_COLS[table];
-  if(!cols){ const o = Object.assign({}, obj); delete o._dirty; return o; }
+  // ⚠️ พิมพ์ชื่อตารางผิดแล้วตกมาทางนี้เงียบ ๆ = ส่งทั้งแถวแบบเดิม และด่านเทียบคอลัมน์
+  //    จะเขียวทั้งที่ตารางนั้นไม่ได้ถูกคุมเลย · ร้องดัง ๆ ดีกว่าปล่อยผ่าน
+  //    tests/sync-contract.spec.js ตรวจชื่อตารางของทุก call site ให้อีกชั้น
+  if(!cols){
+    console.error('cleanForPush: ไม่รู้จักตาราง "'+table+'" — ส่งทั้งแถวขึ้นไปแทน');
+    const o = Object.assign({}, obj); delete o._dirty; return o;
+  }
   const out = {};
   cols.forEach(c=>{ if(obj[c] !== undefined) out[c] = obj[c]; });
   return out;

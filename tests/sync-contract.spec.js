@@ -106,6 +106,62 @@ test('ตารางที่ลงทะเบียนไว้ ต้อง�
   }
 });
 
+/** อ่านค่าคงที่ที่เป็น object ของ table -> รายการสตริง */
+function objOfLists(src, decl) {
+  const m = new RegExp(decl + '\\s*=\\s*\\{([\\s\\S]*?)\\}\\s*;').exec(src);
+  if (!m) return null;
+  const out = {};
+  for (const [, table, body] of m[1].matchAll(/(\w+)\s*:\s*\[([^\]]*)\]/g)) {
+    out[table] = [...body.matchAll(/'([^']+)'/g)].map(x => x[1]);
+  }
+  return out;
+}
+
+test('คอลัมน์วันที่ต้องตรงกันทั้งสองฝั่ง', () => {
+  // ⚠️ บั๊กคลาสเดียวกับ planSupport — ลืมเติมฝั่งใดฝั่งหนึ่งแล้ว Sheets จะแปลงสตริงวันที่
+  //    เป็นเซลล์ชนิดวันที่ให้เอง พออ่านกลับจะได้ Date object แทนสตริง
+  //    แล้วการคำนวณ deadline ฝั่งแอปจะพังโดยไม่มีอะไรร้อง (INVARIANTS หมวด C)
+  const srv = objOfLists(GS_SRC, 'var DATE_ONLY_COLS');
+  const cli = objOfLists(APP_SRC, 'const SYNC_DATE_COLS');
+  expect(srv, 'อ่าน DATE_ONLY_COLS ฝั่งเซิร์ฟเวอร์ไม่ออก — รูปแบบไฟล์เปลี่ยนไปแล้ว').not.toBeNull();
+  expect(cli, 'อ่าน SYNC_DATE_COLS ฝั่งแอปไม่ออก — รูปแบบไฟล์เปลี่ยนไปแล้ว').not.toBeNull();
+  expect(Object.keys(srv).length, 'อ่านได้น้อยผิดปกติ').toBeGreaterThanOrEqual(3);
+
+  expect(Object.keys(cli).sort(), 'ตารางที่มีคอลัมน์วันที่ต้องตรงกันสองฝั่ง')
+    .toEqual(Object.keys(srv).sort());
+  for (const t of Object.keys(srv)) {
+    expect([...cli[t]].sort(), `ตาราง ${t}: คอลัมน์วันที่ไม่ตรงกัน — Sheets จะแปลงชนิดข้อมูลให้เอง`)
+      .toEqual([...srv[t]].sort());
+  }
+});
+
+test('ทุกตารางต้องมี updatedAt อยู่ใน TIMESTAMP_COLS', () => {
+  // D5 เทียบเวลาด้วยการเทียบ "ข้อความ" ของ ISO — ถ้า Sheets คืน updatedAt มาเป็น Date object
+  // การเทียบจะให้ผลมั่ว แล้วการแก้จากอีกเครื่องจะถูกมองข้ามเงียบ ๆ
+  const ts = objOfLists(GS_SRC, 'var TIMESTAMP_COLS');
+  expect(ts, 'อ่าน TIMESTAMP_COLS ไม่ออก — รูปแบบไฟล์เปลี่ยนไปแล้ว').not.toBeNull();
+  expect(Object.keys(ts).length, 'อ่านได้น้อยผิดปกติ').toBeGreaterThanOrEqual(4);
+
+  for (const table of Object.keys(serverTables())) {
+    expect(ts[table], `ตาราง ${table} ไม่มีใน TIMESTAMP_COLS`).toBeTruthy();
+    expect(ts[table], `ตาราง ${table} ต้องมี updatedAt ไม่งั้นการเทียบเวลาตอนซิงค์จะพัง`)
+      .toContain('updatedAt');
+  }
+});
+
+test('ทุกที่ที่เรียก cleanForPush ต้องส่งชื่อตารางที่ประกาศไว้จริง', () => {
+  // พิมพ์ชื่อผิดแล้วตกไปทาง fallback = ส่งทั้งแถวแบบเดิม
+  // ด่านเทียบคอลัมน์จะเขียวทั้งที่ตารางนั้นไม่ได้ถูกคุมเลย
+  const calls = [...APP_SRC.matchAll(/cleanForPush\(\s*\w+\s*,\s*'([^']+)'\s*\)/g)].map(m => m[1]);
+  expect(calls.length, `เจอ call site แค่ ${calls.length} จุด — น้อยผิดปกติ`).toBeGreaterThanOrEqual(4);
+
+  const declared = Object.keys(clientTables());
+  for (const t of calls) {
+    expect(declared, `เรียก cleanForPush ด้วยชื่อตาราง "${t}" ที่ไม่มีใน SYNC_COLS — น่าจะพิมพ์ผิด`)
+      .toContain(t);
+  }
+});
+
 // ── พิสูจน์ว่าด่านจับได้จริง ด้วยการทำให้มันแดงเอง ────────────────────
 // เทสที่เขียวเพราะไม่ได้ตรวจอะไรเลย หน้าตาเหมือนเทสที่เขียวเพราะทุกอย่างถูก
 test('ตัดคอลัมน์ออกจากฝั่งเซิร์ฟเวอร์แล้ว ด่านต้องจับได้', () => {
