@@ -117,8 +117,22 @@ test('เทียบกับ Delta ต้องเทียบเฉพาะ�
   const r = await rowOf(page, PN_A, 'TUE-U');
   expect(r, 'ยอดค้างของเราทั้งกลุ่ม = 3,800 + 5,000').toContain('8,800');
   expect(r, 'ยอดของ Delta มีแค่ใบเดียว').toContain('3,800');
-  expect(r, 'เทียบเฉพาะใบที่ Delta มี จึงตรงกัน').toContain('ตรงกัน');
+  expect(r, 'เทียบเฉพาะใบที่ Delta มี จึงตรงเท่าที่เทียบได้').toContain('ตรงเท่าที่เทียบได้');
   expect(r, 'และต้องบอกว่าเทียบได้กี่ใบจากกี่ใบ').toContain('1/2');
+
+  // ⚠️ ห้ามขึ้นว่า "ตรงกันทุกใบ" ตอนที่ยังเทียบไม่ครบ
+  //    คนกวาดตาผ่านจะอ่านว่าทุกอย่างเรียบร้อย ทั้งที่ยังมีใบที่ไม่รู้ว่าตรงหรือเปล่า
+  expect(r, 'ยังมีใบที่เทียบไม่ได้ ห้ามบอกว่าตรงกันทุกใบ').not.toContain('ตรงกันทุกใบ');
+});
+
+test('เทียบครบทุกใบแล้วตรง ถึงจะขึ้นว่าตรงกันทุกใบ', async ({ page }) => {
+  await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 3000)], [], [
+    deltaRow('PO-A1|' + PN_A, 34, 5000),
+    deltaRow('PO-A2|' + PN_A, 34, 3000)
+  ]);
+  const r = await rowOf(page, PN_A, 'TUE-U');
+  expect(r, 'ทุกใบมีข้อมูลสองฝั่งและตรงกันหมด').toContain('ตรงกันทุกใบ');
+  expect(r, 'ไม่ต้องบอกสัดส่วนเพราะครบอยู่แล้ว').not.toContain('เทียบได้');
 });
 
 test('ยอดค้างไม่ตรงกับ Delta ต้องเตือน แต่ห้ามบล็อกอะไร', async ({ page }) => {
@@ -152,6 +166,58 @@ test('การ์ดต้องเทียบราย PO และบอก�
   const cmp = await page.locator('#fgCardCmp tbody').innerText();
   expect(cmp, 'ต้องบอกงวดของไฟล์ เพราะ Delta ถามย้อนหลังเป็นราย PO').toContain('wk34');
   expect(cmp, 'ใบที่ Delta ไม่มีข้อมูล ต้องบอกตรง ๆ ว่าไม่มี ไม่ใช่โชว์ 0').toContain('ไม่มี');
+});
+
+/** อ่านค่าในช่องหนึ่งของแถว — เจาะจงกว่าการดูข้อความทั้งแถว
+ *  (เทสรอบแรกใช้ toContain('0') ซึ่งจริงเกือบตลอด เพราะ '5,000' ก็มี '0') */
+const cellOf = (page, pn, unit, i) =>
+  page.locator(`#fgTable tr.fg-row[data-pn="${pn}"][data-unit="${unit}"] td`).nth(i).innerText();
+
+test('นั่งค้างหน้า FG แล้วซิงค์ดึงข้อมูลใหม่เข้ามา ตัวเลขต้องขยับตาม', async ({ page }) => {
+  // แอปซิงค์เบื้องหลังทุก 20 วินาทีถ้าเปิด auto ไว้ — ถ้า renderAll() ไม่วาดหน้านี้ใหม่
+  // คนที่จ้องหน้ายอดคงเหลืออยู่จะเห็นเลขเก่าโดยไม่รู้ตัว ซึ่งอันตรายกว่าหน้าอื่น
+  // เพราะเป็นเลขที่เอาไปตัดสินใจว่าจะส่งของได้เท่าไหร่
+  //
+  // ⚠️ แอปซิงค์รอบแรกตั้งแต่ตอนเปิดหน้า ถ้าปล่อยให้ข้อมูลมาตั้งแต่รอบนั้น
+  //    เทสจะไม่มีวันเจอสภาพ "ค้างของเก่า" เลย จึงกั้นไว้จนกว่าจะเข้าหน้า FG แล้ว
+  await page.clock.install();
+
+  let releaseData = false;
+  const pulled = rec('sv1', 'PO-A1|' + PN_A, 'inspection', 2500, '2026-08-26');
+  await page.route('**/exec', async route => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    const send = releaseData && body.action === 'pullRows' && body.table === 'Records';
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, rows: send ? [pulled] : [],
+                             serverTime: '2026-08-26T00:00:00.000Z' })
+    });
+  });
+
+  await page.addInitScript(([k, sk, o]) => {
+    localStorage.setItem(k, JSON.stringify({
+      version: 1, deviceName: 't',
+      deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
+      chartPref: { mode: '14', from: '', to: '' },
+      orders: o, records: [], deliveryNotes: [], deltaWip: [], importHistory: []
+    }));
+    localStorage.setItem(sk, JSON.stringify({ url: 'https://example.test/exec', token: 't', auto: true }));
+  }, [K_STATE, 'tue_order_tracker_sync_v1', [order('PO-A1', PN_A, 5000)]]);
+
+  await page.goto(APP);
+  await page.click('.tab-btn[data-tab="fg"]');
+  await page.waitForTimeout(200);
+  expect(await cellOf(page, PN_A, 'TUE-U', 2), 'ยังไม่มีของรับเข้าเลย').toBe('0');
+
+  // ปล่อยข้อมูลหลังจากอยู่บนหน้า FG แล้ว แล้วเดินนาฬิกาให้ตัวจับเวลาซิงค์ทำงาน
+  releaseData = true;
+  await page.clock.runFor(21000);
+  await expect.poll(() => page.evaluate(k => JSON.parse(localStorage.getItem(k)).records.length, K_STATE),
+    { timeout: 5000 }).toBe(1);
+  await page.waitForTimeout(200);
+
+  expect(await cellOf(page, PN_A, 'TUE-U', 2),
+    'ข้อมูลที่ซิงค์ดึงเข้ามาต้องขึ้นบนหน้านี้ทันที ไม่ใช่รอจนสลับแท็บ').toBe('2,500');
 });
 
 test('G2 — พิมพ์ค้นหาแล้วโฟกัสต้องไม่หลุด', async ({ page }) => {
