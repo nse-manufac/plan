@@ -12,7 +12,7 @@
 
 งานหลักที่ระบบทำ:
 - **นำเข้าแผนงาน** จากไฟล์ Excel ของลูกค้า
-- **คีย์ยอดรายวัน** ว่าแต่ละใบสั่งซื้อเดินไปถึงไหนใน 4 ขั้นแรก
+- **คีย์ยอดรายวัน** ว่าแต่ละใบสั่งซื้อเดินไปถึงไหน — หน้านี้มีปุ่มครบทั้ง 5 ขั้น
 - **ใบส่งสินค้า** คีย์จำนวนที่ส่งราย PO และกรอกฟอร์ม FM-ST-07 ให้
 - **กรอกฟอร์ม Daily Call In** เติมยอดค้างลงไฟล์ที่ส่งลูกค้า
 - **Dashboard** แถบความคืบหน้า · Aging · สถานะล่าช้า/ใกล้ครบกำหนด · กราฟ
@@ -20,10 +20,15 @@
 - **ออกรายงาน Excel**
 - **ซิงค์หลายเครื่อง** ผ่าน Google Sheets (ไม่บังคับ ใช้ offline ได้)
 
-> ⚠️ **ยอดส่งของมีทางเข้าทางเดียวคือหน้าใบส่งสินค้า** ตั้งแต่ 30 ส.ค. 2026 (PR #34)
-> การนำเข้ายอดส่งจากไฟล์ "ใบส่งงาน TPP-UNION" ถูกตัดออกแล้ว เพราะทั้งสองทางเขียนกุญแจ
-> `orderId|shipping|date` เดียวกัน จึงทับกันเงียบ ๆ โดยไม่มีใครรู้ว่าอันไหนถูก
+> ⚠️ **ยอดส่งของนำเข้าจากไฟล์ไม่ได้แล้ว** ตั้งแต่ 30 ส.ค. 2026 (PR #34)
+> การนำเข้าจากไฟล์ "ใบส่งงาน TPP-UNION" ถูกตัดออก เพราะเขียนกุญแจ `orderId|shipping|date`
+> ชนกับหน้าใบส่งสินค้า จึงทับกันเงียบ ๆ โดยไม่มีใครรู้ว่าอันไหนถูก
 > ยอดที่เคยนำเข้าไว้ยังอยู่ครบและยังบอกที่มาได้
+>
+> **แต่ยังเหลือสองทางที่เขียนกุญแจเดียวกันได้** — หน้าใบส่งสินค้า (`saveAllocation()`)
+> คือทางที่ควรใช้ ส่วนแท็บ `🚚 ส่งของ` ในหน้าคีย์ยอดรายวัน **ยังเปิดอยู่โดยตั้งใจ**
+> เป็นทางสำรองระหว่างเปลี่ยนผ่าน · ทั้งสองทางทับกันได้ตาม A2 ระวังเวลาแก้ฝั่งใดฝั่งหนึ่ง
+> (การปิดทางคีย์มือเป็นงานที่เลื่อนไว้ ยังไม่ได้ทำ)
 
 **ขั้นตอนการผลิต 5 ขั้น:** `winding` → `assembly` → `support` → `inspection` → `shipping`
 
@@ -73,18 +78,19 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 | Section banner | มีอะไร |
 |---|---|
 | `Basic helpers` | `normalizeDateOnly` `fmtDateTH` `addDaysISO` `daysBetween` `escapeHtml` `uid` `toast` |
-| `Processes` | `PROCESSES` `PREV_PROCESS` `ORDER_DATE_FIELDS` `RECORD_DATE_FIELDS` `normalizeRowDates` |
+| `Processes` | `PROCESSES` `PREV_PROCESS` `ORDER_DATE_FIELDS` `RECORD_DATE_FIELDS` |
 | `State` | `STORAGE_KEY` `defaultState` `loadState` `saveState` `migrateCorruptedDates` |
 | `Google Sheets sync` | `gsApi` `cleanForPush` `doSync` และการ merge ตอน pull |
 | `แก้ไฟล์ Excel เฉพาะช่องที่ต้องแก้` | ตัวช่วยแก้ XML ในไฟล์ .xlsx ผ่าน JSZip |
 | `ทำให้ Excel คิดสูตรใหม่หลังเราแก้ช่องต้นทาง` | `clearCachedFormulaValues` `setFullCalcOnLoad` ← อ่านคอมเมนต์ก่อนแตะ |
-| `ใบส่งสินค้า: ข้อมูลและการคิดยอด` | `deliveryGroups` `canonicalPack` `savePacking` `saveAllocation` `samePn` |
+| `ใบส่งสินค้า` | โครงข้อมูลใบส่งสินค้า · `deliveryQty` `canonicalPack` · และ `normalizeRowDates` ที่มานอนอยู่ตรงนี้ |
+| `ใบส่งสินค้า: ข้อมูลและการคิดยอด` | `deliveryGroups` `savePacking` `saveAllocation` `resetPacking` `samePn` |
 | `กรอกฟอร์ม Daily Call In` | อ่านและเติมยอดค้างลงไฟล์ Call In |
 | `Excel parsing` | อ่านไฟล์แผนงานจากลูกค้า |
 | `Cumulative / deadline / status helpers` | `buildCumMap` `buildCumSplitMap` `computeDeadlines` `computeStatus` ← **หัวใจของ A1–A5** |
 | `Render: Import tab` | หน้านำเข้า |
-| `Render: Entry tab` | หน้าคีย์ยอดรายวัน · `saveEntryValue` |
-| `Record editor` | แก้ไข/ยกเลิกรายการที่บันทึกแล้ว |
+| `Render: Entry tab` | หน้าคีย์ยอดรายวัน (ปุ่มเลือกขั้นตอนครบ 5 ขั้น) |
+| `Record editor` | แก้ไข/ยกเลิกรายการที่บันทึกแล้ว · `saveEntryValue` อยู่ในบล็อกนี้ |
 | `Render: Dashboard tab` | ตารางหลัก + กราฟ |
 | `Render: Data tab` / `Merge logic` | หน้าข้อมูล · `computeMergePlan` `showMergeModal` `applyMerge` |
 | `Excel report export` | ออกรายงาน |
