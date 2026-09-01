@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-01.3">
+<meta name="app-version" content="2026-09-01.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -515,11 +515,12 @@
   </div>
 
   <div class="panel">
-    <h2>กรอกฟอร์ม Daily Call In</h2>
+    <h2>เทียบยอด Wip bal. กับไฟล์ Call In ของ Delta</h2>
     <div class="desc">
-      เปิดไฟล์ Call In ของสัปดาห์นั้นขึ้นมา แล้วให้ระบบเขียนคอลัมน์ <b>Wip bal.</b> ให้ใหม่ทุกแถวที่จับคู่ PO ได้
-      — <b>แก้เฉพาะช่องนั้นช่องเดียว</b> คอลัมน์ commit ตามวันที่ สูตร คอมเมนต์ และรูปแบบทั้งหมดไม่ถูกแตะ
-      ระบบไม่เพิ่มแถวใหม่ให้ แต่จะบอกว่าต้องเพิ่มใบไหนบ้าง
+      เปิดไฟล์ Call In ที่ Delta ส่งมา แล้วดูว่า<b>ยอดค้างส่งของเรา ตรงกับที่ Delta บันทึกไว้หรือไม่</b>
+      — อ่านอย่างเดียว <b>ไม่แก้ไฟล์ ไม่ดาวน์โหลดอะไรทั้งสิ้น</b>
+      <br>
+      ใช้ตอน Delta ถามว่าทำไมยอดไม่ตรง จะได้ชี้ได้ว่าต่างกันที่ใบไหน เท่าไหร่
     </div>
     <div class="row">
       <div class="field">
@@ -532,20 +533,19 @@
       </div>
       <div class="field">
         <label>&nbsp;</label>
-        <button class="btn primary" id="btnCallInScan" disabled>ตรวจก่อนกรอก</button>
+        <button class="btn primary" id="btnCallInScan" disabled>เทียบยอด</button>
       </div>
     </div>
   </div>
 
   <div class="panel" id="callInPreviewPanel" style="display:none;">
-    <h2>ตรวจก่อนกรอก Call In</h2>
+    <h2>ผลการเทียบยอด</h2>
     <div class="desc" id="callInSummary"></div>
     <div class="table-wrap">
       <table id="callInTable"></table>
     </div>
     <div class="row" style="margin-top:14px;">
-      <button class="btn primary" id="btnCallInApply">✅ กรอกแล้วดาวน์โหลดไฟล์</button>
-      <button class="btn" id="btnCallInCancel">ยกเลิก</button>
+      <button class="btn" id="btnCallInCancel">ปิด</button>
     </div>
   </div>
 
@@ -1489,36 +1489,15 @@ function planCallIn(items){
     update.push({it, wip, changed: String(wip) !== String(it.fileWip)});
   });
 
-  // ใบที่ยังส่งไม่ครบแต่ไม่มีในไฟล์ — ต้องให้คนไปเพิ่มแถวเอง ดูเหตุผลที่ applyCallIn
+  // ใบที่เรายังส่งไม่ครบ แต่ไม่มีแถวในไฟล์ของ Delta
+  // แปลว่าสองฝั่งมองไม่ตรงกันว่ายังมีใบนี้ค้างอยู่ — เป็นข้อมูลที่ต้องเอาไปคุยกับ Delta
+  // ไม่ใช่ของที่โปรแกรมจะไปเติมให้เอง
   const missingRow = state.orders.filter(o=>{
     if(inFile.has(o.id)) return false;
     return wipBalance(o, cumMap[o.id]) > 0;
   }).map(o=>({o, wip: wipBalance(o, cumMap[o.id])}));
 
   return {update, missingOrder, missingRow, qtyMismatch};
-}
-
-/** เขียนค่าลงเอกสาร แล้วคืนไฟล์ใหม่
- *
- *  เขียนเฉพาะคอลัมน์ Wip bal. ของแถวที่มีอยู่แล้วเท่านั้น — ตั้งใจไม่เพิ่มแถวใหม่ให้
- *  เพราะทุกแถวในไฟล์มีสูตรประจำแถวของมันเอง (Aging · Fail · TOTAL สองคอลัมน์)
- *  แถวที่แอปสร้างขึ้นมาเปล่า ๆ จะไม่มีสูตรพวกนั้น แล้วยอดรวมท้ายตารางจะผิดโดยไม่มีใครรู้
- *  ให้คนก๊อปแถวเดิมลงมาเองปลอดภัยกว่า แอปแค่บอกว่าต้องเพิ่มใบไหนบ้าง */
-async function applyCallIn(zip, path, doc, plan, wipStyle){
-  plan.update.forEach(u=>{
-    setNumberCell(doc, u.it.rowEl, CALLIN_COL.wip, u.wip, wipStyle);
-  });
-  // Aging กับยอดรวม SUBTOTAL อ้างถึงช่องที่เราเพิ่งแก้ — ถ้าไม่สั่งคิดใหม่จะโชว์ค่าเก่า
-  clearCachedFormulaValues(doc);
-  await setFullCalcOnLoad(zip);
-  zip.file(path, serializeXml(doc));
-  // ⚠️ ต้องสั่ง DEFLATE เอง — ค่าเริ่มต้นของ JSZip คือ STORE ที่ไม่บีบอัดเลย
-  //    ไฟล์ Call In จริงจะโตจาก 191 KB เป็น 1 MB ทั้งที่เนื้อหาเหมือนเดิมทุกช่อง
-  //    เปิดได้ปกติ ไม่มี error จึงไม่มีใครรู้จนกว่าเมลที่ส่งลูกค้าจะเด้งกลับ
-  //    ระดับ 6 คือระดับเดียวกับที่ Excel ใช้เขียนไฟล์เอง
-  return await zip.generateAsync({type:'blob',
-    compression:'DEFLATE', compressionOptions:{level:6},
-    mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
 }
 
 /* ---------- Excel parsing ---------- */
@@ -3178,7 +3157,7 @@ function renderCallInPreview(){
   const rows = [];
   willChange.slice(0, 200).forEach(u=>{
     rows.push(`<tr>
-      <td><span class="badge amber">จะอัปเดต</span></td>
+      <td><span class="badge amber">ไม่ตรงกัน</span></td>
       <td>${escapeHtml(u.it.rowNo)}</td>
       <td class="left">${escapeHtml(u.it.po)}</td>
       <td class="left">${escapeHtml(u.it.pn)}</td>
@@ -3188,7 +3167,7 @@ function renderCallInPreview(){
   });
   p.missingRow.slice(0, 50).forEach(m=>{
     rows.push(`<tr>
-      <td><span class="badge green">ต้องเพิ่มแถวเอง</span></td>
+      <td><span class="badge gray">ไม่มีในไฟล์ Delta</span></td>
       <td>—</td>
       <td class="left">${escapeHtml(m.o.poNo)}</td>
       <td class="left">${escapeHtml(m.o.pn)}</td>
@@ -3204,48 +3183,28 @@ function renderCallInPreview(){
       <td class="left">${escapeHtml(it.po)}</td>
       <td class="left">${escapeHtml(it.pn)}</td>
       <td>${escapeHtml(it.fileWip || '—')}</td>
-      <td>ไม่แตะ</td>
+      <td>—</td>
     </tr>`);
   });
 
   document.getElementById('callInTable').innerHTML =
     `<thead><tr><th style="width:130px">ประเภท</th><th style="width:60px">แถว</th><th>PO No.</th><th>P/N</th>
-      <th style="width:110px">Wip bal. เดิม</th><th style="width:110px">Wip bal. ใหม่</th></tr></thead>
+      <th style="width:110px">ยอด Delta</th><th style="width:110px">ยอดเรา</th></tr></thead>
      <tbody>${rows.join('') || emptyRow(6,'ไม่มีอะไรต้องเปลี่ยน')}</tbody>`;
 
   const parts = [
-    `จะเขียนทับ <b>${numFmt(willChange.length)}</b> แถว (จากที่จับคู่ได้ ${numFmt(p.update.length)} แถว)`,
-    `แถวในไฟล์ที่ไม่มีใบนั้นในแอป <b>${numFmt(p.missingOrder.length)}</b> — ไม่แตะ`,
-    `ใบที่ยังส่งไม่ครบแต่ไม่มีแถวในไฟล์ <b>${numFmt(p.missingRow.length)}</b> — <b>ต้องเพิ่มแถวเอง</b>`
+    `จับคู่ PO ได้ <b>${numFmt(p.update.length)}</b> แถว · <b>ยอดไม่ตรงกัน ${numFmt(willChange.length)} แถว</b>`,
+    `แถวในไฟล์ที่ไม่มีใบนั้นในแอป <b>${numFmt(p.missingOrder.length)}</b> — Delta รู้จัก เราไม่รู้จัก`,
+    `ใบที่เรายังส่งไม่ครบ แต่ไม่มีแถวในไฟล์ <b>${numFmt(p.missingRow.length)}</b> — เรารู้จัก Delta ไม่มี`
   ];
   if(p.qtyMismatch.length){
-    parts.push(`⚠️ PO QTY ในไฟล์ไม่ตรงกับในแอป <b>${numFmt(p.qtyMismatch.length)}</b> แถว — ไม่แตะให้ ต้องไปดูเองว่าฝั่งไหนถูก`);
+    parts.push(`⚠️ <b>PO QTY ไม่ตรงกัน ${numFmt(p.qtyMismatch.length)} แถว</b> — ร้ายแรงกว่ายอดค้างไม่ตรง ต้องหาว่าฝั่งไหนถูก`);
   }
   if(p.missingOrder.length > 15) parts.push(`(ตารางข้างล่างแสดงแถวที่ไม่มีใบในแอปแค่ 15 จาก ${numFmt(p.missingOrder.length)} แถว)`);
-  parts.push('เขียนเฉพาะคอลัมน์ Wip bal. เท่านั้น · คอลัมน์ commit ตามวัน สูตร และรูปแบบทั้งหมด ไม่ถูกแตะ');
+  parts.push('หน้านี้อ่านอย่างเดียว ไม่แก้ไฟล์ของ Delta และไม่เปลี่ยนข้อมูลในแอป');
   document.getElementById('callInSummary').innerHTML = parts.join('<br>');
   document.getElementById('callInPreviewPanel').style.display = '';
 }
-
-document.getElementById('btnCallInApply').addEventListener('click', async ()=>{
-  if(!pendingCallIn || !pendingCallIn.plan) return;
-  const btn = document.getElementById('btnCallInApply');
-  btn.disabled = true;
-  try{
-    const blob = await applyCallIn(pendingCallIn.zip, pendingCallIn.path,
-                                  pendingCallIn.doc, pendingCallIn.plan, pendingCallIn.wipStyle);
-    const base = pendingCallIn.fileName.replace(/\.xlsx$/i, '');
-    downloadBlob(blob, `${base} (กรอกแล้ว ${todayISO()}).xlsx`,
-                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    toast(`กรอกแล้ว ${pendingCallIn.plan.update.filter(u=>u.changed).length} แถว — ไฟล์ใหม่อยู่ในโฟลเดอร์ดาวน์โหลด`);
-    resetCallIn();
-    document.getElementById('callInFileInput').value = '';
-  }catch(err){
-    toast('กรอกไม่สำเร็จ: '+err.message);
-  }finally{
-    btn.disabled = false;
-  }
-});
 
 document.getElementById('btnCallInCancel').addEventListener('click', ()=>{
   resetCallIn();
