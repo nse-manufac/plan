@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-01.7">
+<meta name="app-version" content="2026-09-02.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -161,6 +161,7 @@
   <button class="tab-btn active" data-tab="import">📥 นำเข้าแผน</button>
   <button class="tab-btn" data-tab="entry">✍️ บันทึกยอดรายวัน</button>
   <button class="tab-btn" data-tab="delivery">🚚 ใบส่งสินค้า</button>
+  <button class="tab-btn" data-tab="fg">📦 ยอดคงคลัง FG</button>
   <button class="tab-btn" data-tab="dashboard">📊 Dashboard</button>
   <button class="tab-btn" data-tab="data">🗂️ ข้อมูล &amp; แชร์</button>
 </nav>
@@ -360,6 +361,54 @@
 </section>
 
 <!-- ================= TAB: DASHBOARD ================= -->
+<section id="view-fg" class="view">
+  <div class="panel">
+    <h2>ยอดคงคลัง FG</h2>
+    <div class="desc">
+      ของสำเร็จรูปที่<b>ผ่าน Inspection แล้วแต่ยังไม่ได้ส่ง</b> — นับจากสมุดทุกครั้ง ไม่ได้เก็บยอดไว้ที่ไหน
+      <br>
+      <b>รับเข้า</b> คือยอดที่ผ่าน Inspection · <b>ส่งออก</b> คือยอดที่ตัดจากใบส่งสินค้า
+      · แยกตามหน่วยเพราะของแต่ละหน่วยไม่ปนกัน
+      <br>
+      สามคอลัมน์ขวาสุดคือการเทียบยอดกับ Delta — <b>FG คงเหลือ กับ ยอดค้างส่ง เป็นคนละจำนวน</b>
+      FG ไม่รวมของที่ยังไม่ได้ผลิต ส่วนยอดค้างส่งรวม จึงเอามาเทียบกันไม่ได้
+    </div>
+    <div class="row filters">
+      <div class="field">
+        <label>หน่วย</label>
+        <select id="fgUnit" style="min-width:130px"><option value="">ทั้งหมด</option></select>
+      </div>
+      <div class="field" style="flex:1;min-width:200px">
+        <label>ค้นหา P/N</label>
+        <input type="search" id="fgSearch" placeholder="พิมพ์บางส่วนก็ได้" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <label style="font-weight:500;"><input type="checkbox" id="fgHideZero"> ซ่อนกลุ่มที่ไม่มีของเหลือ</label>
+      </div>
+    </div>
+    <div class="desc" id="fgSummary"></div>
+    <div class="table-wrap">
+      <table id="fgTable"></table>
+    </div>
+  </div>
+
+  <div class="panel" id="fgCardPanel" style="display:none;">
+    <h2 id="fgCardTitle">การเคลื่อนไหว</h2>
+    <div class="desc" id="fgCardSummary"></div>
+    <div class="table-wrap">
+      <table id="fgCardTable"></table>
+    </div>
+    <h3 style="margin-top:18px;font-size:16px">เทียบยอดค้างส่งราย PO กับ Delta</h3>
+    <div class="table-wrap">
+      <table id="fgCardCmp"></table>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="btnFgCardClose">ปิด</button>
+    </div>
+  </div>
+</section>
+
 <section id="view-dashboard" class="view">
   <div class="row no-print" style="justify-content:flex-end;margin-bottom:12px;">
     <button class="btn" id="btnPrintDash" title="สั่งพิมพ์ หรือเลือก &quot;บันทึกเป็น PDF&quot; ในช่องเครื่องพิมพ์">🖨️ พิมพ์ / บันทึก PDF</button>
@@ -1410,6 +1459,82 @@ function saveDeltaWip(items, week, fileName){
   return {added, updated};
 }
 
+/* ---------- ยอดคงคลัง FG ---------- */
+/*
+ * ⚠️ สามจำนวนนี้ไม่ใช่อันเดียวกัน เอามาเทียบผิดคู่แล้วจะสรุปว่า "ยอดไม่ตรง" ทั้งที่ทั้งสองฝั่งถูก
+ *
+ *   FG คงเหลือ        Σ inspection − Σ shipping   ของสำเร็จรูปที่อยู่ในคลังตอนนี้
+ *   ยอดค้างส่งของเรา   Σ (orderQty − shipped)      เรายังติดลูกค้าอยู่เท่าไหร่ ตามบัญชีเรา
+ *   ยอดค้างส่งของ Delta Σ deltaWip จากไฟล์          Delta คิดว่าเรายังติดเขาอยู่เท่าไหร่
+ *
+ * คู่ที่เทียบกันได้คือสองอันหลัง — FG เทียบกับของ Delta ไม่ได้
+ * เพราะ FG ไม่รวมของที่ยังไม่ได้ผลิต ส่วนยอดค้างส่งรวม
+ *
+ * ⚠️ ไม่มีที่ไหนเก็บยอดคงเหลือไว้เป็นตัวเลข คิดสดจากสมุดทุกครั้ง (กฎเดียวกับ A1)
+ *    ที่ไหนแก้ยอดได้โดยไม่เขียนสมุด ที่นั่นคือจุดที่ตัวเลขเริ่มเชื่อไม่ได้
+ */
+
+/** ยอดคงคลัง FG รายกลุ่ม — หนึ่งแถวต่อ (P/N + หน่วย)
+ *  แยกตามหน่วยเพราะของ TUE-U / TUE-H / TUE-T ไม่ปนกัน และใบส่งสินค้าก็แยกหน่วยอยู่แล้ว */
+function fgRows(){
+  const cum = buildCumMap(state.records);
+  const byKey = new Map();
+
+  state.orders.forEach(o=>{
+    const pn = String(o.pn == null ? '' : o.pn);
+    const unit = String(o.subName || '');
+    const key = pn + '|' + unit;
+    if(!byKey.has(key)) byKey.set(key, {
+      pn, unit, orders:[], inQty:0, outQty:0, ourWip:0, deltaWip:0, deltaHave:0
+    });
+    const g = byKey.get(key);
+    const c = cum[o.id] || emptyCum();
+    const inQty = Number(c.inspection)||0;
+    const outQty = Number(c.shipping)||0;
+
+    // ⚠️ ไม่ครอบยอดด้วย orderQty — FG คือของที่นับได้จากสมุด ไม่ใช่ของที่ควรจะเป็น
+    //    ถ้าครอบไว้ ข้อมูลที่คีย์ผิดจะถูกกลบจนไม่มีใครเห็น
+    g.inQty += inQty;
+    g.outQty += outQty;
+    g.ourWip += wipBalance(o, c);
+
+    const dw = deltaWipOf(o.id);
+    if(dw){ g.deltaWip += Number(dw.wip)||0; g.deltaHave++; }
+    g.orders.push({o, inQty, outQty, ourWip: wipBalance(o, c), delta: dw});
+  });
+
+  const rows = [];
+  byKey.forEach(g=>{
+    g.orders.sort((a,b)=> String(a.o.poNo).localeCompare(String(b.o.poNo)));
+    g.fg = g.inQty - g.outQty;
+    // เทียบเฉพาะใบที่ Delta มีข้อมูล ไม่งั้นเอาผลบวกของ 2 ใบไปเทียบกับ 5 ใบ แล้วสรุปผิด
+    g.ourWipCmp = g.orders.reduce((n,x)=> n + (x.delta ? x.ourWip : 0), 0);
+    g.diff = g.ourWipCmp - g.deltaWip;
+    g.noDelta = g.orders.length - g.deltaHave;
+    rows.push(g);
+  });
+  rows.sort((a,b)=> a.unit.localeCompare(b.unit) || a.pn.localeCompare(b.pn));
+  return rows;
+}
+
+/** การเคลื่อนไหวของกลุ่มหนึ่ง เรียงตามวัน พร้อมยอดสะสม — โครงเดียวกับการ์ดของ Bin Card */
+function fgMoves(pn, unit){
+  const ids = new Set(state.orders
+    .filter(o=> String(o.pn == null ? '' : o.pn) === String(pn) && String(o.subName||'') === String(unit))
+    .map(o=>o.id));
+  const poOf = {};
+  state.orders.forEach(o=>{ poOf[o.id] = o.poNo; });
+
+  const moves = state.records
+    .filter(r=> !r.voided && ids.has(r.orderId) && (r.process==='inspection' || r.process==='shipping'))
+    .map(r=>({ date:r.date, po:poOf[r.orderId]||'', kind:r.process, qty:Number(r.qty)||0 }))
+    .sort((a,b)=> a.date.localeCompare(b.date) || (a.kind==='inspection'? -1 : 1));
+
+  let bal = 0;
+  moves.forEach(m=>{ bal += (m.kind==='inspection' ? m.qty : -m.qty); m.balance = bal; });
+  return moves;
+}
+
 /* ---------- ใบส่งสินค้า: ข้อมูลและการคิดยอด ---------- */
 /*
  * ⚠️ หน่วยของการกรอกคือ "P/N" ไม่ใช่ "PO" — ตรงกับใบจริงที่ใช้อยู่หน้างาน
@@ -2127,6 +2252,126 @@ function saveEntryValue(orderId, rawVal, date){
   }
   saveState();
   doSync();
+}
+
+/* ---------- Render: ยอดคงคลัง FG ---------- */
+
+const fgUnit = () => document.getElementById('fgUnit').value;
+const fgQuery = () => document.getElementById('fgSearch').value.trim().toLowerCase();
+
+function renderFgUnits(){
+  const el = document.getElementById('fgUnit');
+  const cur = el.value;
+  const units = uniqueSorted(state.orders.map(o=>o.subName));
+  el.innerHTML = '<option value="">ทั้งหมด</option>' +
+    units.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+  if(units.includes(cur)) el.value = cur;
+}
+
+/** ช่องส่วนต่างจาก Delta — เตือนอย่างเดียว ไม่บล็อกอะไรทั้งสิ้น (เจ้าของสั่ง)
+ *  ใบส่งของใช้เลขของ Delta อยู่แล้ว หน้านี้มีไว้ตอบตอน Delta ถามว่าทำไมไม่ตรง */
+function fgDiffCell(g){
+  if(!g.deltaHave) return '<span class="hint">ยังไม่มียอดของ Delta</span>';
+  const note = g.noDelta
+    ? ` <span class="hint" title="เทียบเฉพาะใบที่ Delta มีข้อมูล">(${numFmt(g.deltaHave)}/${numFmt(g.orders.length)} ใบ)</span>`
+    : '';
+  if(g.diff === 0) return `<span class="badge green">ตรงกัน</span>${note}`;
+  return `<span class="badge amber" title="ยอดค้างของเราลบยอดของ Delta">`
+       + `${g.diff > 0 ? '+' : ''}${numFmt(g.diff)}</span>${note}`;
+}
+
+function renderFg(){
+  renderFgUnits();
+  const unit = fgUnit(), q = fgQuery();
+  const hideZero = document.getElementById('fgHideZero').checked;
+
+  const all = fgRows();
+  let rows = all;
+  if(unit) rows = rows.filter(g=> g.unit === unit);
+  if(q) rows = rows.filter(g=> g.pn.toLowerCase().includes(q));
+  if(hideZero) rows = rows.filter(g=> g.fg !== 0);
+
+  const html = rows.map(g=>{
+    // ยอดติดลบเตือนได้ แต่ห้ามบล็อก — ของจริงมีคีย์ย้อนหลัง (แบบเดียวกับ Bin Card v2)
+    const neg = g.fg < 0
+      ? ' <span class="badge red" title="ส่งออกมากกว่าที่ผ่าน Inspection — น่าจะคีย์ย้อนหลังหรือคีย์ผิดลำดับ">⚠ ติดลบ</span>'
+      : '';
+    return `<tr class="fg-row" data-pn="${escapeHtml(g.pn)}" data-unit="${escapeHtml(g.unit)}" style="cursor:pointer">
+      <td class="left"><b>${escapeHtml(g.pn)}</b></td>
+      <td class="left">${escapeHtml(g.unit)}</td>
+      <td>${numFmt(g.inQty)}</td>
+      <td>${numFmt(g.outQty)}</td>
+      <td><b>${numFmt(g.fg)}</b>${neg}</td>
+      <td>${numFmt(g.ourWip)}</td>
+      <td>${g.deltaHave ? numFmt(g.deltaWip) : '—'}</td>
+      <td>${fgDiffCell(g)}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('fgTable').innerHTML =
+    `<thead><tr><th>P/N</th><th style="width:90px">หน่วย</th>
+      <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>
+      <th style="width:110px">FG คงเหลือ</th>
+      <th style="width:110px">ค้างส่ง (เรา)</th><th style="width:110px">ค้างส่ง (Delta)</th>
+      <th style="width:150px">ต่าง</th></tr></thead>
+     <tbody>${html || emptyRow(8, q ? `ไม่พบ P/N ที่ตรงกับ "${escapeHtml(q)}"` : 'ยังไม่มีข้อมูล')}</tbody>`;
+
+  const totalFg = all.reduce((n,g)=> n + g.fg, 0);
+  const mismatch = all.filter(g=> g.deltaHave && g.diff !== 0).length;
+  document.getElementById('fgSummary').innerHTML =
+    `${numFmt(all.length)} กลุ่ม · <b>FG รวมทั้งหมด ${numFmt(totalFg)} ชิ้น</b>` +
+    (rows.length !== all.length ? ` · แสดงอยู่ ${numFmt(rows.length)} กลุ่ม` : '') +
+    (mismatch ? ` · <b style="color:var(--warn)">${numFmt(mismatch)} กลุ่มยอดค้างไม่ตรงกับ Delta</b>` : '') +
+    ` · กดที่แถวเพื่อดูการเคลื่อนไหว`;
+
+  document.querySelectorAll('#fgTable .fg-row').forEach(tr=>{
+    tr.addEventListener('click', ()=> renderFgCard(tr.dataset.pn, tr.dataset.unit));
+  });
+}
+
+/** การ์ดรายตัว — ระดับที่ Delta ถามมาจริง เขาถามเป็นราย PO */
+function renderFgCard(pn, unit){
+  const g = fgRows().find(x=> x.pn === pn && x.unit === unit);
+  if(!g) return;
+  const moves = fgMoves(pn, unit);
+
+  document.getElementById('fgCardTitle').textContent = `P/N ${pn} · ${unit}`;
+  document.getElementById('fgCardSummary').innerHTML =
+    `รับเข้าสะสม <b>${numFmt(g.inQty)}</b> · ส่งออกสะสม <b>${numFmt(g.outQty)}</b>`
+    + ` · คงเหลือ <b>${numFmt(g.fg)}</b> ชิ้น · ${numFmt(g.orders.length)} ใบสั่ง`;
+
+  document.getElementById('fgCardTable').innerHTML =
+    `<thead><tr><th style="width:110px">วันที่</th><th>PO No.</th>
+      <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>
+      <th style="width:110px">คงเหลือ</th></tr></thead><tbody>` +
+    (moves.map(m=>`<tr>
+      <td>${fmtDateTH(m.date)}</td>
+      <td class="left">${escapeHtml(m.po)}</td>
+      <td>${m.kind==='inspection' ? numFmt(m.qty) : ''}</td>
+      <td>${m.kind==='shipping' ? numFmt(m.qty) : ''}</td>
+      <td><b>${numFmt(m.balance)}</b></td>
+    </tr>`).join('') || emptyRow(5, 'ยังไม่มีการเคลื่อนไหว')) + '</tbody>';
+
+  document.getElementById('fgCardCmp').innerHTML =
+    `<thead><tr><th>PO No.</th><th style="width:110px">ค้างส่ง (เรา)</th>
+      <th style="width:110px">ค้างส่ง (Delta)</th><th style="width:90px">งวด</th>
+      <th style="width:100px">ต่าง</th></tr></thead><tbody>` +
+    g.orders.map(({o, ourWip, delta})=>{
+      const d = delta ? Number(delta.wip)||0 : null;
+      const diff = d == null ? null : ourWip - d;
+      return `<tr>
+        <td class="left">${escapeHtml(o.poNo)}</td>
+        <td>${numFmt(ourWip)}</td>
+        <td>${d == null ? '<span class="hint">ไม่มี</span>' : numFmt(d)}</td>
+        <td>${delta && delta.week ? 'wk'+escapeHtml(delta.week) : '—'}</td>
+        <td>${diff == null ? '—'
+             : diff === 0 ? '<span class="badge green">ตรง</span>'
+             : `<span class="badge amber">${diff>0?'+':''}${numFmt(diff)}</span>`}</td>
+      </tr>`;
+    }).join('') + '</tbody>';
+
+  document.getElementById('fgCardPanel').style.display = '';
+  document.getElementById('fgCardPanel').scrollIntoView({block:'nearest'});
 }
 
 /* ---------- Render: Dashboard tab ---------- */
@@ -3012,6 +3257,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(tab==='import'){ renderImportHistory(); }
     if(tab==='data'){ loadSettingsIntoForm(); }
     if(tab==='delivery'){ renderDeliveryNote(); }
+    if(tab==='fg'){ renderFg(); }
   });
 });
 
@@ -3122,6 +3368,14 @@ document.getElementById('dashSubFilter').addEventListener('change', renderDashTa
 document.getElementById('dashStatusFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashWipFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashSearch').addEventListener('input', renderDashTable);
+['fgUnit','fgHideZero'].forEach(id=>
+  document.getElementById(id).addEventListener('change', renderFg));
+// ช่องค้นหาอยู่นอกตาราง การวาดใหม่จึงไม่แย่งโฟกัส พิมพ์รัวได้ (INVARIANTS G2)
+document.getElementById('fgSearch').addEventListener('input', renderFg);
+document.getElementById('btnFgCardClose').addEventListener('click', ()=>{
+  document.getElementById('fgCardPanel').style.display = 'none';
+});
+
 document.getElementById('dnDate').addEventListener('change', renderDeliveryNote);
 // ช่องค้นหาอยู่นอกตาราง การวาดตารางใหม่จึงไม่แย่งโฟกัสไปจากมัน พิมพ์รัวได้ (INVARIANTS G2)
 document.getElementById('dnSearch').addEventListener('input', renderDeliveryNote);
