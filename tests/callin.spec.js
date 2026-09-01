@@ -118,6 +118,24 @@ test('หน้านี้ต้องอ่านอย่างเดีย�
     'เทียบยอดแล้วข้อมูลในเครื่องต้องไม่เปลี่ยนแม้แต่ตัวอักษรเดียว').toBe(before);
 });
 
+test('ช่อง Wip ที่ Delta เว้นว่าง แปลว่า "ไม่รู้" ห้ามเก็บเป็น 0', async ({ page }) => {
+  // Number('') ได้ 0 และ isFinite(0) เป็นจริง — เช็กแค่ isFinite ช่องว่างจะกลายเป็น 0
+  // แล้วกระดาษจะพิมพ์ 0 ส่งถึงลูกค้า ซึ่งอ่านว่า "ไม่มีของค้างแล้ว" ทั้งที่ความจริงคือไม่รู้
+  const rows = [
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180, commit: 111 },
+    { pn: '9100000040', poNo: 'PO-C040', orderDate: '2026-07-06', qty: 300, commit: 222 }  // ← เว้นว่าง
+  ];
+  await openWith(page, ORDERS);
+  await scan(page, await callInWorkbook(rows), 'X-FRM wk34');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+
+  const kept = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).deltaWip, K_STATE);
+  expect(kept.map(d => d.orderId), 'เก็บเฉพาะใบที่ Delta กรอกยอดไว้จริง')
+    .toEqual(['PO-C041|9100000041']);
+  expect(kept[0].wip).toBe(180);
+});
+
 test('G1 — เลือกชีตผิดต้องขึ้นข้อความภาษาไทยบอกตรง ๆ ไม่ใช่เงียบหรือเขียนมั่ว', async ({ page }) => {
   await openWith(page, ORDERS);
   await page.setInputFiles('#callInFileInput',
