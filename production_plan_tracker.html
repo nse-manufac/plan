@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-01.2">
+<meta name="app-version" content="2026-09-01.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -2479,8 +2479,18 @@ function setDataMerges(doc, ranges){
 }
 
 /** กรอกฟอร์มแล้วคืนไฟล์ใหม่ · groups มาจาก deliveryGroups() */
+/** ใบสั่งที่จะได้บรรทัดบนกระดาษจริง — เฉพาะใบที่มีของส่งวันนี้
+ *
+ *  ⚠️ ต่างจากบนจอโดยตั้งใจ · บนจอต้องเห็นทุกใบของกลุ่ม ไม่งั้นไม่มีช่องให้กรอก
+ *     แต่บนกระดาษ ใบที่ส่ง 0 ไม่ควรมีบรรทัด เพราะใบส่งสินค้าคือรายการ "ของที่ส่งไปกับรอบนี้"
+ *     ไม่ใช่รายการใบสั่งที่ยังค้างอยู่ — อย่างหลังดูที่ Call In หรือ Dashboard
+ *
+ *  ถ้าปล่อยไว้ ลูกค้าจะได้ใบที่มีบรรทัดจำนวน 0 ปนมา และช่องบรรจุที่ merge คร่อมทั้งกลุ่ม
+ *  จะดูเหมือนว่าใบสั่งที่ไม่ได้ส่งก็เป็นส่วนหนึ่งของรอบนี้ด้วย */
+const shippedOrders = g => g.orders.filter(x => x.alloc > 0);
+
 async function fillDeliveryForm(zip, path, unit, date, groups, week){
-  const lineCount = groups.reduce((s,g)=> s + g.orders.length, 0);
+  const lineCount = groups.reduce((s,g)=> s + shippedOrders(g).length, 0);
   if(lineCount > DN_LAST_ROW - DN_FIRST_ROW + 1){
     throw new Error(`ฟอร์มมีที่ให้ ${DN_LAST_ROW-DN_FIRST_ROW+1} บรรทัด แต่มี ${lineCount} บรรทัดที่จะส่ง — ต้องแยกเป็นสองใบ`);
   }
@@ -2513,7 +2523,7 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
   const merges = [];
   for(const g of groups){
     const first = n;
-    for(const {o, wip} of g.orders){
+    for(const {o, wip} of shippedOrders(g)){
       const rowEl = rowByNo[n];
       if(rowEl){
         setTextCell(doc, rowEl, DN_COL.pn, g.pn, styleOf[DN_COL.pn]);
