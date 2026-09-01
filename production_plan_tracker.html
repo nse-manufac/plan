@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-01.4">
+<meta name="app-version" content="2026-09-01.5">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -545,7 +545,12 @@
       <table id="callInTable"></table>
     </div>
     <div class="row" style="margin-top:14px;">
+      <button class="btn primary" id="btnDeltaWipSave">💾 เก็บยอดของ Delta ไว้ใช้ในใบส่งสินค้า</button>
       <button class="btn" id="btnCallInCancel">ปิด</button>
+    </div>
+    <div class="desc" style="margin-top:8px">
+      เก็บแล้วเลขนี้จะไปอยู่ในช่อง <b>Wip bal.</b> ของใบส่งสินค้าแทนยอดที่โปรแกรมคิดเอง
+      · เก็บแยกตามงวด นำเข้าชีตอื่นของงวดเดียวกันได้ ไม่ทับกัน
     </div>
   </div>
 
@@ -860,6 +865,7 @@ function defaultState(){
     orders:[],
     records:[],
     deliveryNotes:[],
+    deltaWip:[],
     importHistory:[]
   };
 }
@@ -875,6 +881,7 @@ function loadState(){
       orders: Array.isArray(parsed.orders)? parsed.orders : [],
       records: Array.isArray(parsed.records)? parsed.records : [],
       deliveryNotes: Array.isArray(parsed.deliveryNotes)? parsed.deliveryNotes : [],
+      deltaWip: Array.isArray(parsed.deltaWip)? parsed.deltaWip : [],
       importHistory: Array.isArray(parsed.importHistory)? parsed.importHistory : []
     });
   }catch(e){ console.error('loadState failed', e); return defaultState(); }
@@ -902,6 +909,7 @@ let state = loadState();
 state.orders.forEach(o=>{ if(o._dirty===undefined) o._dirty=true; });
 state.records.forEach(r=>{ if(r._dirty===undefined) r._dirty=true; });
 state.deliveryNotes.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
+state.deltaWip.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
 
 // ซ่อมข้อมูลที่เพี้ยนค้างอยู่แล้วจากบั๊กวันที่ของ Google Sheets (ดู normalizeDateOnly)
 // แถวที่ค่าเปลี่ยนจริงถูกมาร์ค _dirty เพื่อดันค่าที่ถูกต้องกลับขึ้นเซิร์ฟเวอร์ทับของเดิม
@@ -944,9 +952,10 @@ function loadSyncCfg(){
 function saveSyncCfg(){
   // ⚠️ แจกแจงชื่อฟิลด์ไว้ตรง ๆ — เพิ่มตารางใหม่แล้วลืมเติมที่นี่ นาฬิกา pull จะรีเซ็ตทุกครั้งที่เปิดโปรแกรม
   //    แล้วจะดึงข้อมูลทั้งกระดานลงมาใหม่ทุกวันโดยไม่มีใครสังเกต
-  const {url,token,auto,lastPullOrders,lastPullRecords,lastPullDeliveryNotes,lastOkAt} = syncCfg;
+  const {url,token,auto,lastPullOrders,lastPullRecords,lastPullDeliveryNotes,
+         lastPullDeltaWip,lastOkAt} = syncCfg;
   localStorage.setItem(SYNC_KEY, JSON.stringify({url,token,auto,lastPullOrders,lastPullRecords,
-                                                 lastPullDeliveryNotes,lastOkAt}));
+                                                 lastPullDeliveryNotes,lastPullDeltaWip,lastOkAt}));
 }
 let syncCfg = loadSyncCfg();
 let syncing = false;
@@ -992,7 +1001,8 @@ function renderSyncBadge(){
   if(!dot || !label) return;
   const pending = state.orders.filter(o=>o._dirty).length
                 + state.records.filter(r=>r._dirty).length
-                + state.deliveryNotes.filter(d=>d._dirty).length;
+                + state.deliveryNotes.filter(d=>d._dirty).length
+                + state.deltaWip.filter(d=>d._dirty).length;
   let cls='', text='';
   if(!syncCfg.url){ text = 'ยังไม่เชื่อมต่อ'; }
   else if(syncCfg.state==='busy'){ cls='busy'; text = 'กำลังซิงค์...'; }
@@ -1045,6 +1055,22 @@ async function doSync(silent = true){
       console.warn('ซิงค์ใบส่งสินค้าไม่สำเร็จ — เซิร์ฟเวอร์อาจยังไม่ได้ re-deploy', e.message);
     }
 
+    // ── ยอดค้างส่งจากไฟล์ Call In ของ Delta ────────────────────
+    // แยก try/catch ของตัวเองด้วยเหตุผลเดียวกับใบส่งสินค้า
+    let rw = {added:0, updated:0};
+    try{
+      const dirtyWip = state.deltaWip.filter(d=>d._dirty);
+      if(dirtyWip.length){
+        const res = await gsApi('pushRows', {table:'DeltaWip', rows: dirtyWip.map(cleanForPush)});
+        dirtyWip.forEach(d=>{ d._dirty=false; if(res.serverTime) d.updatedAt=res.serverTime; });
+      }
+      const pulledWip = await gsApi('pullRows', {table:'DeltaWip', since: syncCfg.lastPullDeltaWip});
+      rw = mergeRowsInto(state.deltaWip, pulledWip.rows||[], null);
+      syncCfg.lastPullDeltaWip = pulledWip.serverTime;
+    }catch(e){
+      console.warn('ซิงค์ยอดของ Delta ไม่สำเร็จ — เซิร์ฟเวอร์อาจยังไม่ได้ re-deploy', e.message);
+    }
+
     const pulledOrders = await gsApi('pullRows', {table:'Orders', since: syncCfg.lastPullOrders});
     const ro = mergeRowsInto(state.orders, pulledOrders.rows||[], ORDER_DATE_FIELDS);
     syncCfg.lastPullOrders = pulledOrders.serverTime;
@@ -1061,9 +1087,9 @@ async function doSync(silent = true){
     saveState(); saveSyncCfg();
     syncCfg.state = 'ok'; syncCfg.lastOkAt = new Date().toISOString();
     renderSyncBadge();
-    const pulledCount = ro.added+ro.updated+rr.added+rr.updated+rd.added+rd.updated;
+    const pulledCount = ro.added+ro.updated+rr.added+rr.updated+rd.added+rd.updated+rw.added+rw.updated;
     if(pulledCount > 0) renderAll();
-    if(!silent) toast(`ซิงค์แล้ว · ส่งขึ้น ${dirtyOrders.length+dirtyRecords.length} · รับมา ${pulledCount}`);
+    if(!silent) toast(`ซิงค์แล้ว · รับมา ${pulledCount}`);
   }catch(e){
     syncCfg.state = 'error'; syncCfg.error = e.message;
     renderSyncBadge();
@@ -1278,6 +1304,62 @@ function wipBalance(order, cum){
   return Math.max(0, (order.orderQty||0) - ((cum && cum.shipping) || 0));
 }
 
+/** ยอดค้างส่งที่ Delta บันทึกไว้ สำหรับใบสั่งใบหนึ่ง — เอางวดใหม่สุดที่มี
+ *
+ *  ⚠️ นี่ไม่ใช่ยอดเดียวกับ wipBalance() ห้ามเอามาแทนกัน
+ *     wipBalance() คือยอดค้างตามบัญชีของเรา — ใช้ตัดสินว่าจะโชว์ PO ไหนบนจอ
+ *     ตัวนี้คือยอดค้างตามบัญชีของ Delta — ใช้เป็นเลขที่พิมพ์ลงกระดาษเท่านั้น
+ *     สองเลขนี้ไม่ตรงกันได้ และนั่นคือข้อมูล ไม่ใช่บั๊ก
+ *
+ *  เลือกงวดด้วยเลขสัปดาห์ที่มากที่สุด ไม่ใช่เวลาที่นำเข้าล่าสุด
+ *  เพราะถ้าเปิดไฟล์เก่าดูย้อนหลัง เลขบนใบส่งของต้องไม่เปลี่ยนตาม
+ *  ข้อจำกัด: ข้ามปีแล้ว wk52 จะยังชนะ wk01 — หน้าจอโชว์เลขงวดไว้ให้คนเห็นเองว่าเก่า */
+function deltaWipOf(orderId){
+  let best = null;
+  state.deltaWip.forEach(d=>{
+    if(d.voided || d.orderId !== orderId) return;
+    if(!best) { best = d; return; }
+    const a = Number(d.week)||0, b = Number(best.week)||0;
+    if(a > b || (a === b && String(d.createdAt||'') > String(best.createdAt||''))) best = d;
+  });
+  return best;
+}
+
+/** เลขสัปดาห์จากชื่อชีต เช่น "X'FRM3M4 wk34" -> "34"
+ *  ไฟล์จริงตั้งชื่อชีตแบบนี้ทุกใบ ถ้าวันหนึ่งไม่ตรงรูปแบบ ให้คนพิมพ์เอง */
+function weekFromSheetName(name){
+  const m = /wk[ ]*([0-9]{1,2})/i.exec(String(name||''));
+  return m ? String(Number(m[1])) : '';
+}
+
+/** เก็บยอดของ Delta จากไฟล์ที่เพิ่งเทียบ — หนึ่งแถวต่อ (ใบสั่ง + งวด)
+ *  นำเข้าชีตที่สองของงวดเดียวกันต้อง "เพิ่ม" ไม่ใช่ทับของชีตแรก
+ *  เพราะไฟล์จริงมีหลายชีตต่อหนึ่งสัปดาห์ แบ่งตามกลุ่มสินค้า */
+function saveDeltaWip(items, week, fileName){
+  const now = new Date().toISOString();
+  const known = new Set(state.orders.map(o=>o.id));
+  let added = 0, updated = 0;
+  items.forEach(it=>{
+    if(!known.has(it.id)) return;              // ใบที่เราไม่รู้จัก ไม่เก็บ
+    const wip = Number(it.fileWip);
+    if(!isFinite(wip)) return;
+    const i = state.deltaWip.findIndex(d => d.orderId===it.id && String(d.week)===String(week));
+    if(i > -1){
+      Object.assign(state.deltaWip[i], {wip, fileName, voided:false, updatedAt:now, _dirty:true});
+      updated++;
+    } else {
+      state.deltaWip.push({
+        id: uid(), orderId: it.id, week: String(week), wip, fileName,
+        deviceName: state.deviceName, createdAt: now, updatedAt: now, voided:false, _dirty:true
+      });
+      added++;
+    }
+  });
+  saveState();
+  doSync();
+  return {added, updated};
+}
+
 /* ---------- ใบส่งสินค้า: ข้อมูลและการคิดยอด ---------- */
 /*
  * ⚠️ หน่วยของการกรอกคือ "P/N" ไม่ใช่ "PO" — ตรงกับใบจริงที่ใช้อยู่หน้างาน
@@ -1351,10 +1433,14 @@ function deliveryGroups(date, unit){
     // Wip bal. คือยอดค้าง "ก่อน" ส่งรอบนี้ จึงบวกของที่ตัดเข้าใบวันนี้กลับเข้าไป
     const wip = wipBalance(o, cum[o.id]) + alloc;
     if(wip <= 0 && alloc <= 0) return;
+    // ⚠️ ยอดของ Delta ห้ามเอามาใช้กับตัวกรองบรรทัดบนเด็ดขาด
+    //    ถ้าใช้ PO ที่ไม่มีในไฟล์ของ Delta จะหายจากหน้าจอจนส่งของใบนั้นไม่ได้เลย
+    //    จอกับกระดาษต่างกันโดยตั้งใจ เหมือนกรณีใบที่ส่ง 0 ใน PR #43
+    const dw = deltaWipOf(o.id);
     // จัดกลุ่มด้วยข้อความเสมอ ไม่งั้น P/N เดียวกันที่มาคนละทางจะแตกเป็นสองกลุ่ม
     const key = String(o.pn == null ? '' : o.pn);
     if(!byPn.has(key)) byPn.set(key, []);
-    byPn.get(key).push({o, wip, alloc});
+    byPn.get(key).push({o, wip, alloc, deltaWip: dw ? dw.wip : null, deltaWeek: dw ? dw.week : ''});
   });
 
   const groups = [];
@@ -1452,17 +1538,13 @@ async function readCallInSheet(zip, path){
   }
   if(headerIdx < 0) return {error:'ไม่พบหัวตาราง "P/N" ในชีตนี้ — เลือกชีตให้ถูกก่อนครับ'};
 
-  // รูปแบบของช่องในคอลัมน์ที่จะเขียน เอาไว้ใช้กับแถวที่ยังไม่มีช่องนั้นเลย
-  let wipStyle = null;
   const items = [];
   for(let i=headerIdx+1;i<rows.length;i++){
     const cs = cellsOf(rows[i]);
     const pn = cellText(cs[CALLIN_COL.pn], shared);
     const po = cellText(cs[CALLIN_COL.po], shared);
     if(!pn || !po) continue;
-    if(wipStyle == null && cs[CALLIN_COL.wip]) wipStyle = cs[CALLIN_COL.wip].getAttribute('s');
     items.push({
-      rowEl: rows[i],
       rowNo: rows[i].getAttribute('r'),
       pn, po,
       id: po+'|'+pn,
@@ -1470,7 +1552,7 @@ async function readCallInSheet(zip, path){
       fileWip: cellText(cs[CALLIN_COL.wip], shared)
     });
   }
-  return {doc, items, wipStyle};
+  return {items};
 }
 
 /** เทียบไฟล์กับข้อมูลในเครื่อง คืนสิ่งที่จะเกิดขึ้น โดยยังไม่แตะอะไร */
@@ -2502,7 +2584,7 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
   const merges = [];
   for(const g of groups){
     const first = n;
-    for(const {o, wip} of shippedOrders(g)){
+    for(const {o, wip, deltaWip} of shippedOrders(g)){
       const rowEl = rowByNo[n];
       if(rowEl){
         setTextCell(doc, rowEl, DN_COL.pn, g.pn, styleOf[DN_COL.pn]);
@@ -2510,7 +2592,11 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
         if(o.orderDate) setNumberCell(doc, rowEl, DN_COL.orderDate, isoToExcelSerial(o.orderDate), styleOf[DN_COL.orderDate]);
         else clearCell(doc, rowEl, DN_COL.orderDate);
         setNumberCell(doc, rowEl, DN_COL.orderQty, Number(o.orderQty)||0, styleOf[DN_COL.orderQty]);
-        setNumberCell(doc, rowEl, DN_COL.wip, wip, styleOf[DN_COL.wip]);
+        // ⚠️ ช่องนี้ต้องเป็นยอดของ Delta ไม่ใช่ยอดที่เราคิดเอง (เจ้าของสั่ง 1 ก.ย. 2026)
+        //    เพราะเลขบนใบต้องตรงกับที่ลูกค้าถืออยู่ ไม่ใช่ตรงกับบัญชีเรา
+        //    ใบที่ Delta ไม่มีข้อมูล เว้นว่างไว้ ห้ามเดาด้วยยอดของเรา
+        if(deltaWip == null) clearCell(doc, rowEl, DN_COL.wip);
+        else setNumberCell(doc, rowEl, DN_COL.wip, deltaWip, styleOf[DN_COL.wip]);
         // ยอดบรรจุลงเฉพาะแถวแรกของกลุ่ม แถวที่เหลือเว้นว่าง
         // สูตร P ของแถวที่เหลือจึงได้ 0 และยอดรวมท้ายตารางยังถูกต้อง
         if(n === first){
@@ -2620,13 +2706,13 @@ function renderDeliveryNote(){
       <td data-left="${pn}">${dnLeftCell(g)}</td>
     </tr>`;
 
-    const rows = g.orders.map(({o, wip, alloc})=>{
+    const rows = g.orders.map(({o, wip, alloc, deltaWip, deltaWeek})=>{
       return `<tr>
         <td>${itemOf.get(o.id)}</td>
         <td class="left">${escapeHtml(o.poNo)}</td>
         <td>${fmtDateTH(o.orderDate)}</td>
         <td>${numFmt(o.orderQty)}</td>
-        <td colspan="3" class="left hint">ค้างส่ง ${numFmt(wip)}</td>
+        <td colspan="3" class="left hint">ค้างส่ง ${numFmt(wip)}${dnDeltaNote(deltaWip, deltaWeek)}</td>
         <td><input type="number" min="0" class="row-input dn-alloc" data-order="${escapeHtml(o.id)}" data-pn="${pn}" value="${alloc||''}" placeholder="จำนวนที่ส่ง"></td>
         <td class="hint">${alloc > wip ? '<span class="badge red" title="มากกว่ายอดที่ยังค้างส่ง">⚠ เกิน</span>' : ''}</td>
       </tr>`;
@@ -2673,6 +2759,16 @@ function renderDnSummary(){
        (hiddenFilled ? ` (กรอกไว้แล้ว ${numFmt(hiddenFilled)} กลุ่ม)` : '') +
        ` — การออกใบไม่สนใจตัวค้นหา ของที่ซ่อนอยู่ก็ลงในไฟล์ด้วย</b>` : '') +
     ` · ยอดที่กรอกลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
+}
+
+/** บอกว่าเลขที่จะลงกระดาษมาจากไหน — คนคีย์ต้องรู้ก่อนกดออกใบ ไม่ใช่รู้ตอนใบถึงมือลูกค้า */
+function dnDeltaNote(deltaWip, deltaWeek){
+  if(deltaWip == null){
+    return ` <span class="badge amber" title="ไม่มีใบนี้ในไฟล์ Call In ของ Delta — ช่อง Wip bal. บนกระดาษจะเว้นว่าง">`
+         + `ไม่มียอด Delta</span>`;
+  }
+  return ` <span class="badge gray" title="เลขที่จะพิมพ์ลงช่อง Wip bal. ของใบส่งสินค้า">`
+       + `Delta ${numFmt(deltaWip)}${deltaWeek? ' · wk'+escapeHtml(deltaWeek) : ''}</span>`;
 }
 
 /** ช่องสถานะของกลุ่ม — ตัวเลขที่คนต้องมองก่อนกดออกใบ
@@ -3143,9 +3239,8 @@ document.getElementById('btnCallInScan').addEventListener('click', async ()=>{
   if(read.error){ toast(read.error); return; }
   if(!read.items.length){ toast('ไม่พบแถวที่มีทั้ง P/N และ PO ในชีตนี้'); return; }
 
-  pendingCallIn.path = path;
-  pendingCallIn.doc = read.doc;
-  pendingCallIn.wipStyle = read.wipStyle;
+  pendingCallIn.week = weekFromSheetName(name);
+  pendingCallIn.items = read.items;
   pendingCallIn.plan = planCallIn(read.items);
   renderCallInPreview();
 });
@@ -3205,6 +3300,17 @@ function renderCallInPreview(){
   document.getElementById('callInSummary').innerHTML = parts.join('<br>');
   document.getElementById('callInPreviewPanel').style.display = '';
 }
+
+document.getElementById('btnDeltaWipSave').addEventListener('click', ()=>{
+  if(!pendingCallIn || !pendingCallIn.items) return;
+  const week = pendingCallIn.week
+    || prompt('ชื่อชีตไม่ได้บอกเลขสัปดาห์ — พิมพ์เลขสัปดาห์ของไฟล์นี้ (เช่น 34)');
+  if(!week) return;
+  const r = saveDeltaWip(pendingCallIn.items, week, pendingCallIn.fileName);
+  toast(`เก็บยอดของ Delta งวด wk${week} แล้ว — ใหม่ ${r.added} · ทับของเดิม ${r.updated}`);
+  renderSyncBadge();
+  renderDeliveryNote();
+});
 
 document.getElementById('btnCallInCancel').addEventListener('click', ()=>{
   resetCallIn();

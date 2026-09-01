@@ -286,6 +286,99 @@ test('P/N ที่เป็นตัวเลข — ต่อกล่อง�
   expect(await page.locator(`#dnTable td[data-pcs="${PN_SYNCED}"]`).innerText()).toBe('388');
 });
 
+// ── Wip bal. บนกระดาษต้องเป็นยอดของ Delta ────────────────────────
+//
+// เจ้าของสั่ง 1 ก.ย. 2026 — เลขในช่อง Wip bal. ของใบส่งสินค้าต้องตรงกับที่ลูกค้าถืออยู่
+// ไม่ใช่ตรงกับบัญชีเรา จึงดึงมาจากไฟล์ Call In ที่ Delta ส่งมารายสัปดาห์
+//
+// ⚠️ แต่ "จอ" กับ "กระดาษ" ต้องใช้คนละเลข — ถ้าเอายอดของ Delta ไปใช้กับตัวกรองบนจอด้วย
+//    PO ที่ไม่มีในไฟล์ของ Delta จะหายไปจากหน้าจอจนส่งของใบนั้นไม่ได้เลย
+
+const deltaRow = (orderId, week, wip) => ({
+  id: 'DW-' + orderId + '-' + week, orderId, week: String(week), wip, fileName: 'callin.xlsx',
+  deviceName: 't', createdAt: '2026-08-25T00:00:00.000Z', updatedAt: '2026-08-25T00:00:00.000Z',
+  voided: false, _dirty: false
+});
+
+/** เปิดหน้าใบส่งสินค้าพร้อมยอดของ Delta ที่เตรียมไว้ */
+async function openWithDelta(page, deltaWip, orders = ORDERS, records = []) {
+  await page.addInitScript(([k, o, r, d]) => localStorage.setItem(k, JSON.stringify({
+    version: 1, deviceName: 't',
+    deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
+    chartPref: { mode: '14', from: '', to: '' },
+    orders: o, records: r, deliveryNotes: [], deltaWip: d, importHistory: []
+  })), [K_STATE, orders, records, deltaWip]);
+  await page.goto(APP);
+  await page.click('.tab-btn[data-tab="delivery"]');
+  await page.fill('#dnDate', DATE);
+  await page.waitForTimeout(150);
+  await page.selectOption('#dnUnit', 'TUE-U');
+  await page.waitForTimeout(150);
+}
+
+test('ช่อง Wip bal. บนกระดาษต้องเป็นยอดของ Delta ไม่ใช่ยอดที่เราคิดเอง', async ({ page }) => {
+  // ของเรา: สั่ง 12,000 ยังไม่ส่งอะไรเลย → ยอดค้างของเรา = 12,000
+  // ของ Delta: บอกว่าค้าง 7,500 — เลขบนกระดาษต้องเป็น 7,500
+  await openWithDelta(page, [deltaRow('PO-B001|' + PN_B, 34, 7500)]);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await pack(page, PN_B, 'perBox', 50);
+
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>[^<]*<v>([^<]*)</v>').exec(xml) || [])[1];
+
+  expect(at('G10'), 'ต้องเป็นยอดของ Delta').toBe('7500');
+  expect(at('G10'), 'ต้องไม่ใช่ยอดที่เราคิดเอง').not.toBe('12000');
+});
+
+test('PO ที่ไม่มีในไฟล์ของ Delta ต้องยังอยู่บนจอ และช่อง Wip bal. บนกระดาษเว้นว่าง', async ({ page }) => {
+  // นี่คือกับดักหลักของใบนี้ — ถ้าเอายอด Delta ไปใช้กับตัวกรอง ใบนี้จะหายไปจนส่งของไม่ได้
+  await openWithDelta(page, []);          // Delta ไม่มีข้อมูลสักใบ
+
+  expect(await page.locator('#dnTable input.dn-alloc').count(),
+    'ทุกใบต้องยังอยู่บนจอ ไม่งั้นคีย์ยอดส่งไม่ได้เลย').toBe(3);
+  await expect(page.locator('#dnTable'), 'และต้องบอกว่าใบไหนไม่มียอดของ Delta')
+    .toContainText('ไม่มียอด Delta');
+
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await pack(page, PN_B, 'perBox', 50);
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+
+  const g10 = (new RegExp('<c r="G10"[^>]*>.*?</c>').exec(xml) || [])[0] || '';
+  expect(g10, 'ห้ามเดาด้วยยอดของเรา ต้องเว้นว่าง').not.toMatch(/<v>[^<]+<\/v>/);
+});
+
+test('มีหลายงวด ต้องใช้งวดที่ใหม่กว่า และบอกบนจอว่างวดไหน', async ({ page }) => {
+  await openWithDelta(page, [
+    deltaRow('PO-B001|' + PN_B, 33, 9000),
+    deltaRow('PO-B001|' + PN_B, 35, 4200),
+    deltaRow('PO-B001|' + PN_B, 34, 7500)
+  ]);
+  await expect(page.locator('#dnTable tbody tr').filter({ hasText: 'PO-B001' }))
+    .toContainText('wk35');
+
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await pack(page, PN_B, 'perBox', 50);
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>[^<]*<v>([^<]*)</v>').exec(xml) || [])[1];
+  expect(at('G10'), 'งวด 35 ใหม่กว่า 34 และ 33').toBe('4200');
+});
+
+test('ยอดที่ยกเลิกแล้วต้องไม่ถูกหยิบมาใช้', async ({ page }) => {
+  await openWithDelta(page, [
+    Object.assign(deltaRow('PO-B001|' + PN_B, 35, 4200), { voided: true }),
+    deltaRow('PO-B001|' + PN_B, 34, 7500)
+  ]);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await pack(page, PN_B, 'perBox', 50);
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>[^<]*<v>([^<]*)</v>').exec(xml) || [])[1];
+  expect(at('G10'), 'ต้องข้ามงวดที่ยกเลิกไปใช้งวด 34').toBe('7500');
+});
+
 // ── ค้นหา ─────────────────────────────────────
 //
 // พนักงานแจ้ง 31 ส.ค. 2026 ว่าไล่หา PO กับ P/N ในรายการยาว ๆ ลำบาก
