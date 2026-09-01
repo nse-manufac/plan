@@ -1341,7 +1341,13 @@ function saveDeltaWip(items, week, fileName){
   let added = 0, updated = 0;
   items.forEach(it=>{
     if(!known.has(it.id)) return;              // ใบที่เราไม่รู้จัก ไม่เก็บ
-    const wip = Number(it.fileWip);
+    // ⚠️ ช่องว่างในไฟล์ของ Delta แปลว่า "ไม่รู้" ไม่ใช่ "ค้างศูนย์" — ต้องไม่เก็บ
+    //    Number('') ได้ 0 และ isFinite(0) เป็นจริง ถ้าเช็กแค่ isFinite ช่องว่างจะกลายเป็น 0
+    //    แล้วกระดาษจะพิมพ์ 0 ส่งถึงลูกค้า ซึ่งอ่านว่า "ไม่มีของค้างแล้ว"
+    //    ไม่เก็บดีกว่า เพราะช่องว่างบนกระดาษบอกความจริงว่าเราไม่มีข้อมูล
+    const txt = String(it.fileWip == null ? '' : it.fileWip).trim();
+    if(txt === '') return;
+    const wip = Number(txt);
     if(!isFinite(wip)) return;
     const i = state.deltaWip.findIndex(d => d.orderId===it.id && String(d.week)===String(week));
     if(i > -1){
