@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-01.1">
+<meta name="app-version" content="2026-09-01.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -2181,6 +2181,21 @@ function progressCell(cum, split, qty){
     </div>${splitNote}`;
 }
 
+/* ช่อง Aging — ระบายสีให้กวาดตาเจอใบที่ค้างนานได้ทันที (issue #41)
+ * เกณฑ์อ่านจาก deadlineOffsets.shipping เสมอ ห้าม hardcode (A4) และถ้ายังไม่กำหนด (null)
+ * ห้ามเดาเป็น 0 → แสดงเป็นตัวเลขเปล่า ส่วน "เหลือ 3 วัน = ใกล้ครบกำหนด" ใช้เกณฑ์เดียวกับ
+ * computeStatus เพื่อไม่ให้สีของสองคอลัมน์ขัดกันเอง */
+function agingCell(aging, statusCode){
+  if(aging==null) return '—';
+  const txt = numFmt(aging);
+  const off = state.deadlineOffsets.shipping;
+  if(statusCode==='done') return `<span class="badge green">${txt}</span>`;
+  if(off==null) return txt;
+  if(aging > off) return `<span class="badge red">${txt}</span>`;
+  if(off - aging <= 3) return `<span class="badge amber">${txt}</span>`;
+  return `<span class="badge green">${txt}</span>`;
+}
+
 function renderDashTable(){
   const allCum = buildCumMap(state.records);
   const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
@@ -2222,7 +2237,7 @@ function renderDashTable(){
       <td class="left">${escapeHtml(o.subName)}</td>
       <td>${numFmt(o.orderQty)}</td>
       <td>${fmtDateTH(o.orderDate)}</td>
-      <td>${aging==null ? '—' : numFmt(aging)}</td>
+      <td>${agingCell(aging, st.code)}</td>
       <td>${progressCell(c.winding, split.winding, o.orderQty)}</td>
       <td>${progressCell(c.assembly, split.assembly, o.orderQty)}</td>
       <td>${progressCell(c.support, split.support, o.orderQty)}</td>
