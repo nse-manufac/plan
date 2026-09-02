@@ -349,6 +349,77 @@ test('PO ที่ไม่มีในไฟล์ของ Delta ต้อง�
   expect(g10, 'ห้ามเดาด้วยยอดของเรา ต้องเว้นว่าง').not.toMatch(/<v>[^<]+<\/v>/);
 });
 
+test('ตัดยอดเข้าใบเกินยอดสั่ง ต้องเตือน — คำเตือนนี้ตายมาตลอดจนถึง 2 ก.ย. 2026', async ({ page }) => {
+  // wipBalance() ครอบไม่ให้ติดลบ โค้ดเดิมเอา alloc บวกกลับเข้าไปเพื่อหายอด "ก่อนส่ง"
+  // พอส่งเกินยอดสั่ง ค่าที่ครอบแล้วเป็น 0 บวก alloc กลับจึงได้เท่ากับ alloc พอดี
+  // เงื่อนไข alloc > wip เลยเป็นเท็จเสมอ — สั่ง 1,000 ตัดเข้าใบ 3,000 ก็เงียบสนิท
+  await open(page, [order('PO-X1', PN_B, 1000, '2026-08-03')]);
+  await alloc(page, 'PO-X1|' + PN_B, 3000);
+
+  const row = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-X1' }).innerText();
+  expect(row, 'สั่ง 1,000 ตัดเข้าใบ 3,000 ต้องเตือน').toContain('เกิน');
+  expect(row, 'และยอดค้างก่อนส่งต้องเป็น 1,000 ไม่ใช่ 3,000').toContain('ค้างส่ง 1,000');
+});
+
+test('ตัดยอดพอดียอดสั่ง ต้องไม่เตือน', async ({ page }) => {
+  await open(page, [order('PO-X1', PN_B, 1000, '2026-08-03')]);
+  await alloc(page, 'PO-X1|' + PN_B, 1000);
+  const row = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-X1' }).innerText();
+  expect(row, 'ส่งพอดี ไม่ใช่เกิน').not.toContain('เกิน');
+});
+
+test('ใบที่เราส่งครบแล้ว แต่ Delta ยังค้าง ต้องยังขึ้นให้ส่งของได้', async ({ page }) => {
+  // พนักงานเจอของจริง 2 ก.ย. 2026 — ตัดยอดส่งครบไปแล้ว แถวจึงหายจากหน้าจอ
+  // แต่ Delta ยังบันทึกว่าค้างอยู่และยังรอของใบนั้น จึงใส่ลงใบส่งของไม่ได้เลย
+  const shippedOut = [{
+    id: 'S-full', date: '2026-08-20', orderId: 'PO-B001|' + PN_B, process: 'shipping',
+    qty: 12000, note: '', deviceName: 't',
+    createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z',
+    voided: false, _dirty: false
+  }];
+
+  // ไม่มียอดของ Delta → แถวต้องหายตามเดิม
+  await openWithDelta(page, [], ORDERS, shippedOut);
+  expect(await page.locator('#dnTable input.dn-alloc[data-order="PO-B001|' + PN_B + '"]').count(),
+    'ส่งครบแล้วและ Delta ไม่ได้ค้าง ต้องไม่ขึ้น').toBe(0);
+
+  // Delta ยังค้าง 500 → แถวต้องกลับมา
+  await openWithDelta(page, [deltaRow('PO-B001|' + PN_B, 34, 500)], ORDERS, shippedOut);
+  expect(await page.locator('#dnTable input.dn-alloc[data-order="PO-B001|' + PN_B + '"]').count(),
+    'Delta ยังค้าง ต้องขึ้นให้ส่งของได้').toBe(1);
+
+  const row = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-B001' }).innerText();
+  expect(row, 'และต้องบอกว่าทำไมแถวนี้ถึงโผล่มา').toContain('Delta ยังค้าง');
+});
+
+test('แถวที่โผล่เพราะ Delta ยังค้าง ต้องไม่ขึ้น "เกิน" ทุกจำนวนที่คีย์', async ({ page }) => {
+  // ยอดค้างฝั่งเราเป็น 0 ถ้าวัด "เกิน" กับของเราอย่างเดียว ทุกจำนวนจะขึ้นเกินหมด
+  // กลายเป็นเสียงรบกวนบนแถวที่เพิ่งตั้งใจให้โผล่มา
+  const shippedOut = [{
+    id: 'S-full', date: '2026-08-20', orderId: 'PO-B001|' + PN_B, process: 'shipping',
+    qty: 12000, note: '', deviceName: 't',
+    createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z',
+    voided: false, _dirty: false
+  }];
+  await openWithDelta(page, [deltaRow('PO-B001|' + PN_B, 34, 500)], ORDERS, shippedOut);
+
+  await alloc(page, 'PO-B001|' + PN_B, 500);
+  let row = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-B001' }).innerText();
+  expect(row, 'ส่งเท่าที่ Delta ค้าง ต้องไม่เตือนว่าเกิน').not.toContain('เกิน');
+
+  await alloc(page, 'PO-B001|' + PN_B, 900);
+  row = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-B001' }).innerText();
+  expect(row, 'มากกว่าที่ทั้งสองฝั่งคิดว่าค้าง ถึงจะเตือน').toContain('เกิน');
+});
+
+test('ยอดของ Delta ต้องไม่ถูกใช้ตัดแถวทิ้ง — ใช้เพิ่มแถวได้อย่างเดียว', async ({ page }) => {
+  // กับดักที่กลับทิศได้ง่ายเวลามีคนมาแก้ตัวกรองรอบหน้า
+  // ใบที่เรายังค้างส่งอยู่ แต่ Delta ไม่มีข้อมูล ต้องยังอยู่บนจอเสมอ
+  await openWithDelta(page, [deltaRow('PO-B001|' + PN_B, 34, 500)]);
+  expect(await page.locator('#dnTable input.dn-alloc').count(),
+    'ใบที่ Delta ไม่มีข้อมูลต้องไม่หายไปไหน').toBe(3);
+});
+
 test('มีหลายงวด ต้องใช้งวดที่ใหม่กว่า และบอกบนจอว่างวดไหน', async ({ page }) => {
   await openWithDelta(page, [
     deltaRow('PO-B001|' + PN_B, 33, 9000),
