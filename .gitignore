@@ -9,6 +9,7 @@
 # โค้ดฝั่งเซิร์ฟเวอร์ที่เจ้าของต้องก๊อปไปวางใน Apps Script เอง
 # อยู่ใน repo เพื่อให้ตรวจได้ว่าคอลัมน์สองฝั่งตรงกัน — ไม่มี token/URL จริงอยู่ในไฟล์
 !/google-apps-script.gs
+!/คู่มือติดตั้ง_GoogleSheets.md
 !/CLAUDE.md
 !/INVARIANTS.md
 !/.github/
