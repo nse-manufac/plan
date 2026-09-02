@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-03.3">
+<meta name="app-version" content="2026-09-03.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -2951,9 +2951,21 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
         // ยอดบรรจุลงเฉพาะแถวแรกของกลุ่ม แถวที่เหลือเว้นว่าง
         // สูตร P ของแถวที่เหลือจึงได้ 0 และยอดรวมท้ายตารางยังถูกต้อง
         if(n === first){
-          setNumberCell(doc, rowEl, DN_COL.perBox, g.perBox, styleOf[DN_COL.perBox]);
-          setNumberCell(doc, rowEl, DN_COL.boxes, g.boxes, styleOf[DN_COL.boxes]);
-          setNumberCell(doc, rowEl, DN_COL.remainder, g.remainder, styleOf[DN_COL.remainder]);
+          /* ⚠️ กลุ่มที่รอบนี้ไม่ได้ส่งของเลย — มีแต่แถวที่คนติ๊กให้ขึ้นกระดาษ
+           *
+           * ต้องเว้นช่องบรรจุไว้ ห้ามพิมพ์ 0 · กระดาษที่เขียนว่า "กล่องละ 0 · 0 กล่อง · เศษ 0"
+           * เป็นการประกาศเรื่องการแพ็คที่ไม่จริง ทั้งที่ความจริงคือรอบนี้ไม่ได้ส่งใบนี้
+           * เว้นว่างแล้วสูตร P ยังได้ 0 เท่าเดิม ยอดรวมท้ายตารางไม่กระทบ
+           *
+           * Remark ยังลงตามปกติ เพราะเป็นที่เดียวที่อธิบายได้ว่าทำไมใบนี้ถึงมาอยู่บนกระดาษ */
+          if(g.qty > 0){
+            setNumberCell(doc, rowEl, DN_COL.perBox, g.perBox, styleOf[DN_COL.perBox]);
+            setNumberCell(doc, rowEl, DN_COL.boxes, g.boxes, styleOf[DN_COL.boxes]);
+            setNumberCell(doc, rowEl, DN_COL.remainder, g.remainder, styleOf[DN_COL.remainder]);
+          } else {
+            [DN_COL.perBox, DN_COL.boxes, DN_COL.remainder]
+              .forEach(col => clearCell(doc, rowEl, col));
+          }
           const remark = g.remark;
           if(remark) setTextCell(doc, rowEl, DN_COL.remark, remark, styleOf[DN_COL.remark]);
           else clearCell(doc, rowEl, DN_COL.remark);

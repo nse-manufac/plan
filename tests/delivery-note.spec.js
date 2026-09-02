@@ -724,6 +724,31 @@ test('ใบสั่งที่ไม่ได้ส่งวันนี้ �
   expect(xml, 'กลุ่มอื่นที่ไม่ได้ส่งเลยก็ต้องไม่มี').not.toContain('PO-A004');
 });
 
+/* เคสสุดขอบที่ผู้ตรวจทักไว้ใน #51 — ทั้งกลุ่มไม่มีใครส่งเลย แล้วติ๊กใบเดียว
+ * ของเดิมจะพิมพ์ 0/0/0 ลงช่องบรรจุ ซึ่งเป็นการประกาศเรื่องการแพ็คที่ไม่จริง */
+test('กลุ่มที่รอบนี้ไม่ได้ส่งของเลย ช่องบรรจุบนกระดาษต้องเว้นว่าง ไม่ใช่ 0', async ({ page }) => {
+  // ส่งครบทั้งกลุ่มไปแล้วก่อนหน้านี้ · Delta ยังค้างใบเดียว แถวจึงยังโผล่ให้ติ๊กได้
+  const shipped = ['PO-B001', 'PO-B055'].map(po => ({
+    id: 'S-' + po, date: '2026-08-20', orderId: po + '|' + PN_B, process: 'shipping',
+    qty: 12000, note: '', deviceName: 't',
+    createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z',
+    voided: false, _dirty: false
+  }));
+  await openWithDelta(page, [deltaRow('PO-B001|' + PN_B, 36, 800)], ORDERS, shipped);
+  await tick(page, 'PO-B001|' + PN_B);
+
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const empty = ref => new RegExp('<c r="' + ref + '"[^>]*/>').test(xml)
+                    || !new RegExp('<c r="' + ref + '"[^>]*>').test(xml);
+
+  expect(xml, 'แถวที่ติ๊กไว้ต้องขึ้นบนกระดาษ').toContain('PO-B001');
+  expect(empty('M10'), 'ต่อกล่องต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
+  expect(empty('N10'), 'กล่องต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
+  expect(empty('O10'), 'เศษต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
+  expect(xml, 'สูตรจำนวน/PCS ของฟอร์มต้องไม่ถูกแตะ').toContain('<f>M10*N10+O10</f>');
+});
+
 test('กลุ่มที่เหลือใบเดียวหลังกรองแล้ว ต้องไม่ merge ช่องบรรจุ', async ({ page }) => {
   // merge คร่อมสองแถวทั้งที่มีบรรทัดเดียว จะทำให้ใบเสียและดูเหมือนใบที่ไม่ได้ส่งก็อยู่ในรอบนี้
   await open(page);
