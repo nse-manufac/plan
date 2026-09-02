@@ -368,6 +368,68 @@ test('ตัดยอดพอดียอดสั่ง ต้องไม่�
   expect(row, 'ส่งพอดี ไม่ใช่เกิน').not.toContain('เกิน');
 });
 
+// ── ติ๊ก "ใส่ในใบ" สำหรับ PO ที่รอบนี้ไม่ได้ส่งของ ─────────────────
+//
+// เจ้าของเจอกรณีจริง 3 ก.ย. 2026 — ของรอบนั้นตัดเข้าใบอื่นไปหมดแล้ว
+// แต่มีอีกใบที่ Delta ยังค้างและอยากให้ปรากฏบนกระดาษ
+// ใส่จำนวนให้ใบนั้นไม่ได้เพราะยอดส่งจะเกินของจริง จึงต้องเลือกด้วยมือ
+//
+// ⚠️ ตั้งใจไม่เก็บลงข้อมูลและไม่ซิงค์ — เหตุผลของเจ้าของคือคนที่ปริ้นคือคนที่เซฟไฟล์อยู่แล้ว
+//    และถ้าติ๊กค้างข้ามวัน พนักงานจะเลิกตรวจสอบว่ารอบนี้ควรใส่ใบไหนบ้าง
+
+const tick = async (page, orderId) => {
+  await page.locator(`#dnTable input.dn-include[data-order="${orderId}"]`).check();
+  await page.waitForTimeout(150);
+};
+
+test('ติ๊กใส่ในใบ — PO ที่ไม่ได้ส่งรอบนี้ต้องขึ้นบนกระดาษได้', async ({ page }) => {
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await pack(page, PN_B, 'perBox', 50);
+
+  // ยังไม่ติ๊ก — ใบที่ไม่ได้ส่งต้องไม่อยู่บนกระดาษ (พฤติกรรมเดิมจาก #43)
+  let xml = await (await JSZip.loadAsync((await exportForm(page)).out))
+    .file('xl/worksheets/sheet1.xml').async('string');
+  expect(xml, 'ยังไม่ติ๊ก ต้องไม่ขึ้น').not.toContain('PO-B055');
+
+  await tick(page, 'PO-B055|' + PN_B);
+  xml = await (await JSZip.loadAsync((await exportForm(page)).out))
+    .file('xl/worksheets/sheet1.xml').async('string');
+  expect(xml, 'ติ๊กแล้วต้องขึ้นบนกระดาษ').toContain('PO-B055');
+  expect(xml, 'ใบที่ส่งจริงยังอยู่').toContain('PO-B001');
+});
+
+test('ติ๊กแล้วยอดส่งต้องไม่ขยับ — ไม่ใช่การบันทึกว่าส่งของ', async ({ page }) => {
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  const before = ships(await readState(page)).length;
+
+  await tick(page, 'PO-B055|' + PN_B);
+  const after = ships(await readState(page));
+  expect(after.length, 'ติ๊กแล้วต้องไม่เกิด record ยอดส่งใหม่').toBe(before);
+  expect(after.reduce((n, r) => n + r.qty, 0), 'ยอดรวมต้องเท่าเดิม').toBe(1000);
+});
+
+test('เปลี่ยนวันที่แล้วติ๊กต้องถูกล้าง — ใบใหม่ต้องตัดสินใจใหม่', async ({ page }) => {
+  await open(page);
+  await tick(page, 'PO-B055|' + PN_B);
+  expect(await page.locator(`#dnTable input.dn-include[data-order="PO-B055|${PN_B}"]`).isChecked())
+    .toBe(true);
+
+  await page.fill('#dnDate', '2026-08-30');
+  await page.waitForTimeout(250);
+  expect(await page.locator(`#dnTable input.dn-include[data-order="PO-B055|${PN_B}"]`).isChecked(),
+    'ติ๊กของวันก่อนต้องไม่ค้างมาวันใหม่').toBe(false);
+});
+
+test('แถวที่มีจำนวนแล้ว ต้องติ๊กค้างและกดไม่ได้', async ({ page }) => {
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  const box = page.locator(`#dnTable tr:has-text("PO-B001") input[type="checkbox"]`).first();
+  expect(await box.isChecked(), 'มีจำนวนแล้วขึ้นในใบอยู่แล้ว').toBe(true);
+  expect(await box.isDisabled(), 'และต้องกดปลดไม่ได้').toBe(true);
+});
+
 test('ใบที่เราส่งครบแล้ว แต่ Delta ยังค้าง ต้องยังขึ้นให้ส่งของได้', async ({ page }) => {
   // พนักงานเจอของจริง 2 ก.ย. 2026 — ตัดยอดส่งครบไปแล้ว แถวจึงหายจากหน้าจอ
   // แต่ Delta ยังบันทึกว่าค้างอยู่และยังรอของใบนั้น จึงใส่ลงใบส่งของไม่ได้เลย
