@@ -300,7 +300,6 @@ const deltaRow = (orderId, week, wip) => ({
   voided: false, _dirty: false
 });
 
-/** เปิดหน้าใบส่งสินค้าพร้อมยอดของ Delta ที่เตรียมไว้ */
 /* ── หัวตารางต้องตรงคอลัมน์กับช่องที่คนกรอกจริง ──────────────────────
  *
  * เคยเลื่อนไปหนึ่งช่องอยู่นาน — ช่องกรอก "จำนวนที่ส่ง" ไปอยู่ใต้หัว "จำนวน/PCS"
@@ -335,6 +334,7 @@ test('หัวตารางตรงคอลัมน์กับช่อ�
   expect(map.include).toBe('ใส่ในใบ');
 });
 
+/** เปิดหน้าใบส่งสินค้าพร้อมยอดของ Delta ที่เตรียมไว้ */
 async function openWithDelta(page, deltaWip, orders = ORDERS, records = []) {
   await page.addInitScript(([k, o, r, d]) => localStorage.setItem(k, JSON.stringify({
     version: 1, deviceName: 't',
@@ -454,6 +454,20 @@ test('เปลี่ยนวันที่แล้วติ๊กต้อ�
   await page.waitForTimeout(250);
   expect(await page.locator(`#dnTable input.dn-include[data-order="PO-B055|${PN_B}"]`).isChecked(),
     'ติ๊กของวันก่อนต้องไม่ค้างมาวันใหม่').toBe(false);
+});
+
+test('ติ๊กไว้แล้วมาคีย์จำนวนทีหลัง ป้ายสรุปต้องไม่นับใบนั้นว่า "ไม่ได้ส่งของ"', async ({ page }) => {
+  await open(page);
+  await tick(page, 'PO-B055|' + PN_B);
+  expect(await page.locator('#dnSummary').innerText()).toContain('ใส่ในใบเพิ่มอีก 1');
+
+  // ที่ติ๊กไว้ยังอยู่ (ลบยอดออกทีหลังต้องไม่เสียที่ติ๊กไปฟรี ๆ)
+  // แต่แถวนี้ขึ้นกระดาษเพราะจำนวนแล้ว ไม่ใช่เพราะติ๊ก ป้ายจึงต้องเลิกนับ
+  await alloc(page, 'PO-B055|' + PN_B, 300);
+  expect(await page.locator(`#dnTable input.dn-include[data-order="PO-B055|${PN_B}"]`).count(),
+    'แถวที่มีจำนวนแล้วต้องกลายเป็นติ๊กค้างที่กดไม่ได้').toBe(0);
+  expect(await page.locator('#dnSummary').innerText(),
+    'ป้ายสรุปยังนับใบที่มียอดส่งแล้วว่าเป็นใบที่ไม่ได้ส่งของ').not.toContain('ใส่ในใบเพิ่มอีก');
 });
 
 test('แถวที่มีจำนวนแล้ว ต้องติ๊กค้างและกดไม่ได้', async ({ page }) => {

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-03.2">
+<meta name="app-version" content="2026-09-03.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -3110,6 +3110,14 @@ function renderDnSummary(){
   const hidden = all.length - groups.length;
   const hiddenFilled = all.filter(g => groups.indexOf(g) < 0 && g.qty > 0).length;
 
+  /* ⚠️ นับเฉพาะใบที่ติ๊กไว้ "และยังไม่มียอดส่ง" — ไม่ใช่ dnExtraRows.size ดื้อ ๆ
+   *
+   * ติ๊กไว้ก่อนแล้วมาคีย์จำนวนทีหลังได้ พอมีจำนวนแล้วแถวนั้นขึ้นกระดาษเพราะจำนวน
+   * ไม่ใช่เพราะติ๊ก การนับรวมจึงขัดกับข้อความที่เขียนว่า "ใบที่รอบนี้ไม่ได้ส่งของ"
+   * (ที่ติ๊กไว้ไม่ถูกลบตอนคีย์จำนวน เพราะถ้าลบยอดออกทีหลัง คนจะเสียที่ติ๊กไปฟรี ๆ) */
+  const extraNoShip = all.reduce((n, g) =>
+    n + g.orders.filter(x => x.alloc <= 0 && dnExtraRows.has(x.o.id)).length, 0);
+
   el.innerHTML =
     `${numFmt(all.length)} กลุ่ม P/N · รวมที่จะส่งวันนี้ <b id="dnTotal">${numFmt(totalPcs)}</b> ชิ้น` +
     (mismatch? ` · <b style="color:var(--red)">มี ${numFmt(mismatch)} กลุ่มที่กล่อง/เศษไม่ตรงกับยอดที่คีย์ — ออกใบไม่ได้จนกว่าจะแก้</b>` : '') +
@@ -3118,7 +3126,7 @@ function renderDnSummary(){
     (hidden ? ` · <b id="dnHidden">ตัวค้นหาซ่อนอยู่ ${numFmt(hidden)} กลุ่ม` +
        (hiddenFilled ? ` (กรอกไว้แล้ว ${numFmt(hiddenFilled)} กลุ่ม)` : '') +
        ` — การออกใบไม่สนใจตัวค้นหา ของที่ซ่อนอยู่ก็ลงในไฟล์ด้วย</b>` : '') +
-    (dnExtraRows.size ? ` · <b>ใส่ในใบเพิ่มอีก ${numFmt(dnExtraRows.size)} ใบที่รอบนี้ไม่ได้ส่งของ</b>` : '') +
+    (extraNoShip ? ` · <b>ใส่ในใบเพิ่มอีก ${numFmt(extraNoShip)} ใบที่รอบนี้ไม่ได้ส่งของ</b>` : '') +
     ` · ยอดที่กรอกลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
 }
 
