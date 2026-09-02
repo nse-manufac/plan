@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-02.2">
+<meta name="app-version" content="2026-09-02.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1606,17 +1606,40 @@ function deliveryGroups(date, unit){
 
   state.orders.filter(o => o.subName === unit).forEach(o=>{
     const alloc = allocOf(o.id, date);
-    // Wip bal. คือยอดค้าง "ก่อน" ส่งรอบนี้ จึงบวกของที่ตัดเข้าใบวันนี้กลับเข้าไป
-    const wip = wipBalance(o, cum[o.id]) + alloc;
-    if(wip <= 0 && alloc <= 0) return;
-    // ⚠️ ยอดของ Delta ห้ามเอามาใช้กับตัวกรองบรรทัดบนเด็ดขาด
-    //    ถ้าใช้ PO ที่ไม่มีในไฟล์ของ Delta จะหายจากหน้าจอจนส่งของใบนั้นไม่ได้เลย
-    //    จอกับกระดาษต่างกันโดยตั้งใจ เหมือนกรณีใบที่ส่ง 0 ใน PR #43
+
+    /* Wip bal. คือยอดค้าง "ก่อน" ส่งรอบนี้ จึงต้องหักยอดที่ตัดเข้าใบวันนี้ออกจากยอดส่งสะสมก่อน
+     *
+     * ⚠️ ห้ามคิดเป็น wipBalance(o, cum) + alloc — เคยเขียนแบบนั้นแล้วคำเตือน "เกิน" ตายสนิท
+     *    เพราะ wipBalance() ครอบไม่ให้ติดลบ พอส่งเกินยอดสั่ง ค่าที่ครอบแล้วเป็น 0
+     *    บวก alloc กลับเข้าไปจึงได้ค่าเท่ากับ alloc พอดี แล้วเงื่อนไข alloc > wip เป็นเท็จเสมอ
+     *    ทดสอบแล้ว สั่ง 1,000 ตัดเข้าใบ 3,000 ก็ไม่เตือนอะไรเลย (เจอ 2 ก.ย. 2026)
+     *
+     * wipBefore ปล่อยให้ติดลบได้ เพื่อให้เทียบว่า "เกิน" ได้จริง
+     * ส่วนตัวเลขที่โชว์และพิมพ์ลงกระดาษยังครอบที่ 0 เหมือนเดิม */
+    const shippedBefore = ((cum[o.id] && cum[o.id].shipping) || 0) - alloc;
+    const wipBefore = (Number(o.orderQty) || 0) - shippedBefore;
+    const wip = Math.max(0, wipBefore);
     const dw = deltaWipOf(o.id);
+    const deltaLeft = dw ? (Number(dw.wip) || 0) : 0;
+
+    /* ⚠️ กติกาของยอด Delta ในตัวกรองนี้ — อ่านให้จบก่อนแก้
+     *
+     *    ใช้ "เพิ่มแถว" ได้    ✅   ใช้ "ตัดแถวทิ้ง" ไม่ได้เด็ดขาด ❌
+     *
+     * ที่ห้ามคือการเอา deltaWip ไปแทน wip ของเรา — PO ที่ไม่มีในไฟล์ Delta
+     * จะหายจากหน้าจอจนส่งของใบนั้นไม่ได้เลย (กับดักเดียวกับใบที่ส่ง 0 ใน PR #43)
+     *
+     * แต่การเพิ่มแถวตอน Delta ยังค้างอยู่ ปลอดภัย เพราะมีแต่ทำให้เห็นมากขึ้น ไม่มีทางทำให้หาย
+     * และจำเป็น — พนักงานเจอของจริง 2 ก.ย. 2026 ว่าใบที่เราตัดยอดส่งครบไปแล้ว
+     * แต่ Delta ยังบันทึกว่าค้างอยู่ จะหายจากหน้าจอจนใส่ลงใบส่งของไม่ได้
+     * ทั้งที่ Delta ยังรอของใบนั้นอยู่ */
+    if(wip <= 0 && alloc <= 0 && deltaLeft <= 0) return;
     // จัดกลุ่มด้วยข้อความเสมอ ไม่งั้น P/N เดียวกันที่มาคนละทางจะแตกเป็นสองกลุ่ม
     const key = String(o.pn == null ? '' : o.pn);
     if(!byPn.has(key)) byPn.set(key, []);
-    byPn.get(key).push({o, wip, alloc, deltaWip: dw ? dw.wip : null, deltaWeek: dw ? dw.week : ''});
+    byPn.get(key).push({o, wip, alloc, deltaWip: dw ? dw.wip : null, deltaWeek: dw ? dw.week : '',
+      // แถวนี้โผล่มาเพราะ Delta ยังค้าง ทั้งที่บัญชีเราส่งครบแล้ว — ต้องบอกคนคีย์ให้รู้
+      onlyDelta: wip <= 0 && alloc <= 0 && deltaLeft > 0, wipBefore});
   });
 
   const groups = [];
@@ -3002,7 +3025,7 @@ function renderDeliveryNote(){
       <td data-left="${pn}">${dnLeftCell(g)}</td>
     </tr>`;
 
-    const rows = g.orders.map(({o, wip, alloc, deltaWip, deltaWeek})=>{
+    const rows = g.orders.map(({o, wip, alloc, deltaWip, deltaWeek, onlyDelta, wipBefore})=>{
       return `<tr>
         <td>${itemOf.get(o.id)}</td>
         <td class="left">${escapeHtml(o.poNo)}</td>
@@ -3010,7 +3033,7 @@ function renderDeliveryNote(){
         <td>${numFmt(o.orderQty)}</td>
         <td colspan="3" class="left hint">ค้างส่ง ${numFmt(wip)}${dnDeltaNote(deltaWip, deltaWeek)}</td>
         <td><input type="number" min="0" class="row-input dn-alloc" data-order="${escapeHtml(o.id)}" data-pn="${pn}" value="${alloc||''}" placeholder="จำนวนที่ส่ง"></td>
-        <td class="hint">${alloc > wip ? '<span class="badge red" title="มากกว่ายอดที่ยังค้างส่ง">⚠ เกิน</span>' : ''}</td>
+        <td class="hint" data-note="${escapeHtml(o.id)}">${dnRowNote(wipBefore, alloc, deltaWip, onlyDelta)}</td>
       </tr>`;
     }).join('');
     return head + rows;
@@ -3055,6 +3078,21 @@ function renderDnSummary(){
        (hiddenFilled ? ` (กรอกไว้แล้ว ${numFmt(hiddenFilled)} กลุ่ม)` : '') +
        ` — การออกใบไม่สนใจตัวค้นหา ของที่ซ่อนอยู่ก็ลงในไฟล์ด้วย</b>` : '') +
     ` · ยอดที่กรอกลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
+}
+
+/** ป้ายท้ายแถวของใบสั่งหนึ่งใบ
+ *
+ *  ⚠️ "เกิน" ต้องวัดกับยอดค้างที่ "มากที่สุดของสองฝั่ง" ไม่ใช่ของเราอย่างเดียว
+ *     ใบที่เราส่งครบแล้วแต่ Delta ยังค้าง ยอดของเราเป็น 0 ถ้าวัดกับของเรา
+ *     ทุกจำนวนที่คีย์จะขึ้น "เกิน" หมด ซึ่งเป็นเสียงรบกวนบนแถวที่เราเพิ่งตั้งใจให้โผล่มา
+ *     คำว่าเกินควรแปลว่า "มากกว่าที่ทั้งสองฝั่งคิดว่าค้างอยู่" */
+function dnRowNote(wipBefore, alloc, deltaWip, onlyDelta){
+  const limit = Math.max(Number(wipBefore) || 0, Number(deltaWip) || 0);
+  const over = alloc > limit
+    ? ` <span class="badge red" title="มากกว่ายอดค้างของทั้งสองฝั่ง (${numFmt(limit)})">⚠ เกิน</span>` : '';
+  if(!onlyDelta) return over.trim();
+  return `<span class="badge amber" title="บัญชีเราส่งครบแล้ว แต่ไฟล์ Call In ของ Delta ยังบันทึกว่าค้างอยู่ `
+       + `— แถวนี้จึงยังขึ้นให้ส่งของได้">เราส่งครบแล้ว · Delta ยังค้าง</span>${over}`;
 }
 
 /** บอกว่าเลขที่จะลงกระดาษมาจากไหน — คนคีย์ต้องรู้ก่อนกดออกใบ ไม่ใช่รู้ตอนใบถึงมือลูกค้า */
@@ -3136,6 +3174,13 @@ function refreshDnGroup(pn){
     if(pcs) pcs.innerHTML = `<b>${g.qty? numFmt(g.qty) : '—'}</b>`;
     const left = document.querySelector(`#dnTable td[data-left="${CSS.escape(pn)}"]`);
     if(left){ left.innerHTML = dnLeftCell(g); bindDnRecalc(left); }
+
+    // ⚠️ ช่องเตือนท้ายแถวต้องอัปเดตด้วย ไม่งั้นคำเตือน "เกิน" จะไม่มีวันโผล่ตอนคีย์
+    //    เพราะแถวไม่ได้ถูกวาดใหม่ทั้งใบ (จงใจ เพื่อไม่ให้โฟกัสหลุด — G2)
+    g.orders.forEach(({o, alloc, deltaWip, onlyDelta, wipBefore})=>{
+      const td = document.querySelector(`#dnTable td[data-note="${CSS.escape(o.id)}"]`);
+      if(td) td.innerHTML = dnRowNote(wipBefore, alloc, deltaWip, onlyDelta);
+    });
 
     // กล่องกับเศษถูกคิดใหม่ให้ ต้องอัปเดตช่องตามไปด้วย
     // อัปเดตแม้ช่องนั้นกำลังโฟกัสอยู่ — คนเพิ่งกด Tab เข้ามา ยังไม่ได้พิมพ์อะไร
