@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-03.1">
+<meta name="app-version" content="2026-09-03.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -3058,6 +3058,7 @@ function renderDeliveryNote(){
       <td>${num('boxes', g.qty ? g.boxes : '', 'กล่อง')}</td>
       <td>${num('remainder', g.qty ? g.remainder : '', 'เศษ')}</td>
       <td data-pcs="${pn}"><b>${g.qty? numFmt(g.qty) : '—'}</b></td>
+      <td></td>
       <td data-left="${pn}">${dnLeftCell(g)}</td>
       <td></td>
     </tr>`;
@@ -3068,7 +3069,7 @@ function renderDeliveryNote(){
         <td class="left">${escapeHtml(o.poNo)}</td>
         <td>${fmtDateTH(o.orderDate)}</td>
         <td>${numFmt(o.orderQty)}</td>
-        <td colspan="3" class="left hint">ค้างส่ง ${numFmt(wip)}${dnDeltaNote(deltaWip, deltaWeek)}</td>
+        <td colspan="4" class="left hint">ค้างส่ง ${numFmt(wip)}${dnDeltaNote(deltaWip, deltaWeek)}</td>
         <td><input type="number" min="0" class="row-input dn-alloc" data-order="${escapeHtml(o.id)}" data-pn="${pn}" value="${alloc||''}" placeholder="จำนวนที่ส่ง"></td>
         <td class="hint" data-note="${escapeHtml(o.id)}">${dnRowNote(wipBefore, alloc, deltaWip, onlyDelta)}</td>
         <td data-include="${escapeHtml(o.id)}">${dnIncludeCell(o.id, alloc)}</td>
@@ -3082,8 +3083,9 @@ function renderDeliveryNote(){
       <th style="width:100px">Order Date</th><th style="width:90px">PO QTY</th>
       <th style="width:95px">ต่อกล่อง</th><th style="width:85px">กล่อง</th><th style="width:85px">เศษ</th>
       <th style="width:110px">จำนวน/PCS</th><th style="width:200px">จำนวนที่ส่ง</th>
+      <th style="width:190px" title="ป้ายบอกว่ากลุ่มนี้ออกใบได้หรือยัง และแถวนี้มีอะไรต้องระวัง">สถานะ</th>
       <th style="width:90px" title="ใบที่รอบนี้ไม่ได้ส่งของ แต่อยากให้ปรากฏบนกระดาษ">ใส่ในใบ</th></tr></thead>
-     <tbody>${html || emptyRow(10, dnQuery()
+     <tbody>${html || emptyRow(11, dnQuery()
         ? `ไม่พบ P/N หรือ PO ที่ตรงกับ "${escapeHtml(dnQuery())}" ในหน่วยนี้`
         : 'หน่วยนี้ไม่มีใบที่ค้างส่งแล้ว')}</tbody>`;
 

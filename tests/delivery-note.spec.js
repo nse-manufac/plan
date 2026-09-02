@@ -301,6 +301,40 @@ const deltaRow = (orderId, week, wip) => ({
 });
 
 /** เปิดหน้าใบส่งสินค้าพร้อมยอดของ Delta ที่เตรียมไว้ */
+/* ── หัวตารางต้องตรงคอลัมน์กับช่องที่คนกรอกจริง ──────────────────────
+ *
+ * เคยเลื่อนไปหนึ่งช่องอยู่นาน — ช่องกรอก "จำนวนที่ส่ง" ไปอยู่ใต้หัว "จำนวน/PCS"
+ * เพราะหัวตารางไม่มีคอลัมน์ให้ป้ายสถานะ แต่ทุกแถวมีช่องนั้นอยู่
+ * พนักงานที่อ่านหัวตารางแล้วคีย์ตามจึงกรอกผิดช่องได้ง่าย
+ *
+ * เทสนี้วัดจากตำแหน่งจริงบนจอ ไม่ได้นับ index ของ td เพราะ colspan ทำให้นับพลาด */
+test('หัวตารางตรงคอลัมน์กับช่องกรอกและป้ายสถานะ', async ({ page }) => {
+  await open(page, [ORDERS[0]]);
+  const map = await page.evaluate(() => {
+    const t = document.getElementById('dnTable');
+    const ths = [...t.querySelectorAll('thead th')];
+    const headAt = x => {
+      const h = ths.find(h => { const b = h.getBoundingClientRect(); return x >= b.left && x < b.right; });
+      return h ? h.textContent.trim() : '';
+    };
+    const headOf = el => { const b = el.getBoundingClientRect(); return headAt(b.left + b.width / 2); };
+    return {
+      cols: ths.length,
+      alloc: headOf(t.querySelector('input.dn-alloc')),
+      perBox: headOf(t.querySelector('input.dn-pack[data-f="perBox"]')),
+      pcs: headOf(t.querySelector('[data-pcs]')),
+      status: headOf(t.querySelector('[data-left]')),
+      include: headOf(t.querySelector('input.dn-include, input[type=checkbox]'))
+    };
+  });
+  expect(map.cols).toBe(11);
+  expect(map.alloc).toBe('จำนวนที่ส่ง');
+  expect(map.perBox).toBe('ต่อกล่อง');
+  expect(map.pcs).toBe('จำนวน/PCS');
+  expect(map.status).toBe('สถานะ');
+  expect(map.include).toBe('ใส่ในใบ');
+});
+
 async function openWithDelta(page, deltaWip, orders = ORDERS, records = []) {
   await page.addInitScript(([k, o, r, d]) => localStorage.setItem(k, JSON.stringify({
     version: 1, deviceName: 't',
