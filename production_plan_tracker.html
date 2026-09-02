@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-02.3">
+<meta name="app-version" content="2026-09-02.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -2547,6 +2547,27 @@ function renderDashFilterOptions(){
  *  deadline ไปแล้ว — เขียวทั้งแถบสงวนไว้เฉพาะกรณีเสร็จครบ "และ" ไม่มีส่วนที่ช้าเลยเท่านั้น (เสร็จครบ
  *  แบบมีส่วนช้าปนอยู่ ยังคงแสดงฟ้า+เหลืองตามจริง ไม่ใช่เขียว) ยอดแยกทัน/เกินโชว์เป็นตัวหนังสือในเซลล์
  *  เลย ไม่ต้องรอ hover เพราะผู้ใช้อยากเห็นตัวเลขทันทีตอนกวาดตาดูตาราง */
+/** ช่อง FG คงเหลือของใบสั่งหนึ่งใบ — ของที่ผ่าน Inspection แล้วแต่ยังไม่ได้ส่ง
+ *
+ *  ⚠️ นี่คือ "ของที่อยู่ในคลัง" ไม่ใช่ "ความคืบหน้าการส่ง" — คนละคำถามกับคอลัมน์อื่นในตารางนี้
+ *     คอลัมน์อื่นตอบว่าเดินไปถึงไหนแล้ว ช่องนี้ตอบว่าตอนนี้มีของรอส่งอยู่เท่าไหร่
+ *
+ *  ⚠️ ยอดที่ส่งไปแล้วย้ายมาอยู่ใน tooltip ตามที่เจ้าของเลือก ไม่ได้หายไป
+ *     และ computeStatus กับตัวกรอง "ซ่อนงานที่ส่งครบแล้ว" ยังใช้ c.shipping เหมือนเดิมทุกอย่าง
+ *     ใบนี้เปลี่ยนแค่สิ่งที่ "แสดง" ไม่ได้เปลี่ยนสิ่งที่ "คำนวณ"
+ *
+ *  ยอดติดลบเตือนได้แต่ห้ามครอบ — เหมือนหน้ายอดคงคลัง FG ของจริงมีคีย์ย้อนหลัง */
+function fgDashCell(cum, qty){
+  const fg = (Number(cum.inspection) || 0) - (Number(cum.shipping) || 0);
+  const tip = `ผ่าน Inspection ${numFmt(cum.inspection)} · ส่งไปแล้ว ${numFmt(cum.shipping)} จาก ${numFmt(qty)}`;
+  if(fg < 0){
+    return `<div class="small" title="${tip}"><b style="color:var(--red)">${numFmt(fg)}</b></div>`
+         + `<div class="split-note"><span class="late">ส่งเกินที่ผ่าน Inspection</span></div>`;
+  }
+  return `<div class="small" title="${tip}"><b>${numFmt(fg)}</b></div>`
+       + `<div class="split-note"><span class="on">ส่งแล้ว ${numFmt(cum.shipping)}</span></div>`;
+}
+
 function progressCell(cum, split, qty){
   split = split || {onTime:0, late:0};
   const done = qty>0 && cum>=qty && split.late===0;
@@ -2622,14 +2643,14 @@ function renderDashTable(){
       <td>${progressCell(c.assembly, split.assembly, o.orderQty)}</td>
       <td>${progressCell(c.support, split.support, o.orderQty)}</td>
       <td>${progressCell(c.inspection, split.inspection, o.orderQty)}</td>
-      <td>${progressCell(c.shipping, split.shipping, o.orderQty)}</td>
+      <td>${fgDashCell(c, o.orderQty)}</td>
       <td><span class="badge ${st.color}">${escapeHtml(st.label)}</span>${anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
     </tr>`;
   }).join('');
 
   document.getElementById('dashTable').innerHTML = `<thead><tr>
       <th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th><th>Order Date</th><th>Aging<br>(วัน)</th>
-      <th>Winding</th><th>Assembly</th><th>Support</th><th>Inspection</th><th>ส่งของ<br>(Shipping)</th><th>สถานะ</th>
+      <th>Winding</th><th>Assembly</th><th>Support</th><th>Inspection</th><th>FG คงเหลือ<br>(รอส่ง)</th><th>สถานะ</th>
     </tr></thead><tbody>${bodyHtml || emptyRow(13)}</tbody>`;
 }
 
