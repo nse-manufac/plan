@@ -300,6 +300,40 @@ const deltaRow = (orderId, week, wip) => ({
   voided: false, _dirty: false
 });
 
+/* ── หัวตารางต้องตรงคอลัมน์กับช่องที่คนกรอกจริง ──────────────────────
+ *
+ * เคยเลื่อนไปหนึ่งช่องอยู่นาน — ช่องกรอก "จำนวนที่ส่ง" ไปอยู่ใต้หัว "จำนวน/PCS"
+ * เพราะหัวตารางไม่มีคอลัมน์ให้ป้ายสถานะ แต่ทุกแถวมีช่องนั้นอยู่
+ * พนักงานที่อ่านหัวตารางแล้วคีย์ตามจึงกรอกผิดช่องได้ง่าย
+ *
+ * เทสนี้วัดจากตำแหน่งจริงบนจอ ไม่ได้นับ index ของ td เพราะ colspan ทำให้นับพลาด */
+test('หัวตารางตรงคอลัมน์กับช่องกรอกและป้ายสถานะ', async ({ page }) => {
+  await open(page, [ORDERS[0]]);
+  const map = await page.evaluate(() => {
+    const t = document.getElementById('dnTable');
+    const ths = [...t.querySelectorAll('thead th')];
+    const headAt = x => {
+      const h = ths.find(h => { const b = h.getBoundingClientRect(); return x >= b.left && x < b.right; });
+      return h ? h.textContent.trim() : '';
+    };
+    const headOf = el => { const b = el.getBoundingClientRect(); return headAt(b.left + b.width / 2); };
+    return {
+      cols: ths.length,
+      alloc: headOf(t.querySelector('input.dn-alloc')),
+      perBox: headOf(t.querySelector('input.dn-pack[data-f="perBox"]')),
+      pcs: headOf(t.querySelector('[data-pcs]')),
+      status: headOf(t.querySelector('[data-left]')),
+      include: headOf(t.querySelector('input.dn-include, input[type=checkbox]'))
+    };
+  });
+  expect(map.cols).toBe(11);
+  expect(map.alloc).toBe('จำนวนที่ส่ง');
+  expect(map.perBox).toBe('ต่อกล่อง');
+  expect(map.pcs).toBe('จำนวน/PCS');
+  expect(map.status).toBe('สถานะ');
+  expect(map.include).toBe('ใส่ในใบ');
+});
+
 /** เปิดหน้าใบส่งสินค้าพร้อมยอดของ Delta ที่เตรียมไว้ */
 async function openWithDelta(page, deltaWip, orders = ORDERS, records = []) {
   await page.addInitScript(([k, o, r, d]) => localStorage.setItem(k, JSON.stringify({
@@ -366,6 +400,82 @@ test('ตัดยอดพอดียอดสั่ง ต้องไม่�
   await alloc(page, 'PO-X1|' + PN_B, 1000);
   const row = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-X1' }).innerText();
   expect(row, 'ส่งพอดี ไม่ใช่เกิน').not.toContain('เกิน');
+});
+
+// ── ติ๊ก "ใส่ในใบ" สำหรับ PO ที่รอบนี้ไม่ได้ส่งของ ─────────────────
+//
+// เจ้าของเจอกรณีจริง 3 ก.ย. 2026 — ของรอบนั้นตัดเข้าใบอื่นไปหมดแล้ว
+// แต่มีอีกใบที่ Delta ยังค้างและอยากให้ปรากฏบนกระดาษ
+// ใส่จำนวนให้ใบนั้นไม่ได้เพราะยอดส่งจะเกินของจริง จึงต้องเลือกด้วยมือ
+//
+// ⚠️ ตั้งใจไม่เก็บลงข้อมูลและไม่ซิงค์ — เหตุผลของเจ้าของคือคนที่ปริ้นคือคนที่เซฟไฟล์อยู่แล้ว
+//    และถ้าติ๊กค้างข้ามวัน พนักงานจะเลิกตรวจสอบว่ารอบนี้ควรใส่ใบไหนบ้าง
+
+const tick = async (page, orderId) => {
+  await page.locator(`#dnTable input.dn-include[data-order="${orderId}"]`).check();
+  await page.waitForTimeout(150);
+};
+
+test('ติ๊กใส่ในใบ — PO ที่ไม่ได้ส่งรอบนี้ต้องขึ้นบนกระดาษได้', async ({ page }) => {
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  await pack(page, PN_B, 'perBox', 50);
+
+  // ยังไม่ติ๊ก — ใบที่ไม่ได้ส่งต้องไม่อยู่บนกระดาษ (พฤติกรรมเดิมจาก #43)
+  let xml = await (await JSZip.loadAsync((await exportForm(page)).out))
+    .file('xl/worksheets/sheet1.xml').async('string');
+  expect(xml, 'ยังไม่ติ๊ก ต้องไม่ขึ้น').not.toContain('PO-B055');
+
+  await tick(page, 'PO-B055|' + PN_B);
+  xml = await (await JSZip.loadAsync((await exportForm(page)).out))
+    .file('xl/worksheets/sheet1.xml').async('string');
+  expect(xml, 'ติ๊กแล้วต้องขึ้นบนกระดาษ').toContain('PO-B055');
+  expect(xml, 'ใบที่ส่งจริงยังอยู่').toContain('PO-B001');
+});
+
+test('ติ๊กแล้วยอดส่งต้องไม่ขยับ — ไม่ใช่การบันทึกว่าส่งของ', async ({ page }) => {
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  const before = ships(await readState(page)).length;
+
+  await tick(page, 'PO-B055|' + PN_B);
+  const after = ships(await readState(page));
+  expect(after.length, 'ติ๊กแล้วต้องไม่เกิด record ยอดส่งใหม่').toBe(before);
+  expect(after.reduce((n, r) => n + r.qty, 0), 'ยอดรวมต้องเท่าเดิม').toBe(1000);
+});
+
+test('เปลี่ยนวันที่แล้วติ๊กต้องถูกล้าง — ใบใหม่ต้องตัดสินใจใหม่', async ({ page }) => {
+  await open(page);
+  await tick(page, 'PO-B055|' + PN_B);
+  expect(await page.locator(`#dnTable input.dn-include[data-order="PO-B055|${PN_B}"]`).isChecked())
+    .toBe(true);
+
+  await page.fill('#dnDate', '2026-08-30');
+  await page.waitForTimeout(250);
+  expect(await page.locator(`#dnTable input.dn-include[data-order="PO-B055|${PN_B}"]`).isChecked(),
+    'ติ๊กของวันก่อนต้องไม่ค้างมาวันใหม่').toBe(false);
+});
+
+test('ติ๊กไว้แล้วมาคีย์จำนวนทีหลัง ป้ายสรุปต้องไม่นับใบนั้นว่า "ไม่ได้ส่งของ"', async ({ page }) => {
+  await open(page);
+  await tick(page, 'PO-B055|' + PN_B);
+  expect(await page.locator('#dnSummary').innerText()).toContain('ใส่ในใบเพิ่มอีก 1');
+
+  // ที่ติ๊กไว้ยังอยู่ (ลบยอดออกทีหลังต้องไม่เสียที่ติ๊กไปฟรี ๆ)
+  // แต่แถวนี้ขึ้นกระดาษเพราะจำนวนแล้ว ไม่ใช่เพราะติ๊ก ป้ายจึงต้องเลิกนับ
+  await alloc(page, 'PO-B055|' + PN_B, 300);
+  expect(await page.locator(`#dnTable input.dn-include[data-order="PO-B055|${PN_B}"]`).count(),
+    'แถวที่มีจำนวนแล้วต้องกลายเป็นติ๊กค้างที่กดไม่ได้').toBe(0);
+  expect(await page.locator('#dnSummary').innerText(),
+    'ป้ายสรุปยังนับใบที่มียอดส่งแล้วว่าเป็นใบที่ไม่ได้ส่งของ').not.toContain('ใส่ในใบเพิ่มอีก');
+});
+
+test('แถวที่มีจำนวนแล้ว ต้องติ๊กค้างและกดไม่ได้', async ({ page }) => {
+  await open(page);
+  await alloc(page, 'PO-B001|' + PN_B, 1000);
+  const box = page.locator(`#dnTable tr:has-text("PO-B001") input[type="checkbox"]`).first();
+  expect(await box.isChecked(), 'มีจำนวนแล้วขึ้นในใบอยู่แล้ว').toBe(true);
+  expect(await box.isDisabled(), 'และต้องกดปลดไม่ได้').toBe(true);
 });
 
 test('ใบที่เราส่งครบแล้ว แต่ Delta ยังค้าง ต้องยังขึ้นให้ส่งของได้', async ({ page }) => {
@@ -612,6 +722,31 @@ test('ใบสั่งที่ไม่ได้ส่งวันนี้ �
   expect(xml, 'ใบที่ส่งจริงต้องอยู่').toContain('PO-B001');
   expect(xml, 'ใบที่ส่ง 0 ต้องไม่มีบรรทัด').not.toContain('PO-B055');
   expect(xml, 'กลุ่มอื่นที่ไม่ได้ส่งเลยก็ต้องไม่มี').not.toContain('PO-A004');
+});
+
+/* เคสสุดขอบที่ผู้ตรวจทักไว้ใน #51 — ทั้งกลุ่มไม่มีใครส่งเลย แล้วติ๊กใบเดียว
+ * ของเดิมจะพิมพ์ 0/0/0 ลงช่องบรรจุ ซึ่งเป็นการประกาศเรื่องการแพ็คที่ไม่จริง */
+test('กลุ่มที่รอบนี้ไม่ได้ส่งของเลย ช่องบรรจุบนกระดาษต้องเว้นว่าง ไม่ใช่ 0', async ({ page }) => {
+  // ส่งครบทั้งกลุ่มไปแล้วก่อนหน้านี้ · Delta ยังค้างใบเดียว แถวจึงยังโผล่ให้ติ๊กได้
+  const shipped = ['PO-B001', 'PO-B055'].map(po => ({
+    id: 'S-' + po, date: '2026-08-20', orderId: po + '|' + PN_B, process: 'shipping',
+    qty: 12000, note: '', deviceName: 't',
+    createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z',
+    voided: false, _dirty: false
+  }));
+  await openWithDelta(page, [deltaRow('PO-B001|' + PN_B, 36, 800)], ORDERS, shipped);
+  await tick(page, 'PO-B001|' + PN_B);
+
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const empty = ref => new RegExp('<c r="' + ref + '"[^>]*/>').test(xml)
+                    || !new RegExp('<c r="' + ref + '"[^>]*>').test(xml);
+
+  expect(xml, 'แถวที่ติ๊กไว้ต้องขึ้นบนกระดาษ').toContain('PO-B001');
+  expect(empty('M10'), 'ต่อกล่องต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
+  expect(empty('N10'), 'กล่องต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
+  expect(empty('O10'), 'เศษต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
+  expect(xml, 'สูตรจำนวน/PCS ของฟอร์มต้องไม่ถูกแตะ').toContain('<f>M10*N10+O10</f>');
 });
 
 test('กลุ่มที่เหลือใบเดียวหลังกรองแล้ว ต้องไม่ merge ช่องบรรจุ', async ({ page }) => {

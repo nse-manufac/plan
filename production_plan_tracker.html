@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-02.4">
+<meta name="app-version" content="2026-09-03.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -2880,15 +2880,26 @@ function setDataMerges(doc, ranges){
 }
 
 /** กรอกฟอร์มแล้วคืนไฟล์ใหม่ · groups มาจาก deliveryGroups() */
-/** ใบสั่งที่จะได้บรรทัดบนกระดาษจริง — เฉพาะใบที่มีของส่งวันนี้
+/** ใบสั่งที่คนติ๊กไว้เองว่าให้ขึ้นในใบ ทั้งที่รอบนี้ไม่ได้ส่งของใบนั้น
+ *
+ *  ⚠️ ตั้งใจ "ไม่เก็บลงข้อมูลและไม่ซิงค์" ตามที่เจ้าของสั่ง 3 ก.ย. 2026
+ *     เหตุผลของเจ้าของ — คนที่ปริ้นใบคือคนที่เซฟไฟล์ออกมาอยู่แล้ว การซิงค์จึงไม่มีประโยชน์
+ *     และถ้าติ๊กค้างไว้ข้ามวัน พนักงานจะเลิกตรวจสอบว่ารอบนี้ควรใส่ใบไหนบ้าง
+ *
+ *  จึงล้างทิ้งทุกครั้งที่เปลี่ยนวันที่หรือหน่วย — บังคับให้ตัดสินใจใหม่ทุกใบ */
+let dnExtraRows = new Set();
+let dnExtraKey = '';
+
+/** ใบสั่งที่จะได้บรรทัดบนกระดาษจริง
  *
  *  ⚠️ ต่างจากบนจอโดยตั้งใจ · บนจอต้องเห็นทุกใบของกลุ่ม ไม่งั้นไม่มีช่องให้กรอก
- *     แต่บนกระดาษ ใบที่ส่ง 0 ไม่ควรมีบรรทัด เพราะใบส่งสินค้าคือรายการ "ของที่ส่งไปกับรอบนี้"
- *     ไม่ใช่รายการใบสั่งที่ยังค้างอยู่ — อย่างหลังดูที่ Call In หรือ Dashboard
+ *     บนกระดาษเอาเฉพาะใบที่มีของส่งรอบนี้ เพราะใบส่งสินค้าคือรายการ "ของที่ส่งไปกับรอบนี้"
+ *     ไม่ใช่รายการใบสั่งที่ยังค้างอยู่ (PR #43)
  *
- *  ถ้าปล่อยไว้ ลูกค้าจะได้ใบที่มีบรรทัดจำนวน 0 ปนมา และช่องบรรจุที่ merge คร่อมทั้งกลุ่ม
- *  จะดูเหมือนว่าใบสั่งที่ไม่ได้ส่งก็เป็นส่วนหนึ่งของรอบนี้ด้วย */
-const shippedOrders = g => g.orders.filter(x => x.alloc > 0);
+ *  ...บวกใบที่คนติ๊กไว้เอง — เจ้าของเจอกรณีจริงที่ Delta ยังค้างใบหนึ่งอยู่
+ *  และอยากให้ใบนั้นปรากฏบนกระดาษ ทั้งที่ของรอบนี้ตัดเข้าใบอื่นไปหมดแล้ว
+ *  ใส่จำนวนให้ใบนั้นไม่ได้เพราะยอดส่งจะเกินของจริง จึงต้องเป็นการเลือกด้วยมือ */
+const shippedOrders = g => g.orders.filter(x => x.alloc > 0 || dnExtraRows.has(x.o.id));
 
 async function fillDeliveryForm(zip, path, unit, date, groups, week){
   const lineCount = groups.reduce((s,g)=> s + shippedOrders(g).length, 0);
@@ -2940,9 +2951,21 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
         // ยอดบรรจุลงเฉพาะแถวแรกของกลุ่ม แถวที่เหลือเว้นว่าง
         // สูตร P ของแถวที่เหลือจึงได้ 0 และยอดรวมท้ายตารางยังถูกต้อง
         if(n === first){
-          setNumberCell(doc, rowEl, DN_COL.perBox, g.perBox, styleOf[DN_COL.perBox]);
-          setNumberCell(doc, rowEl, DN_COL.boxes, g.boxes, styleOf[DN_COL.boxes]);
-          setNumberCell(doc, rowEl, DN_COL.remainder, g.remainder, styleOf[DN_COL.remainder]);
+          /* ⚠️ กลุ่มที่รอบนี้ไม่ได้ส่งของเลย — มีแต่แถวที่คนติ๊กให้ขึ้นกระดาษ
+           *
+           * ต้องเว้นช่องบรรจุไว้ ห้ามพิมพ์ 0 · กระดาษที่เขียนว่า "กล่องละ 0 · 0 กล่อง · เศษ 0"
+           * เป็นการประกาศเรื่องการแพ็คที่ไม่จริง ทั้งที่ความจริงคือรอบนี้ไม่ได้ส่งใบนี้
+           * เว้นว่างแล้วสูตร P ยังได้ 0 เท่าเดิม ยอดรวมท้ายตารางไม่กระทบ
+           *
+           * Remark ยังลงตามปกติ เพราะเป็นที่เดียวที่อธิบายได้ว่าทำไมใบนี้ถึงมาอยู่บนกระดาษ */
+          if(g.qty > 0){
+            setNumberCell(doc, rowEl, DN_COL.perBox, g.perBox, styleOf[DN_COL.perBox]);
+            setNumberCell(doc, rowEl, DN_COL.boxes, g.boxes, styleOf[DN_COL.boxes]);
+            setNumberCell(doc, rowEl, DN_COL.remainder, g.remainder, styleOf[DN_COL.remainder]);
+          } else {
+            [DN_COL.perBox, DN_COL.boxes, DN_COL.remainder]
+              .forEach(col => clearCell(doc, rowEl, col));
+          }
           const remark = g.remark;
           if(remark) setTextCell(doc, rowEl, DN_COL.remark, remark, styleOf[DN_COL.remark]);
           else clearCell(doc, rowEl, DN_COL.remark);
@@ -3016,6 +3039,10 @@ function renderDeliveryNote(){
     document.getElementById('dnSummary').textContent = 'เลือกวันที่และหน่วยก่อน';
     return;
   }
+  // เปลี่ยนวันหรือหน่วยเมื่อไหร่ ล้างที่ติ๊กไว้ทิ้ง — ใบใหม่ต้องตัดสินใจใหม่
+  const key = date + '|' + unit;
+  if(key !== dnExtraKey){ dnExtraKey = key; dnExtraRows = new Set(); }
+
   const all = deliveryGroups(date, unit);
 
   // เลข Item ต้องนับจากลำดับจริงของทั้งวัน ไม่ใช่ลำดับที่เห็นตอนกรอง
@@ -3043,7 +3070,9 @@ function renderDeliveryNote(){
       <td>${num('boxes', g.qty ? g.boxes : '', 'กล่อง')}</td>
       <td>${num('remainder', g.qty ? g.remainder : '', 'เศษ')}</td>
       <td data-pcs="${pn}"><b>${g.qty? numFmt(g.qty) : '—'}</b></td>
+      <td></td>
       <td data-left="${pn}">${dnLeftCell(g)}</td>
+      <td></td>
     </tr>`;
 
     const rows = g.orders.map(({o, wip, alloc, deltaWip, deltaWeek, onlyDelta, wipBefore})=>{
@@ -3052,9 +3081,10 @@ function renderDeliveryNote(){
         <td class="left">${escapeHtml(o.poNo)}</td>
         <td>${fmtDateTH(o.orderDate)}</td>
         <td>${numFmt(o.orderQty)}</td>
-        <td colspan="3" class="left hint">ค้างส่ง ${numFmt(wip)}${dnDeltaNote(deltaWip, deltaWeek)}</td>
+        <td colspan="4" class="left hint">ค้างส่ง ${numFmt(wip)}${dnDeltaNote(deltaWip, deltaWeek)}</td>
         <td><input type="number" min="0" class="row-input dn-alloc" data-order="${escapeHtml(o.id)}" data-pn="${pn}" value="${alloc||''}" placeholder="จำนวนที่ส่ง"></td>
         <td class="hint" data-note="${escapeHtml(o.id)}">${dnRowNote(wipBefore, alloc, deltaWip, onlyDelta)}</td>
+        <td data-include="${escapeHtml(o.id)}">${dnIncludeCell(o.id, alloc)}</td>
       </tr>`;
     }).join('');
     return head + rows;
@@ -3064,8 +3094,10 @@ function renderDeliveryNote(){
     `<thead><tr><th style="width:44px">Item</th><th>PO No.</th>
       <th style="width:100px">Order Date</th><th style="width:90px">PO QTY</th>
       <th style="width:95px">ต่อกล่อง</th><th style="width:85px">กล่อง</th><th style="width:85px">เศษ</th>
-      <th style="width:110px">จำนวน/PCS</th><th style="width:200px">จำนวนที่ส่ง</th></tr></thead>
-     <tbody>${html || emptyRow(9, dnQuery()
+      <th style="width:110px">จำนวน/PCS</th><th style="width:200px">จำนวนที่ส่ง</th>
+      <th style="width:190px" title="ป้ายบอกว่ากลุ่มนี้ออกใบได้หรือยัง และแถวนี้มีอะไรต้องระวัง">สถานะ</th>
+      <th style="width:90px" title="ใบที่รอบนี้ไม่ได้ส่งของ แต่อยากให้ปรากฏบนกระดาษ">ใส่ในใบ</th></tr></thead>
+     <tbody>${html || emptyRow(11, dnQuery()
         ? `ไม่พบ P/N หรือ PO ที่ตรงกับ "${escapeHtml(dnQuery())}" ในหน่วยนี้`
         : 'หน่วยนี้ไม่มีใบที่ค้างส่งแล้ว')}</tbody>`;
 
@@ -3090,6 +3122,14 @@ function renderDnSummary(){
   const hidden = all.length - groups.length;
   const hiddenFilled = all.filter(g => groups.indexOf(g) < 0 && g.qty > 0).length;
 
+  /* ⚠️ นับเฉพาะใบที่ติ๊กไว้ "และยังไม่มียอดส่ง" — ไม่ใช่ dnExtraRows.size ดื้อ ๆ
+   *
+   * ติ๊กไว้ก่อนแล้วมาคีย์จำนวนทีหลังได้ พอมีจำนวนแล้วแถวนั้นขึ้นกระดาษเพราะจำนวน
+   * ไม่ใช่เพราะติ๊ก การนับรวมจึงขัดกับข้อความที่เขียนว่า "ใบที่รอบนี้ไม่ได้ส่งของ"
+   * (ที่ติ๊กไว้ไม่ถูกลบตอนคีย์จำนวน เพราะถ้าลบยอดออกทีหลัง คนจะเสียที่ติ๊กไปฟรี ๆ) */
+  const extraNoShip = all.reduce((n, g) =>
+    n + g.orders.filter(x => x.alloc <= 0 && dnExtraRows.has(x.o.id)).length, 0);
+
   el.innerHTML =
     `${numFmt(all.length)} กลุ่ม P/N · รวมที่จะส่งวันนี้ <b id="dnTotal">${numFmt(totalPcs)}</b> ชิ้น` +
     (mismatch? ` · <b style="color:var(--red)">มี ${numFmt(mismatch)} กลุ่มที่กล่อง/เศษไม่ตรงกับยอดที่คีย์ — ออกใบไม่ได้จนกว่าจะแก้</b>` : '') +
@@ -3098,7 +3138,20 @@ function renderDnSummary(){
     (hidden ? ` · <b id="dnHidden">ตัวค้นหาซ่อนอยู่ ${numFmt(hidden)} กลุ่ม` +
        (hiddenFilled ? ` (กรอกไว้แล้ว ${numFmt(hiddenFilled)} กลุ่ม)` : '') +
        ` — การออกใบไม่สนใจตัวค้นหา ของที่ซ่อนอยู่ก็ลงในไฟล์ด้วย</b>` : '') +
+    (extraNoShip ? ` · <b>ใส่ในใบเพิ่มอีก ${numFmt(extraNoShip)} ใบที่รอบนี้ไม่ได้ส่งของ</b>` : '') +
     ` · ยอดที่กรอกลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
+}
+
+/** ช่องติ๊ก "ใส่ในใบ" — มีความหมายเฉพาะแถวที่รอบนี้ไม่ได้ส่งของ
+ *  แถวที่มีจำนวนแล้วขึ้นกระดาษอยู่แล้ว จึงติ๊กค้างไว้และกดไม่ได้ ไม่ใช่ซ่อน
+ *  เพราะการเห็นว่ามันติ๊กอยู่ ช่วยให้อ่านตารางได้ว่าแถวไหนจะขึ้นบ้าง */
+function dnIncludeCell(orderId, alloc){
+  if(alloc > 0){
+    return `<input type="checkbox" checked disabled title="มีจำนวนที่ส่งแล้ว จึงขึ้นในใบอยู่แล้ว">`;
+  }
+  const on = dnExtraRows.has(orderId) ? ' checked' : '';
+  return `<input type="checkbox" class="dn-include" data-order="${escapeHtml(orderId)}"${on}`
+       + ` title="ติ๊กเพื่อให้ใบสั่งนี้ปรากฏบนกระดาษ ทั้งที่รอบนี้ไม่ได้ส่งของ">`;
 }
 
 /** ป้ายท้ายแถวของใบสั่งหนึ่งใบ
@@ -3173,6 +3226,14 @@ function bindDnInputs(){
     num(el, function(v){ saveAllocation(this.dataset.order, dnDate(), v); });
   });
   bindDnRecalc(document);
+
+  document.querySelectorAll('#dnTable .dn-include').forEach(el=>{
+    el.addEventListener('change', function(){
+      if(this.checked) dnExtraRows.add(this.dataset.order);
+      else dnExtraRows.delete(this.dataset.order);
+      renderDnSummary();
+    });
+  });
 }
 
 /** ทางกลับออกจากโหมดแก้กล่องเอง — ต้องมีเสมอ ไม่งั้นคนติดอยู่กับเลขที่ตัวเองแก้ไว้
@@ -3201,6 +3262,18 @@ function refreshDnGroup(pn){
     g.orders.forEach(({o, alloc, deltaWip, onlyDelta, wipBefore})=>{
       const td = document.querySelector(`#dnTable td[data-note="${CSS.escape(o.id)}"]`);
       if(td) td.innerHTML = dnRowNote(wipBefore, alloc, deltaWip, onlyDelta);
+
+      // ช่องติ๊กต้องสะท้อนสถานะใหม่ด้วย — คีย์จำนวนแล้วแถวนั้นขึ้นกระดาษอยู่แล้ว
+      // ถ้าไม่อัปเดต ช่องจะยังว่างทั้งที่แถวจะถูกพิมพ์ ซึ่งอ่านแล้วเข้าใจผิด
+      const inc = document.querySelector(`#dnTable td[data-include="${CSS.escape(o.id)}"]`);
+      if(inc && inc.querySelector('input') !== document.activeElement){
+        inc.innerHTML = dnIncludeCell(o.id, alloc);
+        inc.querySelectorAll('.dn-include').forEach(el=> el.addEventListener('change', function(){
+          if(this.checked) dnExtraRows.add(this.dataset.order);
+          else dnExtraRows.delete(this.dataset.order);
+          renderDnSummary();
+        }));
+      }
     });
 
     // กล่องกับเศษถูกคิดใหม่ให้ ต้องอัปเดตช่องตามไปด้วย
@@ -3245,7 +3318,8 @@ document.getElementById('dnTemplateInput').addEventListener('change', async (e)=
 document.getElementById('btnDnExport').addEventListener('click', async ()=>{
   if(!dnTemplate){ toast('เลือกไฟล์ฟอร์มก่อนครับ'); return; }
   const date = dnDate(), unit = dnUnit();
-  const groups = deliveryGroups(date, unit).filter(g => g.qty > 0);
+  // กลุ่มที่ไม่มีของส่งเลย แต่มีใบที่คนติ๊กไว้ ก็ต้องได้ขึ้น — ไม่งั้นติ๊กแล้วไม่เกิดอะไรขึ้น
+  const groups = deliveryGroups(date, unit).filter(g => shippedOrders(g).length > 0);
   if(!groups.length){ toast('ยังไม่มีกลุ่มไหนกรอกยอดไว้ในวันนี้'); return; }
 
   // ⚠️ ด่านนี้ห้ามเป็นแค่คำถามให้กดผ่าน — ต้องกันจริง
