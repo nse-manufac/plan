@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-03.8">
+<meta name="app-version" content="2026-09-03.9">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -83,6 +83,13 @@
      renderDeliveryNote จะวัดแล้วเขียนทับให้ตรงกับฟอนต์และการซูมของเครื่องนั้น */
   #dnTable thead tr:nth-child(2) th{top:31px;}
   #dnTable thead th{white-space:nowrap;}
+  /* ตารางนี้มี 16 คอลัมน์ พื้นที่จึงตึงกว่าตารางอื่นมาก บีบช่องกรอกลงเฉพาะที่นี่
+     ไม่แตะ .row-input ตัวกลางที่แท็บบันทึกยอดรายวันใช้ร่วม
+     ⚠️ ต้องล้าง min-width ด้วย — กฎรวมของ input ตั้ง min-width:120px ไว้ ซึ่งชนะ width เสมอ
+        ทำให้ .row-input{width:70px} ไม่เคยมีผลจริงเลย ทุกช่องกว้าง 120px มาตลอด
+        ตั้ง width อย่างเดียวจึงไม่มีอะไรเปลี่ยน (เสียเวลาไปหนึ่งรอบกับเรื่องนี้)
+     บีบ padding ลงด้วย เพื่อให้ยอดห้าหลักยังอยู่ในช่องได้ */
+  #dnTable .row-input{width:70px;min-width:0;padding:6px;}
   /* ⚠️ คอลัมน์หมายเหตุอยู่ท้ายสุดตามที่เจ้าของขอ แต่ตารางกว้างกว่ากรอบอยู่ราว 113px
      (main ถูกจำกัดที่ max-width 1400px จอกว้างกว่านี้ก็ไม่ช่วย) คอลัมน์ท้ายจึงหลุดออกไป
      ตรึงไว้ที่ขอบขวาแทน — ในนี้มีคำเตือน "เกิน" ที่เคยตายมาหลายเดือนจนปลุกกลับมาใน #49
@@ -3109,7 +3116,7 @@ function renderDeliveryNote(){
        <td class="dn-merge" rowspan="${span}" data-pcs="${pn}"><b>${g.qty? numFmt(g.qty) : '—'}</b></td>
        <td class="dn-merge" rowspan="${span}" data-left="${pn}">${dnLeftCell(g)}</td>
        <td class="dn-merge" rowspan="${span}"><input type="text" class="row-input dn-pack" data-f="remark"
-              data-pn="${pn}" value="${escapeHtml(g.remark)}" style="width:110px" placeholder="Remark"
+              data-pn="${pn}" value="${escapeHtml(g.remark)}" style="width:88px" placeholder="Remark"
               title="ลงช่อง Remark ของใบส่งสินค้า เช่น NEW / RETURN / แพค 3 กล่องไม่เต็ม"></td>`;
 
     return g.orders.map(({o, wip, alloc, deltaWip, deltaWeek, onlyDelta, wipBefore}, i)=>{
@@ -3145,20 +3152,20 @@ function renderDeliveryNote(){
         <th rowspan="2" style="width:92px">Order Date</th>
         <th rowspan="2" style="width:80px">PO QTY</th>
         <th colspan="2" title="ยอดค้างส่ง — เทียบบัญชีเรากับไฟล์ Call In ของ Delta">Wip bal. · ยอดค้างส่ง</th>
-        <th rowspan="2" style="width:108px">จำนวนที่ส่ง</th>
+        <th rowspan="2" style="width:76px">จำนวนที่ส่ง</th>
         <th rowspan="2" style="width:70px" title="ใบที่รอบนี้ไม่ได้ส่งของ แต่อยากให้ปรากฏบนกระดาษ">ใส่ในใบ</th>
         <th colspan="5" title="กรอกครั้งเดียวใช้ทั้งกลุ่ม P/N เหมือนช่องที่ merge ไว้ในใบจริง">บรรจุ · ทั้งกลุ่ม P/N</th>
-        <th rowspan="2" style="width:120px" title="ลงช่อง Remark ของใบส่งสินค้า">Remark</th>
+        <th rowspan="2" style="width:96px" title="ลงช่อง Remark ของใบส่งสินค้า">Remark</th>
         <th rowspan="2" class="dn-note" style="width:1%" title="แถวนี้มีอะไรต้องระวัง">หมายเหตุ</th>
       </tr>
       <tr>
         <th style="width:85px" title="ยอดสั่ง ลบ ยอดที่ส่งไปแล้ว ตามบัญชีเรา — ตัวที่คุมว่ารอบนี้ส่งได้เท่าไหร่">ของเรา</th>
-        <th style="width:100px" title="ยอดที่ Delta บันทึกว่าเรายังค้างเขาอยู่ — ตัวนี้คือเลขที่พิมพ์ลงกระดาษ">Delta</th>
-        <th style="width:85px">ต่อกล่อง</th>
-        <th style="width:80px">กล่อง</th>
-        <th style="width:80px">เศษ</th>
-        <th style="width:90px">จำนวน/PCS</th>
-        <th style="width:130px" title="กลุ่มนี้ออกใบได้หรือยัง">ตรวจบรรจุ</th>
+        <th style="width:86px" title="ยอดที่ Delta บันทึกว่าเรายังค้างเขาอยู่ — ตัวนี้คือเลขที่พิมพ์ลงกระดาษ">Delta</th>
+        <th style="width:70px">ต่อกล่อง</th>
+        <th style="width:64px">กล่อง</th>
+        <th style="width:64px">เศษ</th>
+        <th style="width:78px">จำนวน/PCS</th>
+        <th style="width:72px" title="กลุ่มนี้ออกใบได้หรือยัง">ตรวจบรรจุ</th>
       </tr>
      </thead>
      <tbody>${html || emptyRow(16, dnQuery()
