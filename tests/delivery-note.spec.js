@@ -440,6 +440,36 @@ test('ตัดยอดเข้าใบเกินยอดสั่ง ต�
     'และยอดค้างก่อนส่งต้องเป็น 1,000 ไม่ใช่ 3,000').toBe('1,000');
 });
 
+/* ── คำเตือนท้ายแถวต้องอยู่ในกรอบที่มองเห็น ไม่ใช่ต้องเลื่อนไปหา ──────────
+ *
+ * เจ้าของขอ 3 ก.ย. 2026 ให้ย้ายคอลัมน์หมายเหตุไปท้ายสุด แต่ตารางกว้างกว่ากรอบ
+ * (main ถูกจำกัดที่ max-width 1400px จอกว้างกว่านี้ก็ไม่ช่วย) คอลัมน์ท้ายจึงหลุดออกไป
+ * วัดได้ตอนนั้นว่าเลยขอบขวาไป 113px — คำเตือน "เกิน" มองไม่เห็นเลยถ้าไม่เลื่อน
+ *
+ * ป้ายในคอลัมน์นี้เคยตายมาหลายเดือนจนปลุกกลับมาใน #49 การปล่อยให้มันอยู่นอกจอ
+ * มีผลเท่ากับตายอีกรอบ เทสนี้จึงวัด "ตำแหน่งจริงบนจอ" ไม่ใช่แค่ว่ามีข้อความอยู่ใน DOM */
+test('คำเตือนท้ายแถวต้องอยู่ในกรอบที่มองเห็น แม้ตารางจะกว้างกว่าจอ', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });   // จอแคบกว่าที่ตารางต้องการ
+  await open(page, [order('PO-X1', PN_B, 1000, '2026-08-03')]);
+  await alloc(page, 'PO-X1|' + PN_B, 3000);                   // เกินยอดค้าง -> ต้องขึ้นป้าย
+
+  const seen = await page.evaluate(() => {
+    const wrap = document.querySelector('#view-delivery .table-wrap');
+    const note = document.querySelector('#dnTable td.dn-note');
+    if(!note) return { err: 'ไม่พบช่องหมายเหตุ' };
+    const n = note.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+    return {
+      text: note.innerText.trim(),
+      tableOverflows: wrap.scrollWidth > wrap.clientWidth,
+      beyondRight: Math.round(n.right - w.right)
+    };
+  });
+  expect(seen.text, 'ป้ายเตือนต้องมีอยู่จริง').toContain('เกิน');
+  expect(seen.tableOverflows, 'ตั้งใจให้ตารางกว้างกว่ากรอบ ไม่งั้นเทสนี้ไม่ได้ตรวจอะไร').toBe(true);
+  expect(seen.beyondRight,
+    'ช่องหมายเหตุต้องไม่ล้นออกไปนอกกรอบ — ต้องถูกตรึงไว้ที่ขอบขวา').toBeLessThanOrEqual(1);
+});
+
 test('ตัดยอดพอดียอดสั่ง ต้องไม่เตือน', async ({ page }) => {
   await open(page, [order('PO-X1', PN_B, 1000, '2026-08-03')]);
   await alloc(page, 'PO-X1|' + PN_B, 1000);
