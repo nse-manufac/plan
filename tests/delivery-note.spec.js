@@ -440,36 +440,68 @@ test('ตัดยอดเข้าใบเกินยอดสั่ง ต�
     'และยอดค้างก่อนส่งต้องเป็น 1,000 ไม่ใช่ 3,000').toBe('1,000');
 });
 
-/* ── คำเตือนท้ายแถวต้องอยู่ในกรอบที่มองเห็น ไม่ใช่ต้องเลื่อนไปหา ──────────
+/* ── ตารางต้องพอดีจอคอม ทุกคอลัมน์เห็นได้โดยไม่ต้องเลื่อน ────────────────
  *
- * เจ้าของขอ 3 ก.ย. 2026 ให้ย้ายคอลัมน์หมายเหตุไปท้ายสุด แต่ตารางกว้างกว่ากรอบ
- * (main ถูกจำกัดที่ max-width 1400px จอกว้างกว่านี้ก็ไม่ช่วย) คอลัมน์ท้ายจึงหลุดออกไป
- * วัดได้ตอนนั้นว่าเลยขอบขวาไป 113px — คำเตือน "เกิน" มองไม่เห็นเลยถ้าไม่เลื่อน
+ * ประวัติของเรื่องนี้ อ่านก่อนแก้ความกว้างอะไรในตารางนี้
  *
- * ป้ายในคอลัมน์นี้เคยตายมาหลายเดือนจนปลุกกลับมาใน #49 การปล่อยให้มันอยู่นอกจอ
- * มีผลเท่ากับตายอีกรอบ เทสนี้จึงวัด "ตำแหน่งจริงบนจอ" ไม่ใช่แค่ว่ามีข้อความอยู่ใน DOM */
-test('คำเตือนท้ายแถวต้องอยู่ในกรอบที่มองเห็น แม้ตารางจะกว้างกว่าจอ', async ({ page }) => {
-  // ⚠️ ต้องแคบพอที่ตารางจะล้นจริง — หลังบีบความกว้างคอลัมน์แล้ว 1280 พอดีกรอบ
-  //    เทสนี้เคยตั้งไว้ 1280 แล้วกลายเป็นไม่ได้ตรวจอะไรเลย (assert ด้านล่างจับได้)
-  await page.setViewportSize({ width: 900, height: 900 });
-  await open(page, [order('PO-X1', PN_B, 1000, '2026-08-03')]);
-  await alloc(page, 'PO-X1|' + PN_B, 3000);                   // เกินยอดค้าง -> ต้องขึ้นป้าย
+ *   โครงใหม่มี 16 คอลัมน์จริง (ของเดิม 11 แล้วอาศัย colspan) ตอนแรกจึงล้นกรอบ 113px
+ *   คอลัมน์หมายเหตุซึ่งมีคำเตือน "เกิน" อยู่ท้ายสุด เลยไปอยู่นอกจอทั้งหมด
+ *
+ *   ทางแก้แรกคือตรึงคอลัมน์นั้นไว้ที่ขอบขวา ซึ่งแก้บนคอมได้จริง
+ *   แต่พังบนมือถือ — ตารางล้น 866px คอลัมน์ที่ตรึงลอยไปทับช่องอื่น 5 ช่อง
+ *   เจ้าของเจอของจริง 4 ก.ย. 2026
+ *
+ *   ทางแก้ที่ใช้จริงคือบีบความกว้างช่องกรอกจนตารางพอดีกรอบ แล้วเลิกตรึง
+ *   ตัวการที่ทำให้บีบไม่ลงคือ min-width:120px ในกฎรวมของ input ซึ่งชนะ width เสมอ
+ *
+ * เทสนี้คุม "ผลลัพธ์" ไม่ใช่ "วิธี" — ตารางพอดีจอคอมเมื่อไหร่ก็ผ่าน จะทำด้วยวิธีไหนก็ได้
+ * 1280 คือจอที่แคบที่สุดที่พนักงานใช้คีย์งานจริง */
+test('ตารางใบส่งสินค้าต้องพอดีจอคอม ไม่ต้องเลื่อนแนวนอน', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await open(page, [order('PO-X1', PN_B, 1000, '2026-08-03')]);   // สั่ง 1,000 ตัด 3,000 -> เกิน
+  await alloc(page, 'PO-X1|' + PN_B, 3000);        // เกินยอดค้าง -> คอลัมน์หมายเหตุมีของ
 
-  const seen = await page.evaluate(() => {
+  const fit = await page.evaluate(() => {
     const wrap = document.querySelector('#view-delivery .table-wrap');
-    const note = document.querySelector('#dnTable td.dn-note');
-    if(!note) return { err: 'ไม่พบช่องหมายเหตุ' };
+    const t = document.getElementById('dnTable');
+    const note = t.querySelector('td.dn-note');
     const n = note.getBoundingClientRect(), w = wrap.getBoundingClientRect();
     return {
       text: note.innerText.trim(),
-      tableOverflows: wrap.scrollWidth > wrap.clientWidth,
-      beyondRight: Math.round(n.right - w.right)
+      overflow: Math.round(t.scrollWidth - wrap.clientWidth),
+      noteBeyondRight: Math.round(n.right - w.right)
     };
   });
-  expect(seen.text, 'ป้ายเตือนต้องมีอยู่จริง').toContain('เกิน');
-  expect(seen.tableOverflows, 'ตั้งใจให้ตารางกว้างกว่ากรอบ ไม่งั้นเทสนี้ไม่ได้ตรวจอะไร').toBe(true);
-  expect(seen.beyondRight,
-    'ช่องหมายเหตุต้องไม่ล้นออกไปนอกกรอบ — ต้องถูกตรึงไว้ที่ขอบขวา').toBeLessThanOrEqual(1);
+  expect(fit.text, 'ป้ายเตือนต้องมีอยู่จริง').toContain('เกิน');
+  expect(fit.overflow, 'ตารางต้องไม่กว้างเกินกรอบที่จอ 1280').toBeLessThanOrEqual(2);
+  expect(fit.noteBeyondRight, 'คอลัมน์ท้ายสุดต้องอยู่ในกรอบ ไม่ต้องเลื่อนไปหา')
+    .toBeLessThanOrEqual(2);
+});
+
+/* ── บนจอแคบ ห้ามมีคอลัมน์ไหนลอยไปทับช่องอื่น ────────────────────────────
+ * มือถือตารางล้นหลายร้อย px อยู่แล้ว การเลื่อนเป็นเรื่องปกติ
+ * แต่ช่องที่ลอยทับกันทำให้อ่านตัวเลขผิดตัว ซึ่งอันตรายกว่าการต้องเลื่อน */
+test('บนจอมือถือ ต้องไม่มีช่องไหนลอยไปทับช่องอื่น', async ({ page }) => {
+  await page.setViewportSize({ width: 412, height: 915 });
+  await open(page, [order('PO-X1', PN_B, 1000, '2026-08-03')]);   // สั่ง 1,000 ตัด 3,000 -> เกิน
+  await alloc(page, 'PO-X1|' + PN_B, 3000);
+
+  const overlap = await page.evaluate(() => {
+    const t = document.getElementById('dnTable');
+    const cells = [...t.querySelectorAll('tbody tr:first-child td')]
+      .map(td => ({ r: td.getBoundingClientRect(), td }));
+    let worst = 0;
+    for(let i = 0; i < cells.length; i++){
+      for(let j = i + 1; j < cells.length; j++){
+        const a = cells[i].r, b = cells[j].r;
+        const x = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const y = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if(x > 1 && y > 1) worst = Math.max(worst, Math.round(x));
+      }
+    }
+    return worst;
+  });
+  expect(overlap, 'ไม่ควรมีช่องไหนซ้อนทับกันเกินเส้นขอบ').toBeLessThanOrEqual(1);
 });
 
 test('ตัดยอดพอดียอดสั่ง ต้องไม่เตือน', async ({ page }) => {
