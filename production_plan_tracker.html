@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-04.1">
+<meta name="app-version" content="2026-09-04.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1881,18 +1881,93 @@ function rejectLegacyXls(file){
   return false;
 }
 
-/** หาคอลัมน์ "วันแผนของขั้น Support" จากข้อความหัวคอลัมน์ (issue #17)
- *  ไม่ fix ตำแหน่งไว้เหมือน M/N/O เพราะยังไม่ยืนยันว่าไฟล์ลูกค้าวางคอลัมน์นี้ไว้ตรงไหน
- *  ถ้าหาไม่เจอ คืน null แล้วเก็บ planSupport เป็น null ไป ไม่กระทบคอลัมน์อื่น */
-function findSupportPlanCol(rows){
-  for(let i=0;i<Math.min(rows.length,12);i++){
+/* ---------- หาคอลัมน์ของไฟล์แผนจากข้อความหัวตาราง ----------
+ *
+ * ⚠️ เดิมอ้างตำแหน่งตายตัว (F=P/N G=PO No. L=Open Q'ty M/N/O=วันแผน) ซึ่งพังเงียบ
+ *    เมื่อไฟล์เปลี่ยนผัง สำรวจไฟล์จริง 36 ชีตเมื่อ 4 ก.ย. 2026 พบว่า **มีสองผังปนกันอยู่**
+ *
+ *      WK 15 เป็นต้นมา   L=Open Q'ty  · M/N/O = Winding/Assembly/Inspection
+ *      WK 1-14 (ของเก่า) L=Order Q'ty · M=Open Q'ty · N/O = Rev.
+ *
+ *    ผลคือชีตเก่าถูกอ่านวันแผน Winding มาจากช่อง "Open Q'ty" ได้วันที่มั่ว
+ *    และยอดมาจากคนละช่องกับที่ชีตใหม่ใช้ ไม่มีอะไรฟ้องสักอย่าง
+ *
+ * จับคู่แบบผ่อนปรน เพราะหัวตารางจริงสะกดว่า "Winding/Trimmimg" (พิมพ์ตก)
+ * และเว้นวรรคไม่คงที่ */
+const PLAN_HEAD = [
+  {field:'pn',             label:'P/N',        pats:[/^p\s*\/\s*n$/]},
+  {field:'poNo',           label:'PO No.',     pats:[/^po\s*no/]},
+  {field:'orderDate',      label:'Order Date', pats:[/^order\s*date/]},
+  // ⚠️ ยอดสั่งผูกกับ "Open Q'ty" — ผังปัจจุบันมีช่องนี้ช่องเดียว และเป็นความหมาย
+  //    ที่โปรแกรมใช้มาตลอด · "Order Q'ty" เป็นตัวสำรองเผื่อวันหนึ่งเปลี่ยนกลับไปใช้ชื่อนั้น
+  //    (ผังเก่ามีทั้งสองช่อง ค่าเท่ากัน 574 จาก 577 แถว เจ้าของยืนยันว่าเป็นยอดเดียวกัน)
+  {field:'orderQty',       label:"Open Q'ty",  pats:[/^open\s*q/], alt:[/^order\s*q/]},
+  {field:'osc',            label:'OSC',        pats:[/^osc$/]},
+  {field:'pc',             label:'Pc',         pats:[/^pc\b/]},
+  {field:'planWinding',    label:'Winding',    pats:[/wind/]},
+  {field:'planAssembly',   label:'Assembly',   pats:[/assembl/]},
+  {field:'planInspection', label:'Inspection', pats:[/inspect/]},
+  {field:'planSupport',    label:'Support',    pats:[/support/]}
+];
+
+/** ชื่อคอลัมน์ที่ขาดไม่ได้ — ขาดเมื่อไหร่ต้องฟ้อง ไม่ใช่เดาตำแหน่งเอาเอง */
+const PLAN_REQUIRED = ['pn', 'poNo', 'orderQty'];
+
+const normHead = v => typeof v === 'string'
+  ? v.replace(/\s+/g, ' ').trim().toLowerCase() : '';
+
+/** หาแถวหัวตารางแล้วแปลงเป็น {ชื่อฟิลด์: ดัชนีคอลัมน์}
+ *  คืน {error} ถ้าหาไม่เจอ หรือขาดคอลัมน์ที่จำเป็น */
+function findPlanCols(rows){
+  for(let i=0; i<Math.min(rows.length, 14); i++){
     const row = rows[i];
     if(!row) continue;
-    for(let c=0;c<row.length;c++){
-      if(typeof row[c]==='string' && /support/i.test(row[c])) return c;
+    const heads = row.map(normHead);
+    const map = {};
+
+    /* ⚠️ ต้องกวาดสองรอบ — รอบแรกเอาเฉพาะชื่อหลัก รอบสองค่อยเติมด้วยชื่อสำรอง
+     *    ผังเก่ามี "Order Q'ty" อยู่ซ้ายมือของ "Open Q'ty" ถ้ากวาดรอบเดียวไล่ทีละคอลัมน์
+     *    ตัวสำรองจะชิงคว้าช่องไปก่อนที่จะเดินไปเจอตัวหลัก แล้วได้ยอดจากคนละช่อง
+     *    (เทสจับได้ตอนเขียน — อ่านได้ 999 แทนที่จะเป็น 800) */
+    for(const spec of PLAN_HEAD){
+      const c = heads.findIndex(h => h && spec.pats.some(re => re.test(h)));
+      if(c >= 0) map[spec.field] = c;
+    }
+    for(const spec of PLAN_HEAD){
+      if(map[spec.field] != null || !spec.alt) continue;
+      const c = heads.findIndex(h => h && spec.alt.some(re => re.test(h)));
+      if(c >= 0) map[spec.field] = c;
+    }
+
+    if(map.pn != null && map.poNo != null){
+      const missing = PLAN_REQUIRED
+        .filter(f => map[f] == null)
+        .map(f => (PLAN_HEAD.find(x => x.field === f) || {}).label || f);
+      if(missing.length){
+        return {error: 'หัวตารางในชีตนี้ไม่มีคอลัมน์ ' + missing.join(', ')
+                     + ' — เลือกชีตให้ถูก หรือแจ้งหัวหน้าว่าผังไฟล์เปลี่ยนไป'};
+      }
+      return {cols: map, headerIdx: i};
     }
   }
-  return null;
+  return {error: 'ไม่พบหัวตาราง (ต้องมีทั้ง "P/N" และ "PO No.") ในชีตนี้ — เลือกชีตให้ถูกก่อนครับ'};
+}
+
+/** Sub-Name จากตัวอักษรในรหัส PO — เจ้าของสั่ง 4 ก.ย. 2026
+ *
+ *  ⚠️ ทำไมไม่อ่านจากคอลัมน์ C เหมือนเดิม — คอลัมน์นั้น "ไม่มีหัวตาราง" เลยในไฟล์จริง
+ *     (หัวแถว 7 ข้ามจาก B=Code ไป D=OSC) จึงหาจากหัวตารางไม่ได้ ต้องยึดตำแหน่งอย่างเดียว
+ *     และที่สำคัญกว่านั้น เจ้าของยืนยันว่า "ตัวอักษรใน PO ถูก คอลัมน์ C พิมพ์ผิด"
+ *     สำรวจไฟล์จริงพบ 89 แถวที่สองอย่างนี้ขัดกัน การเปลี่ยนมาใช้ PO จึงเป็นการแก้ให้ถูก
+ *
+ *  ⚠️ มีทั้ง U และ H หรือไม่มีเลย = ตัดสินไม่ได้ ต้องคืนค่าว่าง ห้ามเดาข้างใดข้างหนึ่ง
+ *     ใบส่งสินค้าแยกตาม Sub-Name ถ้าเดาผิด ของจะไปออกใบผิดหน่วยโดยไม่มีใครรู้
+ *     หน้าตรวจก่อนนำเข้าจะนับแถวที่ว่างขึ้นมาเตือนให้เห็นก่อนกดยืนยัน */
+function subNameFromPo(poNo){
+  const s = String(poNo == null ? '' : poNo).toUpperCase();
+  const hasH = s.includes('H'), hasU = s.includes('U');
+  if(hasH === hasU) return '';
+  return hasH ? 'TUE-H' : 'TUE-U';
 }
 
 function parseSelectedSheet(){
@@ -1901,27 +1976,36 @@ function parseSelectedSheet(){
   const ws = sheetByName(workbookGlobal, name);
   if(!ws) return null;
   const rows = sheetRows(ws);
-  const items=[]; const seenIds={};
-  const supCol = findSupportPlanCol(rows);
-  let reportedTotal=null;
 
-  for(const row of rows){
+  // ⚠️ หาคอลัมน์จากหัวตารางก่อนเสมอ — ห้ามกลับไปใช้ดัชนีตายตัว อ่านเหตุผลที่ PLAN_HEAD
+  const head = findPlanCols(rows);
+  if(head.error) return {error: head.error};
+  const C = head.cols;
+
+  const items=[]; const seenIds={};
+  let reportedTotal=null;
+  const at = (row, field) => C[field]!=null ? row[C[field]] : null;
+  const txt = v => v!=null ? String(v).trim() : '';
+
+  for(let i=head.headerIdx+1; i<rows.length; i++){
+    const row = rows[i];
     if(!row) continue;
-    const colI = row[8];
-    if (typeof colI === 'string' && colI.trim().toUpperCase()==='TOTAL' && typeof row[11] === 'number') {
-      reportedTotal = row[11];
+
+    // แถวยอดรวมท้ายตาราง — หาคำว่า TOTAL ในช่องไหนก็ได้ของแถว แล้วอ่านยอดจาก
+    // คอลัมน์เดียวกับที่ใช้เป็นยอดสั่ง ไม่ใช่คอลัมน์ตายตัวที่เลื่อนตามผังไฟล์
+    if(row.some(v => typeof v === 'string' && v.trim().toUpperCase() === 'TOTAL')){
+      const t = at(row, 'orderQty');
+      if(typeof t === 'number') reportedTotal = t;
+      continue;
     }
-    // Column F is labeled "P/N" and column G is labeled "PO No." in the sheet's own header
-    // row (confirmed against row 7's shared-string text) — the opposite of what the raw data
-    // shape suggests (F holds long numeric codes, G holds alphanumeric "TM..." codes), but the
-    // header label is the source of truth here.
-    const pnRaw = row[5], poRaw = row[6], qtyRaw = row[11];
+
+    const pnRaw = at(row, 'pn'), poRaw = at(row, 'poNo');
     if (poRaw==null || poRaw==='' || pnRaw==null || pnRaw==='') continue;
-    const qty = Number(qtyRaw);
+    const qty = Number(at(row, 'orderQty'));
     if (!qty || qty<=0 || isNaN(qty)) continue;
 
-    const poNo = String(poRaw).trim();
-    const pn = String(pnRaw).trim();
+    const poNo = txt(poRaw);
+    const pn = txt(pnRaw);
     let id = poNo+'|'+pn;
     if (seenIds[id]!=null){ seenIds[id]++; id = id+'-'+seenIds[id]; } else { seenIds[id]=1; }
 
@@ -1929,15 +2013,15 @@ function parseSelectedSheet(){
       id,
       week: name.trim(),
       poNo, pn,
-      subName: row[2]!=null? String(row[2]).trim() : '',
-      osc: row[3]!=null? String(row[3]).trim() : '',
-      pc: row[4]!=null? String(row[4]).trim() : '',
+      subName: subNameFromPo(poNo),
+      osc: txt(at(row, 'osc')),
+      pc: txt(at(row, 'pc')),
       orderQty: qty,
-      orderDate: excelValueToISO(row[7]),
-      planWinding: excelValueToISO(row[12]),
-      planAssembly: excelValueToISO(row[13]),
-      planSupport: supCol!=null ? excelValueToISO(row[supCol]) : null,
-      planInspection: excelValueToISO(row[14])
+      orderDate: excelValueToISO(at(row, 'orderDate')),
+      planWinding: excelValueToISO(at(row, 'planWinding')),
+      planAssembly: excelValueToISO(at(row, 'planAssembly')),
+      planSupport: excelValueToISO(at(row, 'planSupport')),
+      planInspection: excelValueToISO(at(row, 'planInspection'))
     });
   }
   return {items, reportedTotal, sheetName:name};
@@ -2034,7 +2118,11 @@ function renderPreview(parsed){
       <td>${isNew?'<span class="badge green">ใหม่</span>':'<span class="badge amber">อัปเดต</span>'}</td>
       <td class="left">${escapeHtml(it.poNo)}</td>
       <td class="left">${escapeHtml(it.pn)}</td>
-      <td class="left">${escapeHtml(it.subName)}</td>
+      <td class="left">${it.subName
+        ? escapeHtml(it.subName)
+        : '<span class="badge red" title="รหัส PO นี้ไม่มีตัว U หรือ H อย่างใดอย่างหนึ่งชัด ๆ '
+          + 'จึงบอกไม่ได้ว่าเป็นหน่วยไหน — นำเข้าได้ แต่ใบสั่งนี้จะไม่ขึ้นในหน้าใบส่งสินค้าของหน่วยใดเลย">'
+          + 'หาไม่เจอ</span>'}</td>
       <td class="left">${escapeHtml(it.osc)}</td>
       <td class="left">${escapeHtml(it.pc)}</td>
       <td>${numFmt(it.orderQty)}</td>
@@ -2046,6 +2134,15 @@ function renderPreview(parsed){
      <tbody>${rowsHtml || emptyRow(8,'ไม่พบรายการที่ถูกต้องใน sheet นี้')}</tbody>`;
 
   let summary = `พบ ${parsed.items.length} รายการ (ใหม่ ${newCount}, จะอัปเดต ${updCount}) รวม ${numFmt(sumQty)} pcs`;
+
+  /* ⚠️ Sub-Name มาจากตัวอักษรในรหัส PO ถ้าตัดสินไม่ได้จะเป็นค่าว่าง
+   *    ใบสั่งที่ Sub-Name ว่างจะไม่โผล่ในหน้าใบส่งสินค้าของหน่วยไหนเลย = ส่งของไม่ได้
+   *    ต้องบอกก่อนกดยืนยัน ไม่ใช่ให้ไปงงเอาตอนหาใบไม่เจอ */
+  const noSub = parsed.items.filter(it => !it.subName).length;
+  if(noSub){
+    summary += ` — ⚠️ มี ${numFmt(noSub)} รายการที่บอกหน่วยไม่ได้จากรหัส PO`
+             + ` (ต้องมีตัว U หรือ H อย่างใดอย่างหนึ่ง) รายการเหล่านี้จะไม่ขึ้นในหน้าใบส่งสินค้า`;
+  }
   if(parsed.reportedTotal!=null){
     const match = sumQty===parsed.reportedTotal;
     summary += ` — เทียบกับยอด TOTAL ในไฟล์: ${numFmt(parsed.reportedTotal)} pcs ${match? '✅ ตรงกัน':'⚠️ ไม่ตรงกัน กรุณาตรวจสอบข้อมูล'}`;
@@ -3545,6 +3642,8 @@ document.getElementById('fileInput').addEventListener('change', async (e)=>{
 document.getElementById('btnParseSheet').addEventListener('click', ()=>{
   const parsed = parseSelectedSheet();
   if(!parsed){ toast('กรุณาเลือกไฟล์และ sheet ก่อน'); return; }
+  // หัวตารางผิดผัง หรือขาดคอลัมน์ที่จำเป็น — บอกให้ชัด ดีกว่าเดาตำแหน่งแล้วนำเข้าผิดเงียบ ๆ
+  if(parsed.error){ toast(parsed.error); return; }
   if(parsed.items.length===0){ toast('ไม่พบข้อมูลที่ถูกต้องใน sheet นี้'); return; }
   pendingImportItems = parsed.items;
   renderPreview(parsed);
