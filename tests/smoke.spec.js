@@ -292,6 +292,53 @@ async function gotoDashboard(page) {
   await page.waitForSelector('#dashTable tbody tr');
 }
 
+/* ── Item No. ที่หน้า Dashboard ────────────────────────────────────────
+ *
+ * ผู้ใช้ขอ 4 ก.ย. 2026 — ไว้ชี้กันตอนคุยหรือตอนถือกระดาษที่พิมพ์ออกมา ("ดูแถวที่ 12")
+ *
+ * ⚠️ ความหมายคือ "ลำดับของแถวที่เห็นอยู่ตอนนี้" ไม่ใช่เลขประจำใบสั่ง
+ *    ต้องนับหลังกรองและเรียงแล้ว ถ้าไปนับจากลำดับในข้อมูล เลขบนจอจะกระโดด
+ *    (1 5 9) หรือสลับกัน แล้วชี้กันไม่รู้เรื่อง
+ *
+ * ⚠️ ข้อมูลตั้งต้นของเทสต้อง "เรียงไม่ตรงกับที่แสดง" ไม่งั้นเทสผ่านทั้งสองแบบ
+ *    เขียนรอบแรกใช้ข้อมูลตั้งต้นปกติซึ่งเรียงตรงกันพอดี ย้อนโค้ดแล้วยังเขียว
+ *    ตารางเรียงตาม (สัปดาห์ แล้ววันสั่ง) จึงใส่ข้อมูลมาสลับกับลำดับนั้น */
+const DASH_ORDERS = [
+  // ลำดับในอาร์เรย์: C, A, B — แต่ตารางจะเรียงเป็น A, B, C
+  { id: 'O3', week: 'W33', poNo: 'PO-3', pn: 'PN-3', orderQty: 30,
+    orderDate: '2026-08-03', status: 'active',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false },
+  { id: 'O1', week: 'W31', poNo: 'PO-1', pn: 'PN-1', orderQty: 100,
+    orderDate: '2026-08-01', status: 'active',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false },
+  { id: 'O2', week: 'W32', poNo: 'PO-2', pn: 'PN-2', orderQty: 50,
+    orderDate: '2026-08-02', status: 'active',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false }
+];
+
+test('Dashboard มีคอลัมน์ Item No. ที่นับตามแถวที่เห็นจริง', async ({ page }) => {
+  await openApp(page, [], DASH_ORDERS);
+  await gotoDashboard(page);
+
+  const head = await page.locator('#dashTable thead').innerText();
+  expect(head, 'ต้องมีคอลัมน์ Item No.').toContain('Item No.');
+
+  const col = sel => page.$$eval('#dashTable tbody tr td:' + sel,
+    tds => tds.map(td => td.innerText.trim()));
+
+  const nos = await col('first-child');
+  const pos = await page.$$eval('#dashTable tbody td[data-po]', t => t.map(x => x.innerText.trim()));
+  expect(pos, 'ตารางต้องเรียงไม่ตรงกับลำดับในข้อมูล ไม่งั้นเทสนี้ไม่ได้ตรวจอะไร')
+    .toEqual(['PO-1', 'PO-2', 'PO-3']);
+  expect(nos, 'ต้องไล่ 1..n ตามที่ตาเห็น ไม่ใช่ตามลำดับในข้อมูล').toEqual(['1', '2', '3']);
+
+  // กรองแล้วต้องเริ่มนับ 1 ใหม่ ไม่ใช่ค้างเลขเดิมของแถวนั้นไว้
+  await page.fill('#dashSearch', 'PO-3');
+  await page.waitForTimeout(200);
+  expect(await page.$$eval('#dashTable tbody td[data-po]', t => t.map(x => x.innerText.trim())), 'ตัวกรองต้องเหลือแถวเดียว').toEqual(['PO-3']);
+  expect(await col('first-child'), 'กรองแล้วแถวที่เห็นแถวแรกต้องเป็นเลข 1').toEqual(['1']);
+});
+
 test('F2 — ปุ่มพิมพ์ต้องเรียกการพิมพ์ของเบราว์เซอร์ ไม่พึ่งไลบรารีทำ PDF', async ({ page }) => {
   await openApp(page);
   await gotoDashboard(page);
@@ -512,9 +559,12 @@ test('A4 — ตั้งค่า Support (+วัน) แล้วกำหน
 // ต้องเป็นสูตรเดียวกับการ์ด WIP ด้านบน ไม่งั้นการ์ดกับรายการจะบอกคนละยอด
 
 /** รายการ PO No. (คอลัมน์ที่ 2) ที่เหลืออยู่ในตาราง Dashboard หลังกรอง */
+/** รายชื่อ PO ที่ตารางแสดงอยู่
+ *  ⚠️ อ่านจาก data-po ไม่ใช่ nth-child — เคยยึดตำแหน่งคอลัมน์ไว้ แล้วพอแทรก
+ *     คอลัมน์ Item No. เข้ามาข้างหน้า เทส 13 จุดพังพร้อมกันเพราะอ่านคอลัมน์ผิดช่อง */
 async function dashPoList(page) {
   await page.waitForTimeout(100);
-  return page.locator('#dashTable tbody tr td:nth-child(2)').allInnerTexts();
+  return page.locator('#dashTable tbody tr td[data-po]').allInnerTexts();
 }
 
 test('A3 — กรอง "ค้างอยู่ที่ขั้น" ต้องได้เฉพาะใบที่ผ่านขั้นก่อนหน้าแล้ว แต่ขั้นนี้ยังไม่ครบ', async ({ page }) => {
@@ -653,7 +703,7 @@ test('กระดาษต้องไม่ขาดหายเงียบ �
 
 /** ค่าในคอลัมน์ Aging (คอลัมน์ที่ 7 ถัดจาก Order Date) */
 function agingColumn(page) {
-  return page.locator('#dashTable tbody tr td:nth-child(7)').allInnerTexts();
+  return page.locator('#dashTable tbody tr td[data-aging]').allInnerTexts();
 }
 
 test('C1 + C3 — Aging ต้องเป็นจำนวนวันนับจาก Order Date ถึงวันนี้ ไม่ใช่วันที่', async ({ page }) => {
@@ -686,7 +736,7 @@ test('C1 — ใบที่ไม่มี Order Date ต้องขึ้น�
 
 /** สีของช่อง Aging แต่ละแถว — '' แปลว่าไม่ได้ระบายสี */
 function agingColors(page) {
-  return page.locator('#dashTable tbody tr td:nth-child(7)').evaluateAll(
+  return page.locator('#dashTable tbody tr td[data-aging]').evaluateAll(
     tds => tds.map(td => {
       const b = td.querySelector('.badge');
       return b ? b.className.replace('badge', '').trim() : '';
@@ -789,8 +839,12 @@ test('เจ้าของสั่งเอา deadline รายขั้น�
   expect(head, 'เจ้าของสั่งเอาวันครบกำหนดรายขั้นออกจากหน้าจอแล้ว').not.toContain('Deadline');
   expect(head, 'คอลัมน์อายุงานต้องมาแทน').toContain('Aging');
 
+  // ⚠️ เทียบหัวกับแถวจริง ไม่ฮาร์ดโค้ดจำนวน — ของเดิมเขียน toBe(13) ไว้
+  //    พอเพิ่มคอลัมน์ Item No. เทสก็แดงทั้งที่ตารางไม่ได้เพี้ยน
+  //    สิ่งที่ต้องคุมคือ "หัวกับแถวเท่ากัน" ตามที่ข้อความบอก ไม่ใช่ตัวเลขคงที่
+  const heads = await page.locator('#dashTable thead th').count();
   const cells = await page.locator('#dashTable tbody tr').first().locator('td').count();
-  expect(cells, 'หัวตารางกับแถวข้อมูลต้องมีจำนวนคอลัมน์เท่ากัน').toBe(13);
+  expect(cells, 'หัวตารางกับแถวข้อมูลต้องมีจำนวนคอลัมน์เท่ากัน').toBe(heads);
 
   const src = fs.readFileSync(APP_FILE, 'utf8');
   expect(src, 'ไฟล์ Excel ยังต้องมี deadline เหมือนเดิม เอาออกเฉพาะหน้าจอ').toContain("'Deadline Winding': dl.winding");
