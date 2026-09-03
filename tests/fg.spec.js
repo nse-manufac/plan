@@ -294,3 +294,27 @@ test('G2 — พิมพ์ค้นหาแล้วโฟกัสต้อ�
     'ตารางวาดใหม่ทุกตัวอักษร ช่องค้นหาต้องยังถือโฟกัส').toBe('fgSearch');
   expect(await page.inputValue('#fgSearch')).toBe('90000000');
 });
+
+// เจ้าของเคาะใน issue #52 ว่าช่องเลือกที่ดึงตัวเลือกจาก subName ต้องเรียกชื่อเดียวกันทุกหน้า
+// และให้ใช้คำว่า Sub-Name (ตรงกับหัวคอลัมน์ในไฟล์แผนงาน) — เป็นข้อยกเว้นของ G1 ที่เจ้าของ
+// อนุมัติเอง เฉพาะป้ายช่องเลือกกับหัวตาราง ส่วนประโยคอธิบายยังเป็นไทยว่า "หน่วย" ตามเดิม
+test('G1 — ป้ายช่องที่ดึงจาก subName ต้องเป็น Sub-Name เหมือนกันทุกหน้า', async ({ page }) => {
+  await open(page, ORDERS, [rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000)]);
+
+  const labelOf = id => page.locator('#' + id).locator('xpath=preceding-sibling::label').innerText();
+
+  expect(await labelOf('fgUnit'), 'หน้ายอดคงคลัง FG').toBe('Sub-Name');
+  expect(await page.locator('#fgTable thead').innerText(),
+    'หัวคอลัมน์ในตาราง FG ต้องเรียกชื่อเดียวกับช่องเลือก').toContain('Sub-Name');
+
+  await page.click('.tab-btn[data-tab="delivery"]');
+  await page.waitForTimeout(150);
+  expect(await labelOf('dnUnit'), 'หน้าใบส่งสินค้า — จุดที่ผู้ใช้แจ้งเข้ามา').toBe('Sub-Name');
+  // ประโยคอธิบายยังต้องเป็นภาษาไทย ห้ามเผลอแทนคำว่า "หน่วย" ทั้งไฟล์
+  expect(await page.locator('#view-delivery .desc').first().innerText(),
+    'G1 — ประโยคที่ผู้ใช้อ่านต้องยังเป็นภาษาไทย').toContain('หน่วย');
+
+  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.waitForTimeout(150);
+  expect(await labelOf('dashSubFilter'), 'Dashboard คือหน้าที่เรียกถูกอยู่แล้ว').toBe('Sub-Name');
+});
