@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-03.5">
+<meta name="app-version" content="2026-09-03.6">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -322,7 +322,7 @@
         <input type="date" id="dnDate">
       </div>
       <div class="field">
-        <label>หน่วย</label>
+        <label>Sub-Name</label>
         <select id="dnUnit" style="min-width:120px"></select>
       </div>
       <div class="field">
@@ -375,7 +375,7 @@
     </div>
     <div class="row filters">
       <div class="field">
-        <label>หน่วย</label>
+        <label>Sub-Name</label>
         <select id="fgUnit" style="min-width:130px"><option value="">ทั้งหมด</option></select>
       </div>
       <div class="field" style="flex:1;min-width:200px">
@@ -2348,7 +2348,7 @@ function renderFg(){
   }).join('');
 
   document.getElementById('fgTable').innerHTML =
-    `<thead><tr><th>P/N</th><th style="width:90px">หน่วย</th>
+    `<thead><tr><th>P/N</th><th style="width:110px">Sub-Name</th>
       <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>
       <th style="width:110px">FG คงเหลือ</th>
       <th style="width:110px">ค้างส่ง (เรา)</th><th style="width:110px">ค้างส่ง (Delta)</th>
