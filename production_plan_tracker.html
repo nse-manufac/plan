@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-03.4">
+<meta name="app-version" content="2026-09-03.5">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1716,7 +1716,7 @@ function saveAllocation(orderId, date, qty){
 
 let pendingCallIn = null;   // {zip, sheetMap, fileName}
 
-const CALLIN_COL = { pn:'A', po:'B', qty:'D', wip:'E' };
+const CALLIN_COL = { pn:'A', po:'B', qty:'D' };
 
 /** อ่านแถวข้อมูลของชีตที่เลือก แล้วจับคู่กับใบสั่งในเครื่อง
  *  จับคู่ด้วย PO + P/N เหมือนกุญแจของ order ในแอป (id = poNo|pn) */
@@ -1737,6 +1737,21 @@ async function readCallInSheet(zip, path){
   }
   if(headerIdx < 0) return {error:'ไม่พบหัวตาราง "P/N" ในชีตนี้ — เลือกชีตให้ถูกก่อนครับ'};
 
+  /* ⚠️ คอลัมน์ Wip bal. ห้ามยึดตัวอักษรตายตัว — ไฟล์ของ Delta เคยแทรกคอลัมน์ใหม่เข้ามา
+   *    แล้วดันตำแหน่งจาก E ไป F มาแล้วจริง (พบ 3 ก.ย. 2026) ยึด E ต่อไปจะอ่านเลขของ
+   *    คอลัมน์ข้าง ๆ มาใส่เป็น Wip balance โดยไม่มีอะไรฟ้องเลย เพราะคอลัมน์ข้าง ๆ ก็มีเลขเหมือนกัน
+   *
+   *    หาโดยอ่านข้อความหัวตารางของ "แถวที่เจอจริง" ไม่ใช่แถว 1 เสมอ — Wip bal. อาจอยู่แถวอื่น
+   *    เทียบแบบผ่อนปรน ตัดช่องว่าง/จุด/ตัวพิมพ์ใหญ่เล็กทิ้งก่อน กัน "Wip bal." "WIP BAL" "Wip Balance"
+   *    ถือเป็นชื่อเดียวกัน · startsWith กันไว้เผื่อมีหน่วยต่อท้าย เช่น "Wip Bal (PCS)" */
+  const headerCells = cellsOf(rows[headerIdx]);
+  let wipCol = null;
+  for(const col in headerCells){
+    const norm = cellText(headerCells[col], shared).toLowerCase().replace(/[^a-z]/g, '');
+    if(norm.startsWith('wipbal')){ wipCol = col; break; }
+  }
+  if(!wipCol) return {error:'ไม่พบหัวตาราง "Wip bal." ในชีตนี้ — เลือกชีตให้ถูกก่อนครับ'};
+
   const items = [];
   for(let i=headerIdx+1;i<rows.length;i++){
     const cs = cellsOf(rows[i]);
@@ -1748,7 +1763,7 @@ async function readCallInSheet(zip, path){
       pn, po,
       id: po+'|'+pn,
       fileQty: Number(cellText(cs[CALLIN_COL.qty], shared)) || 0,
-      fileWip: cellText(cs[CALLIN_COL.wip], shared)
+      fileWip: cellText(cs[wipCol], shared)
     });
   }
   return {items};
