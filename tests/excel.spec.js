@@ -56,7 +56,112 @@ test('C1 + C3 — นำเข้าแผนแล้ววันที่ท�
   expect(a.subName).toBe('TUE-H');
   expect(a.id, 'กุญแจของ order คือ PO|P/N').toBe('TM5267H179|2870327301');
 
-  expect(got.find(o => o.poNo === 'TM5267H176').subName).toBe('TUE-U');
+  // แถวนี้คอลัมน์ C เขียนว่า TUE-U แต่รหัส PO มีตัว H — ตั้งแต่ 4 ก.ย. 2026 รหัส PO ชนะ
+  expect(got.find(o => o.poNo === 'TM5267H176').subName,
+    'Sub-Name ต้องมาจากตัวอักษรในรหัส PO ไม่ใช่คอลัมน์ C').toBe('TUE-H');
+});
+
+/* ── Sub-Name มาจากตัวอักษรในรหัส PO ───────────────────────────────────
+ *
+ * เจ้าของสั่ง 4 ก.ย. 2026 — คอลัมน์ C ไม่มีหัวตารางในไฟล์จริง จึงหาจากหัวตารางไม่ได้
+ * และสำรวจไฟล์จริงพบ 89 แถวที่คอลัมน์ C ขัดกับตัวอักษรใน PO
+ * เจ้าของยืนยันว่า "ตัวอักษรใน PO ถูก คอลัมน์ C พิมพ์ผิด" การเปลี่ยนนี้จึงเป็นการแก้ให้ถูก */
+test('Sub-Name อ่านจากตัวอักษรในรหัส PO — H เป็น TUE-H · U เป็น TUE-U', async ({ page }) => {
+  await openBlank(page);
+  // คอลัมน์ C ใส่ค่าที่ขัดกับรหัส PO ทุกแถว เพื่อพิสูจน์ว่ามันถูกเมินจริง
+  await upload(page, '#fileInput', await planWorkbook([
+    { pn: '1000000001', poNo: 'TM5267H179', orderDate: '2026-07-29', qty: 100, subName: 'TUE-U' },
+    { pn: '1000000002', poNo: 'TM5267U176', orderDate: '2026-07-29', qty: 200, subName: 'TUE-H' },
+    { pn: '1000000003', poNo: 'TM5267HH78', orderDate: '2026-07-29', qty: 300, subName: 'DLG-H' },
+    { pn: '1000000004', poNo: 'TM5267UU80', orderDate: '2026-07-29', qty: 400, subName: '' }
+  ]), 'แผน.xlsx');
+  await page.click('#btnParseSheet');
+  await expect(page.locator('#previewPanel')).toBeVisible();
+  await page.click('#btnConfirmImport');
+
+  const by = {};
+  (await orders(page)).forEach(o => { by[o.poNo] = o.subName; });
+  expect(by['TM5267H179']).toBe('TUE-H');
+  expect(by['TM5267U176']).toBe('TUE-U');
+  expect(by['TM5267HH78'], 'ตัวซ้ำก็ยังเป็นหน่วยเดียวกัน').toBe('TUE-H');
+  expect(by['TM5267UU80']).toBe('TUE-U');
+});
+
+test('รหัส PO ที่มีทั้ง U และ H หรือไม่มีเลย ต้องเว้นว่าง และเตือนก่อนนำเข้า', async ({ page }) => {
+  // ⚠️ เดาข้างใดข้างหนึ่งไม่ได้ — ใบส่งสินค้าแยกตามหน่วย เดาผิดแล้วของไปออกใบผิดหน่วย
+  //    โดยไม่มีใครรู้ ปล่อยว่างแล้วเตือน ดีกว่าเดาแล้วเงียบ
+  await openBlank(page);
+  await upload(page, '#fileInput', await planWorkbook([
+    { pn: '1000000001', poNo: 'TM5267HU79', orderDate: '2026-07-29', qty: 100 },  // มีทั้งคู่
+    { pn: '1000000002', poNo: 'TM5267XX76', orderDate: '2026-07-29', qty: 200 },  // ไม่มีเลย
+    { pn: '1000000003', poNo: 'TM5267H378', orderDate: '2026-07-29', qty: 300 }   // ปกติ
+  ]), 'แผน.xlsx');
+  await page.click('#btnParseSheet');
+  await expect(page.locator('#previewPanel')).toBeVisible();
+
+  await expect(page.locator('#previewSummary'), 'ต้องบอกจำนวนแถวที่บอกหน่วยไม่ได้')
+    .toContainText('2 รายการที่บอกหน่วยไม่ได้');
+  await expect(page.locator('#previewTable')).toContainText('หาไม่เจอ');
+
+  await page.click('#btnConfirmImport');
+  const by = {};
+  (await orders(page)).forEach(o => { by[o.poNo] = o.subName; });
+  expect(by['TM5267HU79'], 'มีทั้ง U และ H = ตัดสินไม่ได้').toBe('');
+  expect(by['TM5267XX76'], 'ไม่มีทั้งคู่ = ตัดสินไม่ได้').toBe('');
+  expect(by['TM5267H378'], 'แถวที่ชัดเจนต้องไม่พลอยเสียไปด้วย').toBe('TUE-H');
+});
+
+/* ── คอลัมน์อื่นหาจากหัวตาราง ไม่ใช่ตำแหน่งตายตัว ────────────────────────
+ *
+ * ไฟล์จริงมีสองผังปนกัน (สำรวจ 4 ก.ย. 2026)
+ *   WK 15+   L = Open Q'ty  · M/N/O = วันแผน
+ *   WK 1-14  L = Order Q'ty · M = Open Q'ty · N/O = Rev.
+ * โค้ดเดิมอ่าน L เป็นยอดและ M/N/O เป็นวันแผนตายตัว ผังเก่าจึงได้ยอดจากคนละช่อง
+ * และได้ "วันแผน" ที่แปลงมาจากตัวเลขจำนวน โดยไม่มีอะไรฟ้อง */
+test('ผังคอลัมน์เก่า — ยอดต้องมาจาก Open Q\'ty และวันแผนต้องว่าง ไม่ใช่วันที่มั่ว', async ({ page }) => {
+  await openBlank(page);
+  await upload(page, '#fileInput', await planWorkbook([
+    { pn: '1000000001', poNo: 'TM5267H179', orderDate: '2026-07-29', qty: 800, orderQtyOld: 999 }
+  ], { layout: 'old' }), 'แผนเก่า.xlsx');
+  await page.click('#btnParseSheet');
+  await expect(page.locator('#previewPanel')).toBeVisible();
+  await page.click('#btnConfirmImport');
+
+  const a = (await orders(page))[0];
+  expect(a.orderQty, "ต้องอ่านจากช่อง Open Q'ty ไม่ใช่ Order Q'ty ที่อยู่ซ้ายมือ").toBe(800);
+  expect(a.planWinding, 'ผังเก่าไม่มีคอลัมน์วันแผน ต้องเป็น null ไม่ใช่วันที่ที่แปลงจากตัวเลขจำนวน')
+    .toBeNull();
+  expect(a.planAssembly).toBeNull();
+  expect(a.planInspection).toBeNull();
+});
+
+test('แทรกคอลัมน์ใหม่เข้ามา ทุกช่องต้องยังอ่านถูก', async ({ page }) => {
+  await openBlank(page);
+  await upload(page, '#fileInput', await planWorkbook([
+    { pn: '1000000001', poNo: 'TM5267H179', orderDate: '2026-07-29', qty: 800,
+      planWinding: '2026-08-08', planAssembly: '2026-08-15', planInspection: '2026-08-22' }
+  ], { shift: 3 }), 'แผนเลื่อน.xlsx');
+  await page.click('#btnParseSheet');
+  await expect(page.locator('#previewPanel')).toBeVisible();
+  await page.click('#btnConfirmImport');
+
+  const a = (await orders(page))[0];
+  expect(a.pn).toBe('1000000001');
+  expect(a.orderQty).toBe(800);
+  expect(a.orderDate).toBe('2026-07-29');
+  expect(a.planWinding).toBe('2026-08-08');
+  expect(a.planInspection).toBe('2026-08-22');
+});
+
+test('ขาดคอลัมน์ที่จำเป็น ต้องฟ้อง ไม่ใช่เดาตำแหน่งแล้วนำเข้าผิดเงียบ ๆ', async ({ page }) => {
+  await openBlank(page);
+  await upload(page, '#fileInput', await planWorkbook([
+    { pn: '1000000001', poNo: 'TM5267H179', orderDate: '2026-07-29', qty: 800 }
+  ], { dropHead: ["Open Q'ty"] }), 'แผนขาดหัว.xlsx');
+  await page.click('#btnParseSheet');
+
+  await expect(page.locator('#toast'), 'ต้องบอกว่าขาดคอลัมน์ไหน').toContainText("Open Q'ty");
+  await expect(page.locator('#previewPanel'), 'และต้องไม่เปิดหน้าตรวจให้กดยืนยันต่อ').toBeHidden();
 });
 
 // เทสข้างบนรันบนเครื่องที่อยู่ UTC หรือ UTC+7 ซึ่งบังเอิญได้วันเดียวกันทั้งสองวิธีอ่าน

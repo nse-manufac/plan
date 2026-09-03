@@ -39,35 +39,64 @@ async function planWorkbook(rows, opts = {}) {
   ws.getCell('A4').value = 'Thai Union Electronics Co.,Ltd.';
   // ⚠️ ห้ามใช้ row.values = [...] — ExcelJS ตอนเขียนนับคอลัมน์จากศูนย์ แต่ตอนอ่านนับจากหนึ่ง
   //    เขียนแบบนั้นแล้วหัวตารางเลื่อนไปหนึ่งช่องเงียบ ๆ ใช้ getCell(n) ที่ n = A คือ 1 แทนเสมอ
+  /* ผังคอลัมน์ — ของจริงมีสองแบบปนกันอยู่ในไฟล์เดียว (สำรวจ 4 ก.ย. 2026)
+   *   'new' (ค่าเริ่มต้น) = WK 15 เป็นต้นมา · L = Open Q'ty · มีคอลัมน์วันแผน
+   *   'old'                = WK 1-14        · L = Order Q'ty · M = Open Q'ty · ไม่มีวันแผน
+   * opts.shift เลื่อนทุกคอลัมน์ไปทางขวา n ช่อง เลียนการแทรกคอลัมน์ใหม่เข้ามา
+   * opts.dropHead ตัดหัวตารางที่ระบุออก เพื่อทดสอบว่าโปรแกรมฟ้องแทนการเดา */
+  const shift = opts.shift || 0;
+  const old = opts.layout === 'old';
+  const at = n => n + shift;
+  const drop = new Set(opts.dropHead || []);
+  const put = (row, col, label, value) => {
+    if (label != null && drop.has(label)) return;
+    row.getCell(at(col)).value = value;
+  };
+
+  const HEAD = old
+    ? [[1,'No.'], [2,'Code'], [4,'OSC'], [5,'Pc delta'], [6,'P/N'], [7,'PO No.'], [8,'Order Date'],
+       [9,'Delta Req(ETD)'], [10,'VENDOR (ETA)'], [11,'Aging'], [12,"Order Q'ty"], [13,"Open Q'ty"],
+       [14,'Rev.'], [15,'Rev.'], [16,'Remark']]
+    // ⚠️ หัวจริงสะกดว่า "Winding/Trimmimg" (พิมพ์ตก) — ฟิกซ์เจอร์ต้องสะกดตามของจริง
+    //    ไม่งั้นเทสจะผ่านด้วยคำที่สวยกว่าไฟล์ที่ใช้งานอยู่จริง
+    : [[1,'No.'], [2,'Code'], [4,'OSC'], [5,'Pc delta'], [6,'P/N'], [7,'PO No.'], [8,'Order Date'],
+       [9,'Delta Req(ETD)'], [10,'VENDOR (ETA)'], [11,'Aging'], [12,"Open Q'ty"],
+       [13,'Winding/Trimmimg'], [14,'Assembly'], [15,'Inspection'], [16,'Plan Support']];
+
   const head = ws.getRow(7);
-  [[1,'No.'], [2,'Code'], [4,'OSC'], [5,'Pc delta'], [6,'P/N'], [7,'PO No.'], [8,'Order Date'],
-   [9,'Delta Req(ETD)'], [10,'VENDOR (ETA)'], [11,'Aging'], [12,"Open Q'ty"],
-   [13,'Plan Winding'], [14,'Plan Assembly'], [15,'Plan Inspection'], [16,'Plan Support']
-  ].forEach(([c, v]) => { head.getCell(c).value = v; });
-  ws.getRow(8).getCell(3).value = 'Sub-Name';
+  HEAD.forEach(([c, v]) => put(head, c, v, v));
+  ws.getRow(8).getCell(at(3)).value = 'Sub-Name';
+
+  const qtyCol = old ? 13 : 12;     // ช่อง "Open Q'ty" ของผังนั้น
 
   rows.forEach((r, i) => {
     const row = ws.getRow(9 + i);
-    row.getCell(1).value = i + 1;              // A: No.
-    row.getCell(2).value = r.code || '326570'; // B: Code
-    row.getCell(3).value = r.subName ?? 'TUE-H';
-    row.getCell(4).value = r.osc ?? 'Anatachai';
-    row.getCell(5).value = r.pc ?? 'Supawadee';
-    row.getCell(6).value = r.pn;               // F: P/N
-    row.getCell(7).value = r.poNo;             // G: PO No.
-    if (r.orderDate) row.getCell(8).value = new Date(r.orderDate + 'T00:00:00Z');
-    row.getCell(12).value = r.qty;             // L: Open Q'ty
-    if (r.planWinding) row.getCell(13).value = new Date(r.planWinding + 'T00:00:00Z');
-    if (r.planAssembly) row.getCell(14).value = new Date(r.planAssembly + 'T00:00:00Z');
-    if (r.planInspection) row.getCell(15).value = new Date(r.planInspection + 'T00:00:00Z');
-    if (r.planSupport) row.getCell(16).value = new Date(r.planSupport + 'T00:00:00Z');
+    put(row, 1, null, i + 1);                    // No.
+    put(row, 2, null, r.code || '326570');       // Code
+    // คอลัมน์ C ไม่มีหัวตารางในไฟล์จริง และตั้งแต่ 4 ก.ย. 2026 โปรแกรมไม่อ่านช่องนี้แล้ว
+    // ยังเขียนไว้เพื่อพิสูจน์ว่า "ถูกเมินจริง" แม้ค่าจะขัดกับตัวอักษรใน PO
+    put(row, 3, null, r.subName ?? 'TUE-H');
+    put(row, 4, null, r.osc ?? 'Anatachai');
+    put(row, 5, null, r.pc ?? 'Supawadee');
+    put(row, 6, null, r.pn);
+    put(row, 7, null, r.poNo);
+    if (r.orderDate) put(row, 8, null, new Date(r.orderDate + 'T00:00:00Z'));
+    put(row, qtyCol, null, r.qty);
+    if (old) {
+      if (r.orderQtyOld != null) put(row, 12, null, r.orderQtyOld);   // ช่อง Order Q'ty
+    } else {
+      if (r.planWinding) put(row, 13, null, new Date(r.planWinding + 'T00:00:00Z'));
+      if (r.planAssembly) put(row, 14, null, new Date(r.planAssembly + 'T00:00:00Z'));
+      if (r.planInspection) put(row, 15, null, new Date(r.planInspection + 'T00:00:00Z'));
+      if (r.planSupport) put(row, 16, null, new Date(r.planSupport + 'T00:00:00Z'));
+    }
   });
 
   // แถว TOTAL ที่ไฟล์จริงมี — โค้ดอ่านไว้เทียบว่ายอดรวมตรงกับที่นับเองไหม
   if (opts.total != null) {
     const t = ws.getRow(9 + rows.length + 1);
-    t.getCell(9).value = 'TOTAL';
-    t.getCell(12).value = opts.total;
+    put(t, 9, null, 'TOTAL');
+    put(t, qtyCol, null, opts.total);
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
