@@ -148,3 +148,44 @@ test('G1 — เลือกชีตผิดต้องขึ้นข้อ�
   await expect(page.locator('#toast'), 'ชีตที่ไม่มีหัวตาราง P/N ต้องขึ้นข้อความบอก').toContainText('P/N');
   await expect(page.locator('#callInPreviewPanel'), 'และต้องไม่เปิดหน้าผลเทียบให้ดูต่อ').toBeHidden();
 });
+
+// ── คอลัมน์ Wip bal. ต้องหาจากข้อความหัวตาราง ไม่ใช่ตัวอักษรตายตัว ────────────
+//
+// ของจริงเคยถูกแทรกคอลัมน์ใหม่เข้ามาจนเลื่อนจาก E ไป F มาแล้ว (พบ 3 ก.ย. 2026)
+// ถ้ายังยึด E ต่อไป จะอ่านเลขของคอลัมน์ Aging มาใส่เป็น Wip balance แบบเงียบ ๆ
+// เพราะ Aging ก็เป็นตัวเลขเหมือนกัน ไม่มีอะไรฟ้องว่าอ่านผิดคอลัมน์
+
+test('B1 — คอลัมน์ Wip bal. เลื่อนไปคอลัมน์อื่น ต้องยังอ่านค่าถูก ไม่ใช่ไปอ่านคอลัมน์ Aging', async ({ page }) => {
+  const rows = [{ pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 777, commit: 1 }];
+  await openWith(page, [order('PO-C041', '9100000041', 300)],
+    [shipped('S1', 'PO-C041|9100000041', 300)]);  // ยอดค้างของเราเป็น 0 → ไม่เท่า 777 แน่นอน
+  await scan(page, await callInWorkbook(rows, { wipCol: 6 }));  // F แทน E
+
+  await expect(page.locator('#callInPreviewPanel')).toBeVisible();
+  const text = await rowOf(page, 'PO-C041');
+  expect(text, 'ต้องอ่านได้ 777 จากคอลัมน์ F ไม่ใช่ค่าจากคอลัมน์ Aging ข้าง ๆ').toContain('777');
+});
+
+test('B2 — หัวตารางเขียนว่า Wip Balance (ไม่มีจุด ตัวพิมพ์ใหญ่ต่าง) ต้องยังจับคู่ได้แม้เลื่อนคอลัมน์ด้วย', async ({ page }) => {
+  // ผสมทั้งเลื่อนคอลัมน์และเปลี่ยนคำที่ใช้ — กันไม่ให้เทสผ่านเพราะบังเอิญคอลัมน์ตรงกับของเดิม (E)
+  const rows = [{ pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 555, commit: 1 }];
+  await openWith(page, [order('PO-C041', '9100000041', 300)],
+    [shipped('S1', 'PO-C041|9100000041', 300)]);
+  await scan(page, await callInWorkbook(rows, { wipCol: 6, wipHeader: 'WIP BALANCE' }));
+
+  await expect(page.locator('#callInPreviewPanel')).toBeVisible();
+  expect(await rowOf(page, 'PO-C041')).toContain('555');
+});
+
+test('B3 — ไม่มีหัวตาราง Wip bal. ในชีตเลย ต้องขึ้นข้อความบอก ไม่ใช่เดาคอลัมน์เอง', async ({ page }) => {
+  const rows = [{ pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 300, commit: 1 }];
+  await openWith(page, ORDERS);
+  await page.setInputFiles('#callInFileInput',
+    { name: 'callin.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer: await callInWorkbook(rows, { wipHeader: 'ยอดคงเหลือ' }) });
+  await expect(page.locator('#btnCallInScan')).toBeEnabled();
+  await page.click('#btnCallInScan');
+
+  await expect(page.locator('#toast'), 'ต้องบอกว่าหาหัวตาราง Wip bal. ไม่เจอ').toContainText('Wip bal.');
+  await expect(page.locator('#callInPreviewPanel')).toBeHidden();
+});
