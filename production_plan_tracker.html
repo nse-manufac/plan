@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-03.6">
+<meta name="app-version" content="2026-09-03.9">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -71,7 +71,34 @@
   .badge.amber{background:var(--amber-light);color:var(--amber);}
   .badge.red{background:var(--red-light);color:var(--red);}
   .badge.gray{background:var(--gray-light);color:var(--text-dim);}
-  tr.dn-group td{background:var(--gray-light);border-top:2px solid var(--border);}
+  .hint{color:var(--text-dim);font-size:11.5px;}
+  /* หน้าใบส่งสินค้า — เลียนหน้าตาของใบจริง (เจ้าของขอ 3 ก.ย. 2026 ว่าอ่านยาก)
+     ช่องที่ merge คร่อมทุกใบสั่งของ P/N เดียวกัน = ช่องที่ merge ไว้ในกระดาษ
+     เส้นหนาคั่นระหว่างกลุ่ม = เส้นตารางในกระดาษ ทำให้กวาดตาหากลุ่มได้เร็ว */
+  #dnTable td.dn-pn{background:var(--primary-light);vertical-align:middle;}
+  #dnTable td.dn-merge{background:var(--gray-light);vertical-align:middle;}
+  #dnTable tr.dn-group > td{border-top:2px solid var(--text-dim);}
+  /* หัวตารางสองแถว — แถวล่างต้องเลื่อนลงมาเท่าความสูงของแถวบน ไม่งั้นทับกันตอนเลื่อนดู
+     ค่า 31px เป็นค่าตั้งต้นเผื่อวัดความสูงจริงไม่ได้ (ตอนแท็บยังซ่อนอยู่ ความสูงเป็น 0)
+     renderDeliveryNote จะวัดแล้วเขียนทับให้ตรงกับฟอนต์และการซูมของเครื่องนั้น */
+  #dnTable thead tr:nth-child(2) th{top:31px;}
+  #dnTable thead th{white-space:nowrap;}
+  /* ตารางนี้มี 16 คอลัมน์ พื้นที่จึงตึงกว่าตารางอื่นมาก บีบช่องกรอกลงเฉพาะที่นี่
+     ไม่แตะ .row-input ตัวกลางที่แท็บบันทึกยอดรายวันใช้ร่วม
+     ⚠️ ต้องล้าง min-width ด้วย — กฎรวมของ input ตั้ง min-width:120px ไว้ ซึ่งชนะ width เสมอ
+        ทำให้ .row-input{width:70px} ไม่เคยมีผลจริงเลย ทุกช่องกว้าง 120px มาตลอด
+        ตั้ง width อย่างเดียวจึงไม่มีอะไรเปลี่ยน (เสียเวลาไปหนึ่งรอบกับเรื่องนี้)
+     บีบ padding ลงด้วย เพื่อให้ยอดห้าหลักยังอยู่ในช่องได้ */
+  #dnTable .row-input{width:70px;min-width:0;padding:6px;}
+  /* ⚠️ คอลัมน์หมายเหตุอยู่ท้ายสุดตามที่เจ้าของขอ แต่ตารางกว้างกว่ากรอบอยู่ราว 113px
+     (main ถูกจำกัดที่ max-width 1400px จอกว้างกว่านี้ก็ไม่ช่วย) คอลัมน์ท้ายจึงหลุดออกไป
+     ตรึงไว้ที่ขอบขวาแทน — ในนี้มีคำเตือน "เกิน" ที่เคยตายมาหลายเดือนจนปลุกกลับมาใน #49
+     ถ้าปล่อยให้ต้องเลื่อนไปหา ก็เท่ากับปล่อยให้มันตายอีกรอบ
+     ต้องระบุเป็นคลาส ไม่ใช่ :last-child เพราะช่องท้ายของหัวแถวล่างคือ "ตรวจบรรจุ" */
+  #dnTable .dn-note{position:sticky;right:0;border-left:2px solid var(--border);}
+  #dnTable thead .dn-note{background:var(--gray-light);z-index:3;}
+  #dnTable tbody .dn-note{background:var(--panel);z-index:1;}
+  tr.dn-group td{background:transparent;}
   tr.row-voided{opacity:.5;}
   tr.row-voided td{background:var(--gray-light);}
   .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:18px;}
@@ -3073,48 +3100,93 @@ function renderDeliveryNote(){
     // v === 0 ต้องโชว์เลข 0 ไม่ใช่ช่องว่าง เพราะเป็นค่าที่โปรแกรมคิดให้ ไม่ใช่ค่าที่ยังไม่มี
     const num = (f, v, ph) => `<input type="number" min="0" class="row-input dn-pack" data-f="${f}" data-pn="${pn}" value="${(v === '' || v == null) ? '' : v}" placeholder="${ph}">`;
 
-    // แถวหัวกลุ่ม = ยอดบรรจุของ P/N นี้ กรอกครั้งเดียวใช้ทั้งกลุ่ม เหมือนช่องที่ merge ในใบจริง
-    // กล่องกับเศษโปรแกรมคิดให้ แต่แก้ทับได้ถ้าแพ็คมาไม่ตรงกับที่หารได้
-    const head = `<tr class="dn-group">
-      <td colspan="4" class="left"><b>P/N ${pn}</b>
-        <span class="hint">· ${g.orders.length} ใบสั่ง</span>
-        <input type="text" class="row-input dn-pack" data-f="remark" data-pn="${pn}" value="${escapeHtml(g.remark)}"
-               style="margin-left:8px;width:200px" placeholder="Remark (ลงในใบ)"
-               title="ลงช่อง Remark ของใบส่งสินค้า เช่น NEW / RETURN / แพค 3 กล่องไม่เต็ม"></td>
-      <td>${num('perBox', g.perBox || '', 'ต่อกล่อง')}</td>
-      <td>${num('boxes', g.qty ? g.boxes : '', 'กล่อง')}</td>
-      <td>${num('remainder', g.qty ? g.remainder : '', 'เศษ')}</td>
-      <td data-pcs="${pn}"><b>${g.qty? numFmt(g.qty) : '—'}</b></td>
-      <td></td>
-      <td data-left="${pn}">${dnLeftCell(g)}</td>
-      <td></td>
-    </tr>`;
+    /* ⚠️ ช่องของ "กลุ่ม P/N" ใช้ rowspan คร่อมทุกใบสั่งของกลุ่ม ไม่ใช่แถวหัวกลุ่มลอยด้านบน
+     *
+     *    เจ้าของแจ้ง 3 ก.ย. 2026 ว่าพนักงานอ่านหน้านี้ยาก เพราะโครงบนจอไม่เหมือนกระดาษ
+     *    บนกระดาษ P/N เป็นคอลัมน์แรกของทุกบรรทัด และช่องบรรจุถูก merge คร่อมทั้งกลุ่ม
+     *    จอเดิมกลับเอา P/N ไปเป็นแถวพาดหัว แล้ววางช่องบรรจุไว้บนแถวนั้น
+     *    คนที่ถือกระดาษอยู่จึงต้องแปลโครงในหัวทุกครั้งที่กวาดตาหาบรรทัด
+     *
+     *    rowspan ให้ผลเหมือน merge บนกระดาษเป๊ะ ๆ และยังกรอกครั้งเดียวต่อกลุ่มเหมือนเดิม */
+    const span = g.orders.length;
+    const packCells =
+      `<td class="dn-merge" rowspan="${span}">${num('perBox', g.perBox || '', 'ต่อกล่อง')}</td>
+       <td class="dn-merge" rowspan="${span}">${num('boxes', g.qty ? g.boxes : '', 'กล่อง')}</td>
+       <td class="dn-merge" rowspan="${span}">${num('remainder', g.qty ? g.remainder : '', 'เศษ')}</td>
+       <td class="dn-merge" rowspan="${span}" data-pcs="${pn}"><b>${g.qty? numFmt(g.qty) : '—'}</b></td>
+       <td class="dn-merge" rowspan="${span}" data-left="${pn}">${dnLeftCell(g)}</td>
+       <td class="dn-merge" rowspan="${span}"><input type="text" class="row-input dn-pack" data-f="remark"
+              data-pn="${pn}" value="${escapeHtml(g.remark)}" style="width:88px" placeholder="Remark"
+              title="ลงช่อง Remark ของใบส่งสินค้า เช่น NEW / RETURN / แพค 3 กล่องไม่เต็ม"></td>`;
 
-    const rows = g.orders.map(({o, wip, alloc, deltaWip, deltaWeek, onlyDelta, wipBefore})=>{
-      return `<tr>
-        <td>${itemOf.get(o.id)}</td>
+    return g.orders.map(({o, wip, alloc, deltaWip, deltaWeek, onlyDelta, wipBefore}, i)=>{
+      const first = i === 0;
+      return `<tr${first ? ' class="dn-group"' : ''}>`
+        + (first ? `<td class="dn-pn left" rowspan="${span}"><b>${pn}</b>
+             <div class="hint">${span} ใบสั่ง</div></td>` : '')
+        + `<td>${itemOf.get(o.id)}</td>
         <td class="left">${escapeHtml(o.poNo)}</td>
         <td>${fmtDateTH(o.orderDate)}</td>
         <td>${numFmt(o.orderQty)}</td>
-        <td colspan="4" class="left hint">ค้างส่ง ${numFmt(wip)}${dnDeltaNote(deltaWip, deltaWeek)}</td>
+        <td data-ourwip="${escapeHtml(o.id)}">${numFmt(wip)}</td>
+        <td data-deltawip="${escapeHtml(o.id)}">${dnDeltaCell(deltaWip, deltaWeek, wip)}</td>
         <td><input type="number" min="0" class="row-input dn-alloc" data-order="${escapeHtml(o.id)}" data-pn="${pn}" value="${alloc||''}" placeholder="จำนวนที่ส่ง"></td>
-        <td class="hint" data-note="${escapeHtml(o.id)}">${dnRowNote(wipBefore, alloc, deltaWip, onlyDelta)}</td>
-        <td data-include="${escapeHtml(o.id)}">${dnIncludeCell(o.id, alloc)}</td>
-      </tr>`;
+        <td data-include="${escapeHtml(o.id)}">${dnIncludeCell(o.id, alloc)}</td>`
+        + (first ? packCells : '')
+        /* หมายเหตุอยู่ท้ายสุด (เจ้าของขอ 3 ก.ย. 2026) — ส่วนใหญ่ว่าง จึงไม่ควรไปคั่น
+         * ระหว่างช่องที่คนคีย์จริง แต่ยังต้องอยู่บนจอ เพราะในนี้มีคำเตือน "เกิน"
+         * ที่เคยตายมาหลายเดือนจนปลุกกลับมาใน #49 และป้ายบอกว่าแถวนี้โผล่มาเพราะ Delta */
+        + `<td class="hint dn-note" data-note="${escapeHtml(o.id)}">${dnRowNote(wipBefore, alloc, deltaWip, onlyDelta)}</td>`
+        + `</tr>`;
     }).join('');
-    return head + rows;
   }).join('');
 
+  /* หัวตารางสองแถว — แถวบนบอกว่ากลุ่มคอลัมน์นั้นตอบคำถามอะไร แถวล่างคือชื่อช่องจริง
+   * ลำดับคอลัมน์เรียงตามใบจริง P/N -> PO -> Order Date -> PO QTY -> Wip bal. -> บรรจุ -> Remark */
   document.getElementById('dnTable').innerHTML =
-    `<thead><tr><th style="width:44px">Item</th><th>PO No.</th>
-      <th style="width:100px">Order Date</th><th style="width:90px">PO QTY</th>
-      <th style="width:95px">ต่อกล่อง</th><th style="width:85px">กล่อง</th><th style="width:85px">เศษ</th>
-      <th style="width:110px">จำนวน/PCS</th><th style="width:200px">จำนวนที่ส่ง</th>
-      <th style="width:190px" title="ป้ายบอกว่ากลุ่มนี้ออกใบได้หรือยัง และแถวนี้มีอะไรต้องระวัง">สถานะ</th>
-      <th style="width:90px" title="ใบที่รอบนี้ไม่ได้ส่งของ แต่อยากให้ปรากฏบนกระดาษ">ใส่ในใบ</th></tr></thead>
-     <tbody>${html || emptyRow(11, dnQuery()
+    `<thead>
+      <tr>
+        <th rowspan="2" style="width:95px">P/N</th>
+        <th rowspan="2" style="width:44px" title="บรรทัดที่เท่าไหร่บนกระดาษ">Item</th>
+        <th rowspan="2">PO No.</th>
+        <th rowspan="2" style="width:92px">Order Date</th>
+        <th rowspan="2" style="width:80px">PO QTY</th>
+        <th colspan="2" title="ยอดค้างส่ง — เทียบบัญชีเรากับไฟล์ Call In ของ Delta">Wip bal. · ยอดค้างส่ง</th>
+        <th rowspan="2" style="width:76px">จำนวนที่ส่ง</th>
+        <th rowspan="2" style="width:70px" title="ใบที่รอบนี้ไม่ได้ส่งของ แต่อยากให้ปรากฏบนกระดาษ">ใส่ในใบ</th>
+        <th colspan="5" title="กรอกครั้งเดียวใช้ทั้งกลุ่ม P/N เหมือนช่องที่ merge ไว้ในใบจริง">บรรจุ · ทั้งกลุ่ม P/N</th>
+        <th rowspan="2" style="width:96px" title="ลงช่อง Remark ของใบส่งสินค้า">Remark</th>
+        <th rowspan="2" class="dn-note" style="width:1%" title="แถวนี้มีอะไรต้องระวัง">หมายเหตุ</th>
+      </tr>
+      <tr>
+        <th style="width:85px" title="ยอดสั่ง ลบ ยอดที่ส่งไปแล้ว ตามบัญชีเรา — ตัวที่คุมว่ารอบนี้ส่งได้เท่าไหร่">ของเรา</th>
+        <th style="width:86px" title="ยอดที่ Delta บันทึกว่าเรายังค้างเขาอยู่ — ตัวนี้คือเลขที่พิมพ์ลงกระดาษ">Delta</th>
+        <th style="width:70px">ต่อกล่อง</th>
+        <th style="width:64px">กล่อง</th>
+        <th style="width:64px">เศษ</th>
+        <th style="width:78px">จำนวน/PCS</th>
+        <th style="width:72px" title="กลุ่มนี้ออกใบได้หรือยัง">ตรวจบรรจุ</th>
+      </tr>
+     </thead>
+     <tbody>${html || emptyRow(16, dnQuery()
         ? `ไม่พบ P/N หรือ PO ที่ตรงกับ "${escapeHtml(dnQuery())}" ในหน่วยนี้`
         : 'หน่วยนี้ไม่มีใบที่ค้างส่งแล้ว')}</tbody>`;
+
+  /* หัวตารางแถวล่างต้องเลื่อนลงมาเท่าความสูงของแถวบน ไม่งั้นสองแถวทับกันตอนเลื่อนดู
+   * วัดจากของจริงเพราะความสูงเปลี่ยนตามฟอนต์และการซูมของเครื่องแต่ละคน
+   *
+   * ⚠️ ห้ามวัดจาก th ตัวแรกของแถวบน — ตัวนั้นเป็น rowspan="2" ความสูงที่ได้จึงเป็น
+   *    ของสองแถวรวมกัน แถวล่างจะถูกดันลงไปทับแถวข้อมูลแถวแรก (พลาดมาแล้วรอบหนึ่ง)
+   *    วัดจากระยะของแถวล่างเทียบกับขอบบนของตารางแทน = ความสูงของแถวบนพอดี
+   *
+   * ล้าง top ที่เคยตั้งไว้ก่อนวัด ไม่งั้นรอบถัดไปจะวัดทับค่าของรอบก่อน
+   * แท็บที่ยังซ่อนอยู่วัดได้ 0 — กรณีนั้นปล่อยให้ใช้ค่าตั้งต้นใน CSS ไป */
+  const tbl = document.getElementById('dnTable');
+  const leaf = Array.from(tbl.querySelectorAll('thead tr:nth-child(2) th'));
+  leaf.forEach(th=> th.style.top = '0px');
+  const rowTop = leaf.length
+    ? leaf[0].getBoundingClientRect().top - tbl.getBoundingClientRect().top : 0;
+  if(rowTop > 0) leaf.forEach(th=> th.style.top = rowTop + 'px');
 
   renderDnSummary();
   bindDnInputs();
@@ -3185,13 +3257,25 @@ function dnRowNote(wipBefore, alloc, deltaWip, onlyDelta){
 }
 
 /** บอกว่าเลขที่จะลงกระดาษมาจากไหน — คนคีย์ต้องรู้ก่อนกดออกใบ ไม่ใช่รู้ตอนใบถึงมือลูกค้า */
-function dnDeltaNote(deltaWip, deltaWeek){
+/** ช่องยอดค้างฝั่ง Delta — คู่กับช่องยอดค้างของเราที่อยู่ติดกันซ้ายมือ
+ *
+ *  เจ้าของขอให้แยกเป็นสองคอลัมน์เทียบกัน (3 ก.ย. 2026) แทนป้ายต่อท้ายบรรทัดเดิม
+ *  เพราะเลขฝั่ง Delta คือตัวที่พิมพ์ลงกระดาษ ส่วนเลขฝั่งเราคือตัวที่คุมว่าส่งได้เท่าไหร่
+ *  วางคู่กันแล้วเห็นทันทีว่าสองฝั่งห่างกันอยู่หรือเปล่า โดยไม่ต้องเปิดหน้ายอดคงคลัง FG
+ *
+ *  ⚠️ ไม่ตรงกันไม่ใช่ความผิดพลาด และห้ามกันการออกใบ — Delta ตัดยอดช้ากว่าเราเป็นเรื่องปกติ */
+function dnDeltaCell(deltaWip, deltaWeek, ourWip){
   if(deltaWip == null){
-    return ` <span class="badge amber" title="ไม่มีใบนี้ในไฟล์ Call In ของ Delta — ช่อง Wip bal. บนกระดาษจะเว้นว่าง">`
+    return `<span class="badge amber" title="ไม่มีใบนี้ในไฟล์ Call In ของ Delta — ช่อง Wip bal. บนกระดาษจะเว้นว่าง">`
          + `ไม่มียอด Delta</span>`;
   }
-  return ` <span class="badge gray" title="เลขที่จะพิมพ์ลงช่อง Wip bal. ของใบส่งสินค้า">`
-       + `Delta ${numFmt(deltaWip)}${deltaWeek? ' · wk'+escapeHtml(deltaWeek) : ''}</span>`;
+  const wk = deltaWeek ? `<div class="hint">wk${escapeHtml(deltaWeek)}</div>` : '';
+  const diff = (Number(deltaWip) || 0) - (Number(ourWip) || 0);
+  const style = diff === 0 ? '' : ' style="color:var(--amber)"';
+  const tip = diff === 0
+    ? 'ตรงกับยอดค้างของเรา'
+    : `ต่างจากยอดค้างของเรา ${diff > 0 ? '+' : ''}${numFmt(diff)} — Delta ตัดยอดช้ากว่าเราได้ ไม่ใช่ความผิดพลาด`;
+  return `<b${style} title="${tip}">${numFmt(deltaWip)}</b>${wk}`;
 }
 
 /** ช่องสถานะของกลุ่ม — ตัวเลขที่คนต้องมองก่อนกดออกใบ

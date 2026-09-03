@@ -66,7 +66,7 @@ const ships = st => st.records.filter(r => r.process === 'shipping' && !r.voided
 
 test('จัดกลุ่มตาม P/N — ยอดบรรจุกรอกครั้งเดียวต่อกลุ่ม ไม่ใช่ต่อใบสั่ง', async ({ page }) => {
   await open(page);
-  expect(await page.locator('#dnTable tr.dn-group').count(), 'สอง P/N = สองหัวกลุ่ม').toBe(2);
+  expect(await page.locator('#dnTable tr.dn-group').count(), 'สอง P/N = สองจุดเริ่มกลุ่ม').toBe(2);
   expect(await page.locator('#dnTable input.dn-pack[data-f="perBox"]').count(),
     'ช่องต่อกล่องต้องมีกลุ่มละช่องเดียว ไม่ใช่ใบสั่งละช่อง').toBe(2);
   expect(await page.locator('#dnTable input.dn-alloc').count(), 'ช่องตัดเข้าใบมีทุกใบสั่ง').toBe(3);
@@ -306,32 +306,76 @@ const deltaRow = (orderId, week, wip) => ({
  * เพราะหัวตารางไม่มีคอลัมน์ให้ป้ายสถานะ แต่ทุกแถวมีช่องนั้นอยู่
  * พนักงานที่อ่านหัวตารางแล้วคีย์ตามจึงกรอกผิดช่องได้ง่าย
  *
- * เทสนี้วัดจากตำแหน่งจริงบนจอ ไม่ได้นับ index ของ td เพราะ colspan ทำให้นับพลาด */
+ * เทสนี้วัดจากตำแหน่งจริงบนจอ ไม่ได้นับ index ของ td เพราะ colspan/rowspan ทำให้นับพลาด
+ *
+ * ⚠️ หัวตารางมีสองชั้น (หัวกลุ่มด้านบน + ชื่อช่องจริงด้านล่าง) ต้องเทียบกับ "ชั้นล่างสุด"
+ *    ที่คร่อมตำแหน่งนั้น ไม่ใช่ตัวแรกที่เจอ ไม่งั้นจะได้ชื่อหัวกลุ่มอย่าง "บรรจุ · ทั้งกลุ่ม P/N"
+ *    มาแทนชื่อช่องจริง แล้วเทสจะไม่ได้ตรวจสิ่งที่ตั้งใจตรวจเลย */
 test('หัวตารางตรงคอลัมน์กับช่องกรอกและป้ายสถานะ', async ({ page }) => {
   await open(page, [ORDERS[0]]);
   const map = await page.evaluate(() => {
     const t = document.getElementById('dnTable');
-    const ths = [...t.querySelectorAll('thead th')];
+    const rows = [...t.querySelectorAll('thead tr')];
+    const ths = [];
+    rows.forEach((tr, depth) => [...tr.children].forEach(th => ths.push({ th, depth })));
     const headAt = x => {
-      const h = ths.find(h => { const b = h.getBoundingClientRect(); return x >= b.left && x < b.right; });
-      return h ? h.textContent.trim() : '';
+      const hit = ths.filter(({ th }) => { const b = th.getBoundingClientRect(); return x >= b.left && x < b.right; });
+      if(!hit.length) return '';
+      return hit.reduce((a, b) => b.depth > a.depth ? b : a).th.textContent.trim();
     };
-    const headOf = el => { const b = el.getBoundingClientRect(); return headAt(b.left + b.width / 2); };
+    const headOf = sel => {
+      const el = t.querySelector(sel);
+      if(!el) return '(ไม่พบช่อง)';
+      const b = el.getBoundingClientRect();
+      return headAt(b.left + b.width / 2);
+    };
+    // จำนวนคอลัมน์จริง = ผลรวม colspan ของหัวแถวบน
+    const cols = [...rows[0].children].reduce((n, th) => n + (Number(th.colSpan) || 1), 0);
     return {
-      cols: ths.length,
-      alloc: headOf(t.querySelector('input.dn-alloc')),
-      perBox: headOf(t.querySelector('input.dn-pack[data-f="perBox"]')),
-      pcs: headOf(t.querySelector('[data-pcs]')),
-      status: headOf(t.querySelector('[data-left]')),
-      include: headOf(t.querySelector('input.dn-include, input[type=checkbox]'))
+      cols,
+      bodyCells: t.querySelector('tbody tr').children.length,
+      pn: headOf('td.dn-pn'),
+      ourWip: headOf('td[data-ourwip]'),
+      deltaWip: headOf('td[data-deltawip]'),
+      alloc: headOf('input.dn-alloc'),
+      perBox: headOf('input.dn-pack[data-f="perBox"]'),
+      pcs: headOf('[data-pcs]'),
+      status: headOf('[data-left]'),
+      include: headOf('td[data-include]'),
+      remark: headOf('input.dn-pack[data-f="remark"]')
     };
   });
-  expect(map.cols).toBe(11);
+  expect(map.cols, 'หัวตารางต้องประกาศ 16 คอลัมน์').toBe(16);
+  expect(map.bodyCells, 'แถวแรกของกลุ่มถือครบทุกคอลัมน์ รวมช่องที่ merge').toBe(16);
+  expect(map.pn, 'P/N ต้องเป็นคอลัมน์ ไม่ใช่แถวพาดหัว').toBe('P/N');
+  expect(map.ourWip).toBe('ของเรา');
+  expect(map.deltaWip).toBe('Delta');
   expect(map.alloc).toBe('จำนวนที่ส่ง');
   expect(map.perBox).toBe('ต่อกล่อง');
   expect(map.pcs).toBe('จำนวน/PCS');
-  expect(map.status).toBe('สถานะ');
+  expect(map.status).toBe('ตรวจบรรจุ');
   expect(map.include).toBe('ใส่ในใบ');
+  expect(map.remark).toBe('Remark');
+});
+
+/* ── ยอดค้างสองฝั่งต้องอยู่คนละคอลัมน์ และ merge ต้องคร่อมทั้งกลุ่ม ──────
+ * เจ้าของขอ 3 ก.ย. 2026 ให้หน้าจออ่านเหมือนกระดาษ */
+test('P/N กับช่องบรรจุต้อง merge คร่อมทุกใบสั่งของกลุ่ม เหมือนช่องที่ merge ในใบจริง', async ({ page }) => {
+  await open(page);   // PN_B มีสองใบสั่ง · PN_A มีใบเดียว
+  const got = await page.evaluate(pnB => {
+    const t = document.getElementById('dnTable');
+    const pnCell = [...t.querySelectorAll('td.dn-pn')].find(td => td.textContent.includes(pnB));
+    return {
+      pnRowSpan: pnCell ? pnCell.rowSpan : 0,
+      packRowSpan: t.querySelector('td[data-pcs]').rowSpan,
+      groupStarts: t.querySelectorAll('tbody tr.dn-group').length,
+      bodyRows: t.querySelectorAll('tbody tr').length
+    };
+  }, PN_B);
+  expect(got.pnRowSpan, 'P/N ที่มีสองใบสั่ง ต้องคร่อมสองแถว').toBe(2);
+  expect(got.packRowSpan, 'ช่องบรรจุต้องคร่อมเท่ากับจำนวนใบสั่งของกลุ่ม').toBe(2);
+  expect(got.groupStarts, 'สอง P/N = สองจุดเริ่มกลุ่ม').toBe(2);
+  expect(got.bodyRows, 'ต้องมีแถวเท่าจำนวนใบสั่ง ไม่มีแถวพาดหัวเพิ่มมาอีก').toBe(3);
 });
 
 /** เปิดหน้าใบส่งสินค้าพร้อมยอดของ Delta ที่เตรียมไว้ */
@@ -392,7 +436,40 @@ test('ตัดยอดเข้าใบเกินยอดสั่ง ต�
 
   const row = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-X1' }).innerText();
   expect(row, 'สั่ง 1,000 ตัดเข้าใบ 3,000 ต้องเตือน').toContain('เกิน');
-  expect(row, 'และยอดค้างก่อนส่งต้องเป็น 1,000 ไม่ใช่ 3,000').toContain('ค้างส่ง 1,000');
+  expect(await page.locator(`#dnTable td[data-ourwip="PO-X1|${PN_B}"]`).innerText(),
+    'และยอดค้างก่อนส่งต้องเป็น 1,000 ไม่ใช่ 3,000').toBe('1,000');
+});
+
+/* ── คำเตือนท้ายแถวต้องอยู่ในกรอบที่มองเห็น ไม่ใช่ต้องเลื่อนไปหา ──────────
+ *
+ * เจ้าของขอ 3 ก.ย. 2026 ให้ย้ายคอลัมน์หมายเหตุไปท้ายสุด แต่ตารางกว้างกว่ากรอบ
+ * (main ถูกจำกัดที่ max-width 1400px จอกว้างกว่านี้ก็ไม่ช่วย) คอลัมน์ท้ายจึงหลุดออกไป
+ * วัดได้ตอนนั้นว่าเลยขอบขวาไป 113px — คำเตือน "เกิน" มองไม่เห็นเลยถ้าไม่เลื่อน
+ *
+ * ป้ายในคอลัมน์นี้เคยตายมาหลายเดือนจนปลุกกลับมาใน #49 การปล่อยให้มันอยู่นอกจอ
+ * มีผลเท่ากับตายอีกรอบ เทสนี้จึงวัด "ตำแหน่งจริงบนจอ" ไม่ใช่แค่ว่ามีข้อความอยู่ใน DOM */
+test('คำเตือนท้ายแถวต้องอยู่ในกรอบที่มองเห็น แม้ตารางจะกว้างกว่าจอ', async ({ page }) => {
+  // ⚠️ ต้องแคบพอที่ตารางจะล้นจริง — หลังบีบความกว้างคอลัมน์แล้ว 1280 พอดีกรอบ
+  //    เทสนี้เคยตั้งไว้ 1280 แล้วกลายเป็นไม่ได้ตรวจอะไรเลย (assert ด้านล่างจับได้)
+  await page.setViewportSize({ width: 900, height: 900 });
+  await open(page, [order('PO-X1', PN_B, 1000, '2026-08-03')]);
+  await alloc(page, 'PO-X1|' + PN_B, 3000);                   // เกินยอดค้าง -> ต้องขึ้นป้าย
+
+  const seen = await page.evaluate(() => {
+    const wrap = document.querySelector('#view-delivery .table-wrap');
+    const note = document.querySelector('#dnTable td.dn-note');
+    if(!note) return { err: 'ไม่พบช่องหมายเหตุ' };
+    const n = note.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+    return {
+      text: note.innerText.trim(),
+      tableOverflows: wrap.scrollWidth > wrap.clientWidth,
+      beyondRight: Math.round(n.right - w.right)
+    };
+  });
+  expect(seen.text, 'ป้ายเตือนต้องมีอยู่จริง').toContain('เกิน');
+  expect(seen.tableOverflows, 'ตั้งใจให้ตารางกว้างกว่ากรอบ ไม่งั้นเทสนี้ไม่ได้ตรวจอะไร').toBe(true);
+  expect(seen.beyondRight,
+    'ช่องหมายเหตุต้องไม่ล้นออกไปนอกกรอบ — ต้องถูกตรึงไว้ที่ขอบขวา').toBeLessThanOrEqual(1);
 });
 
 test('ตัดยอดพอดียอดสั่ง ต้องไม่เตือน', async ({ page }) => {
