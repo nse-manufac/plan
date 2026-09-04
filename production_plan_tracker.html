@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-04.4">
+<meta name="app-version" content="2026-09-04.5">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -273,6 +273,10 @@
       <div class="field">
         <label>สัปดาห์</label>
         <select id="entryWeekFilter"><option value="">ทั้งหมด</option></select>
+      </div>
+      <div class="field">
+        <label>Sub-Name</label>
+        <select id="entrySubFilter" style="min-width:120px"><option value="">ทั้งหมด</option></select>
       </div>
       <div class="field">
         <label>&nbsp;</label>
@@ -2217,6 +2221,7 @@ function renderEntryTable(){
   const date = dateEl.value || todayISO();
   const search = document.getElementById('entrySearch').value.trim().toLowerCase();
   const weekFilter = document.getElementById('entryWeekFilter').value;
+  const subFilter = document.getElementById('entrySubFilter').value;
   const hideDone = document.getElementById('entryHideDone').checked;
 
   const allCum = buildCumMap(state.records);
@@ -2226,6 +2231,11 @@ function renderEntryTable(){
 
   let orders = state.orders.filter(o=>o.status!=='closed');
   if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
+  /* ⚠️ เทียบข้อความตรงตัวเหมือนหน้าอื่น — ห้ามเดาหน่วยจากรหัส PO ตรงนี้
+   *    subNameFromPo() เป็นของ "ตอนนำเข้า" เท่านั้น ถ้าเอามาใช้ตอนกรองด้วย
+   *    ใบที่ตัดสินจากรหัส PO ไม่ได้ (ซึ่งตั้งใจให้ Sub-Name ว่าง) จะโผล่มาผิดกลุ่ม
+   *    และจะไม่ตรงกับที่หน้า Dashboard กับใบส่งสินค้ากรอง */
+  if(subFilter) orders = orders.filter(o=>o.subName===subFilter);
   if(search) orders = orders.filter(o=> String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
   orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week) || (a.orderDate||'').localeCompare(b.orderDate));
 
@@ -2697,6 +2707,9 @@ function renderChart(){
 function renderDashFilterOptions(){
   fillSelect('dashWeekFilter', uniqueSorted(state.orders.map(o=>o.week)));
   fillSelect('entryWeekFilter', uniqueSorted(state.orders.map(o=>o.week)));
+  // รายชื่อมาจากข้อมูลจริง ไม่ fix ไว้ — โรงงานเพิ่มหน่วยใหม่แล้วต้องโผล่เอง
+  // เหมือนที่หน้า Dashboard กับหน้ายอดคงคลัง FG ทำอยู่
+  fillSelect('entrySubFilter', uniqueSorted(state.orders.map(o=>o.subName)));
   fillSelect('dashSubFilter', uniqueSorted(state.orders.map(o=>o.subName)));
 }
 
@@ -3769,6 +3782,7 @@ PROCESSES.forEach(p=>{
 document.getElementById('entryDate').addEventListener('change', renderEntryTable);
 document.getElementById('entrySearch').addEventListener('input', renderEntryTable);
 document.getElementById('entryWeekFilter').addEventListener('change', renderEntryTable);
+document.getElementById('entrySubFilter').addEventListener('change', renderEntryTable);
 document.getElementById('entryHideDone').addEventListener('change', renderEntryTable);
 
 document.getElementById('recFilterDate').addEventListener('change', renderRecordEditor);
