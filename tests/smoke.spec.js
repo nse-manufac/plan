@@ -286,6 +286,70 @@ test('F4 + F2 — เช็กรุ่นไม่ได้ (เน็ตหล
   await expect(page.locator('#updateBadge'), 'เช็กไม่ได้ = ห้ามเดาว่ามีรุ่นใหม่').toBeHidden();
 });
 
+/* ── ตัวกรอง Sub-Name ที่หน้าบันทึกยอดรายวัน ────────────────────────────
+ * ผู้ใช้ขอ 4 ก.ย. 2026 — คีย์ยอดทีละหน่วยจะได้ไม่ต้องเลื่อนผ่านใบของหน่วยอื่น */
+
+const ENTRY_SUB_ORDERS = [
+  { id: 'H1', week: 'W31', poNo: 'TM5267H179', pn: 'PN-1', subName: 'TUE-H', orderQty: 100,
+    orderDate: '2026-08-01', status: 'active',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false },
+  { id: 'U1', week: 'W31', poNo: 'TM5267U176', pn: 'PN-2', subName: 'TUE-U', orderQty: 200,
+    orderDate: '2026-08-02', status: 'active',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false },
+  // ⚠️ ใบที่ Sub-Name ว่าง (รหัส PO ตัดสินไม่ได้) ต้องไม่ไปโผล่ในกลุ่มไหน
+  { id: 'X1', week: 'W31', poNo: 'TM5267HU80', pn: 'PN-3', subName: '', orderQty: 300,
+    orderDate: '2026-08-03', status: 'active',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false },
+  /* ⚠️ ใบที่ค่าที่เก็บไว้ "ขัดกับ" ตัวอักษรใน PO — รหัสมี H แต่ Sub-Name เป็น TUE-U
+   *    เป็นสภาพจริงของใบที่นำเข้าก่อน 4 ก.ย. 2026 และยังไม่ได้กดปุ่มคำนวณใหม่
+   *    ตัวกรองต้องใช้ "ค่าที่เก็บไว้" ให้ตรงกับหน้า Dashboard และใบส่งสินค้า
+   *    ถ้าไปเดาจากรหัส PO ตรงนี้ ใบเดียวกันจะอยู่คนละกลุ่มในแต่ละหน้า */
+  { id: 'D1', week: 'W31', poNo: 'TM5267H901', pn: 'PN-4', subName: 'TUE-U', orderQty: 400,
+    orderDate: '2026-08-04', status: 'active',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false }
+];
+
+test('หน้าบันทึกยอดรายวันกรองตาม Sub-Name ได้', async ({ page }) => {
+  await openApp(page, [], ENTRY_SUB_ORDERS);
+  await gotoEntry(page);
+
+  const pos = () => page.$$eval('#entryTable tbody tr td:nth-child(3)',
+    t => t.map(x => x.innerText.trim()));
+  const opts = await page.$$eval('#entrySubFilter option', o => o.map(x => x.value));
+  expect(opts, 'รายชื่อต้องมาจากข้อมูลจริง ไม่ fix ไว้ในโค้ด')
+    .toEqual(['', 'TUE-H', 'TUE-U']);
+
+  expect(await pos(), 'ยังไม่กรอง ต้องเห็นครบทุกใบ')
+    .toEqual(['TM5267H179', 'TM5267U176', 'TM5267HU80', 'TM5267H901']);
+
+  await page.selectOption('#entrySubFilter', 'TUE-H');
+  await page.waitForTimeout(150);
+  expect(await pos(), 'เลือก TUE-H ต้องเหลือเฉพาะใบของหน่วยนั้น')
+    .toEqual(['TM5267H179']);
+
+  await page.selectOption('#entrySubFilter', 'TUE-U');
+  await page.waitForTimeout(150);
+  expect(await pos(), 'ต้องใช้ค่าที่เก็บไว้ ไม่ใช่เดาจากรหัส PO — และใบที่ว่างต้องไม่ปนมา')
+    .toEqual(['TM5267U176', 'TM5267H901']);
+
+  await page.selectOption('#entrySubFilter', '');
+  await page.waitForTimeout(150);
+  expect((await pos()).length, 'เลือกทั้งหมดแล้วต้องกลับมาครบ').toBe(4);
+});
+
+test('ตัวกรอง Sub-Name ใช้ร่วมกับตัวกรองอื่นได้ ไม่ทับกัน', async ({ page }) => {
+  await openApp(page, [], ENTRY_SUB_ORDERS);
+  await gotoEntry(page);
+
+  await page.selectOption('#entrySubFilter', 'TUE-H');
+  await page.fill('#entrySearch', 'PN-2');       // PN-2 เป็นของ TUE-U
+  await page.waitForTimeout(150);
+
+  const rows = await page.$$eval('#entryTable tbody tr td:nth-child(3)',
+    t => t.map(x => x.innerText.trim()));
+  expect(rows, 'สองตัวกรองต้องตัดร่วมกัน ไม่ใช่ตัวใดตัวหนึ่งชนะ').toEqual([]);
+});
+
 /** เข้าหน้า Dashboard แล้วรอให้ตารางสถานะขึ้นครบ */
 async function gotoDashboard(page) {
   await page.click('.tab-btn[data-tab="dashboard"]');
