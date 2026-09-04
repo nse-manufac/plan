@@ -253,3 +253,88 @@ test('G1 — ปุ่ม Export ต้องได้ไฟล์ Excel สอ�
   const body = wip.slice(1).map(r => String(r[wip[0].indexOf('PO No.')]));
   expect(body.sort(), 'ทุกใบที่นำเข้าต้องอยู่ในไฟล์').toEqual(['TM5267H176', 'TM5267H179', 'TM5267H378']);
 });
+
+
+/* ── ปุ่มคำนวณ Sub-Name ใหม่จากรหัส PO ────────────────────────────────
+ *
+ * ของที่นำเข้าไว้ก่อน 4 ก.ย. 2026 ได้ Sub-Name จากคอลัมน์ C ซึ่งมีที่พิมพ์ผิดปนอยู่
+ * สำรวจไฟล์จริงพบ 84 แถว (ไม่นับ DLG-H อีก 498) ที่ขัดกับตัวอักษรใน PO
+ * ปุ่มนี้แก้ให้โดยไม่ต้องนำเข้าไฟล์ซ้ำ ซึ่งจะทับยอดสั่งกับวันแผนไปด้วย */
+
+const seedOrders = (page, orders) => page.addInitScript(([k, o]) => {
+  localStorage.setItem(k, JSON.stringify({
+    version: 1, deviceName: 't',
+    deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
+    chartPref: { mode: '14', from: '', to: '' },
+    orders: o, records: [], deliveryNotes: [], importHistory: []
+  }));
+}, [K_STATE, orders]);
+
+const ord = (poNo, subName, extra = {}) => Object.assign({
+  id: poNo + '|9000000001', poNo, pn: '9000000001', subName, week: 'WK 30',
+  orderQty: 1000, orderDate: '2026-08-01', planWinding: '2026-08-08',
+  status: 'active', importedAt: '2026-08-01T00:00:00.000Z',
+  updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false
+}, extra);
+
+test('ปุ่มคำนวณ Sub-Name ใหม่ — แก้ที่พิมพ์ผิด แตะเฉพาะช่อง Sub-Name', async ({ page }) => {
+  await seedOrders(page, [
+    ord('TM5267H179', 'TUE-U'),   // คอลัมน์ C ผิด -> ต้องเป็น TUE-H
+    ord('TM5267U176', 'TUE-H'),   // คอลัมน์ C ผิด -> ต้องเป็น TUE-U
+    ord('TM5267H378', 'TUE-H'),   // ถูกอยู่แล้ว
+    ord('TM5267HU80', 'TUE-H')    // ตัดสินไม่ได้ -> ห้ามแตะ
+  ]);
+  await page.goto(APP);
+  await page.waitForSelector('.tab-btn[data-tab="data"]');
+  await page.click('.tab-btn[data-tab="data"]');
+  page.on('dialog', d => d.accept());
+  await page.click('#btnRecalcSubName');
+  await page.waitForTimeout(300);
+
+  const got = {};
+  (await orders(page)).forEach(o => { got[o.poNo] = o; });
+  expect(got['TM5267H179'].subName, 'PO มี H ต้องเป็น TUE-H').toBe('TUE-H');
+  expect(got['TM5267U176'].subName, 'PO มี U ต้องเป็น TUE-U').toBe('TUE-U');
+  expect(got['TM5267H378'].subName, 'ที่ถูกอยู่แล้วต้องคงเดิม').toBe('TUE-H');
+  expect(got['TM5267HU80'].subName,
+    'ตัดสินไม่ได้ต้องไม่แตะ ไม่ใช่ล้างเป็นค่าว่าง ไม่งั้นใบนี้จะหายจากหน้าใบส่งสินค้า').toBe('TUE-H');
+
+  // ⚠️ ห้ามแตะอย่างอื่น — นี่คือเหตุผลที่มีปุ่มนี้แทนการให้ไปนำเข้าไฟล์ซ้ำ
+  const a = got['TM5267H179'];
+  expect(a.orderQty, 'ยอดสั่งต้องไม่ถูกแตะ').toBe(1000);
+  expect(a.orderDate).toBe('2026-08-01');
+  expect(a.planWinding, 'วันแผนต้องไม่ถูกแตะ').toBe('2026-08-08');
+
+  expect(got['TM5267H378'].updatedAt,
+    'ใบที่ไม่ได้เปลี่ยน ต้องไม่ถูกทำให้ dirty ให้ซิงค์ขึ้นไปโดยไม่จำเป็น')
+    .toBe('2026-08-01T00:00:00.000Z');
+  expect(a._dirty, 'ใบที่เปลี่ยนต้องถูกทำเครื่องหมายให้ซิงค์').toBe(true);
+});
+
+test('ไม่มีใบไหนต้องเปลี่ยน ต้องบอกแล้วจบ ไม่ไปแตะข้อมูล', async ({ page }) => {
+  await seedOrders(page, [ord('TM5267H179', 'TUE-H'), ord('TM5267U176', 'TUE-U')]);
+  await page.goto(APP);
+  await page.click('.tab-btn[data-tab="data"]');
+  let asked = false;
+  page.on('dialog', d => { asked = true; d.accept(); });
+  await page.click('#btnRecalcSubName');
+  await page.waitForTimeout(250);
+
+  expect(asked, 'ไม่มีอะไรต้องเปลี่ยน ต้องไม่ถามยืนยัน').toBe(false);
+  await expect(page.locator('#toast')).toContainText('ไม่มีใบไหนต้องเปลี่ยน');
+  const all = await orders(page);
+  expect(all.every(o => o._dirty === false), 'ต้องไม่ทำให้ใบไหน dirty').toBe(true);
+});
+
+test('กดยกเลิกตอนถามยืนยัน ต้องไม่เปลี่ยนอะไรเลย', async ({ page }) => {
+  await seedOrders(page, [ord('TM5267H179', 'TUE-U')]);
+  await page.goto(APP);
+  await page.click('.tab-btn[data-tab="data"]');
+  page.on('dialog', d => d.dismiss());
+  await page.click('#btnRecalcSubName');
+  await page.waitForTimeout(250);
+
+  const a = (await orders(page))[0];
+  expect(a.subName, 'กดยกเลิกแล้วต้องคงค่าเดิม').toBe('TUE-U');
+  expect(a._dirty).toBe(false);
+});

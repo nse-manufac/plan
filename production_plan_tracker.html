@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-04.2">
+<meta name="app-version" content="2026-09-04.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -631,6 +631,22 @@
       เก็บแล้วเลขนี้จะไปอยู่ในช่อง <b>Wip bal.</b> ของใบส่งสินค้าแทนยอดที่โปรแกรมคิดเอง
       · เก็บแยกตามงวด นำเข้าชีตอื่นของงวดเดียวกันได้ ไม่ทับกัน
     </div>
+  </div>
+
+  <div class="panel">
+    <h2>คำนวณ Sub-Name ใหม่จากรหัส PO</h2>
+    <div class="desc">
+      ใบสั่งที่นำเข้าไว้<b>ก่อน 4 ก.ย. 2026</b> ได้ Sub-Name มาจากคอลัมน์ C ของไฟล์แผน
+      ซึ่งมีที่พิมพ์ผิดปนอยู่ ทำให้บางใบไปโผล่ผิดหน่วยในหน้าใบส่งสินค้า
+      <br>
+      ปุ่มนี้คิด Sub-Name ใหม่จากตัวอักษรในรหัส PO (<b>มี H = TUE-H · มี U = TUE-U</b>)
+      ให้ใบสั่งที่มีอยู่แล้วทั้งหมด
+      <br>
+      <b>แตะเฉพาะช่อง Sub-Name เท่านั้น</b> — ยอดที่คีย์ไว้ ยอดสั่ง และวันแผน ไม่ถูกแตะ
+      · จะสรุปให้ดูก่อนว่าจะเปลี่ยนกี่ใบ จากอะไรเป็นอะไร แล้วค่อยยืนยัน
+      · <b>ใบที่ตัดสินจากรหัส PO ไม่ได้ จะไม่ถูกแตะ</b> ไม่ใช่ถูกล้างเป็นค่าว่าง
+    </div>
+    <button class="btn" id="btnRecalcSubName">🔄 คำนวณ Sub-Name ใหม่</button>
   </div>
 
   <div class="panel">
@@ -3680,6 +3696,53 @@ document.getElementById('btnConfirmImport').addEventListener('click', ()=>{
   doSync();
 });
 
+
+/* คิด Sub-Name ใหม่ให้ใบสั่งที่มีอยู่แล้ว — ของที่นำเข้าไว้ก่อน 4 ก.ย. 2026
+ * ได้ค่ามาจากคอลัมน์ C ซึ่งมีที่พิมพ์ผิดปนอยู่ (สำรวจไฟล์จริงพบ 84 แถว ไม่นับ DLG-H)
+ *
+ * ⚠️ แตะเฉพาะ subName — ห้ามแตะยอด วันแผน หรือ records
+ *    การนำเข้าไฟล์ซ้ำก็ได้ผลเหมือนกัน แต่มันทับยอดสั่งกับวันแผนไปด้วย
+ *    ปุ่มนี้จึงมีไว้ให้แก้เรื่อง Sub-Name อย่างเดียวได้ โดยไม่กระทบอย่างอื่น
+ *
+ * ⚠️ ใบที่ subNameFromPo() ตัดสินไม่ได้ ต้อง "ไม่แตะ" ไม่ใช่ล้างเป็นค่าว่าง
+ *    ใบที่ตอนนี้มีหน่วยอยู่แล้วและใช้งานได้ ถ้าโดนล้างจะหายจากหน้าใบส่งสินค้าทันที
+ *    ทำให้ส่งของใบนั้นไม่ได้ — เสียมากกว่าได้ */
+document.getElementById('btnRecalcSubName').addEventListener('click', ()=>{
+  const changes = [];
+  let unresolved = 0, unchanged = 0;
+  state.orders.forEach(o=>{
+    const to = subNameFromPo(o.poNo);
+    if(!to){ unresolved++; return; }
+    const from = String(o.subName == null ? '' : o.subName);
+    if(from === to){ unchanged++; return; }
+    changes.push({o, from: from || '(ว่าง)', to});
+  });
+
+  const nl = String.fromCharCode(10);
+  if(!changes.length){
+    toast(`ไม่มีใบไหนต้องเปลี่ยน — ตรงอยู่แล้ว ${numFmt(unchanged)} ใบ`
+        + (unresolved? ` · ตัดสินจากรหัส PO ไม่ได้ ${numFmt(unresolved)} ใบ` : ''));
+    return;
+  }
+
+  const tally = {};
+  changes.forEach(c=>{ const k = c.from + ' → ' + c.to; tally[k] = (tally[k]||0) + 1; });
+  const detail = Object.entries(tally).sort((a,b)=>b[1]-a[1])
+    .map(([k,n])=> '  ' + k + '   ' + numFmt(n) + ' ใบ').join(nl);
+
+  if(!confirm(`จะเปลี่ยน Sub-Name ของ ${numFmt(changes.length)} ใบสั่ง${nl}${nl}${detail}${nl}${nl}`
+    + `ไม่เปลี่ยน ${numFmt(unchanged)} ใบ (ตรงอยู่แล้ว)`
+    + (unresolved? ` · ไม่แตะ ${numFmt(unresolved)} ใบ (ตัดสินจากรหัส PO ไม่ได้)` : '')
+    + `${nl}${nl}ยอดที่คีย์ไว้ ยอดสั่ง และวันแผน ไม่ถูกแตะ`)) return;
+
+  const now = new Date().toISOString();
+  changes.forEach(c=>{ c.o.subName = c.to; c.o.updatedAt = now; c.o._dirty = true; });
+  saveState();
+  renderAll();
+  renderSyncBadge();
+  doSync();
+  toast(`เปลี่ยน Sub-Name แล้ว ${numFmt(changes.length)} ใบ`);
+});
 
 PROCESSES.forEach(p=>{
   document.getElementById('procBtn-'+p).addEventListener('click', ()=>{
