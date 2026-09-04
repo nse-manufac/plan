@@ -427,6 +427,62 @@ test('PO ที่ไม่มีในไฟล์ของ Delta ต้อง�
   expect(g10, 'ห้ามเดาด้วยยอดของเรา ต้องเว้นว่าง').not.toMatch(/<v>[^<]+<\/v>/);
 });
 
+/* ── ช่องติ๊ก "ซ่อนใบที่ไม่มียอด Delta" ────────────────────────────────
+ *
+ * เจ้าของสั่ง 4 ก.ย. 2026 ให้ซ่อนใบที่ไม่มียอด Wip bal. ของ Delta
+ *
+ * ⚠️ ทำเป็น "ช่องติ๊กบนหน้าจอ" ไม่ใช่ตัดออกจาก deliveryGroups()
+ *    กฎใน #49 ยังอยู่ครบ — ยอด Delta ใช้เพิ่มแถวได้ ใช้ตัดแถวไม่ได้
+ *    ถ้าตัดที่ตัวกรองหลัก สัปดาห์ที่ยังไม่ได้นำเข้าไฟล์ Call In จะส่งของไม่ได้เลยทั้งหน่วย
+ *    เป็นชั้นแสดงผลล้วน ๆ ปลดติ๊กก็กลับมาเห็นทันที */
+
+const dnRows = page => page.$$eval('#dnTable td[data-ourwip]',
+  t => t.map(x => x.getAttribute('data-ourwip')));
+
+test('ซ่อนใบที่ไม่มียอด Delta เป็นค่าเริ่มต้น และปลดติ๊กแล้วกลับมาเห็นครบ', async ({ page }) => {
+  // Delta รู้จักแค่ใบเดียวจากสามใบ
+  await openWithDelta(page, [deltaRow('PO-B001|' + PN_B, 36, 800)]);
+
+  await expect(page.locator('#dnHideNoDelta'), 'ต้องติ๊กไว้ตั้งแต่แรก').toBeChecked();
+  expect(await dnRows(page), 'เห็นเฉพาะใบที่ Delta มียอด').toEqual(['PO-B001|' + PN_B]);
+  await expect(page.locator('#dnSummary'), 'ต้องบอกว่าซ่อนไว้กี่ใบ ไม่ใช่หายเงียบ')
+    .toContainText('ซ่อนใบที่ไม่มียอด Delta อยู่ 2 ใบ');
+
+  await page.uncheck('#dnHideNoDelta');
+  await page.waitForTimeout(200);
+  expect((await dnRows(page)).length, 'ปลดติ๊กแล้วต้องเห็นครบ').toBe(3);
+});
+
+test('ห้ามซ่อนแถวที่กำลังใช้งานอยู่ — มียอดคีย์ไว้ หรือติ๊กใส่ในใบไว้', async ({ page }) => {
+  // ⚠️ ซ่อนแล้วคนจะแก้ยอดที่ตัวเองเพิ่งคีย์ไม่ได้ ทั้งที่ยอดนั้นจะลงกระดาษจริง
+  await openWithDelta(page, [deltaRow('PO-B001|' + PN_B, 36, 800)]);
+  await page.uncheck('#dnHideNoDelta');
+  await page.waitForTimeout(150);
+
+  await alloc(page, 'PO-B055|' + PN_B, 300);      // ใบนี้ Delta ไม่มียอด
+  await tick(page, 'PO-A004|' + PN_A);            // ใบนี้ก็ไม่มี แต่ติ๊กไว้
+
+  await page.check('#dnHideNoDelta');
+  await page.waitForTimeout(200);
+
+  const shown = await dnRows(page);
+  expect(shown, 'ใบที่มียอดคีย์ไว้ต้องยังอยู่').toContain('PO-B055|' + PN_B);
+  expect(shown, 'ใบที่ติ๊กใส่ในใบไว้ต้องยังอยู่').toContain('PO-A004|' + PN_A);
+});
+
+test('ยังไม่มียอด Delta สักใบ ต้องไม่ซ่อนอะไรเลย — ไม่งั้นส่งของไม่ได้ทั้งหน่วย', async ({ page }) => {
+  /* ⚠️ สัปดาห์ที่ Delta ยังไม่ส่งไฟล์มา หรือยังไม่ได้นำเข้า จะไม่มี deltaWip สักแถว
+   *    ถ้าตัวกรองซ่อนตรง ๆ หน้าจอจะว่างทั้งหน้าและคีย์ยอดส่งไม่ได้เลย
+   *    ตัวกรองนี้มีไว้ตัดเสียงรบกวนตอนมีของให้เทียบ ไม่ใช่ปิดหน้าจอตอนไม่มีข้อมูล
+   *
+   *    เจอตอนรันเทส — ตั้งซ่อนตรง ๆ แล้วเทสเดิมตก 17 ข้อ ทุกข้อคือกรณีนี้ */
+  await openWithDelta(page, []);
+  await expect(page.locator('#dnHideNoDelta'), 'ช่องยังติ๊กอยู่').toBeChecked();
+  expect((await dnRows(page)).length, 'ไม่มีของให้เทียบ = ต้องเห็นครบเหมือนไม่ได้ติ๊ก').toBe(3);
+  await expect(page.locator('#dnSummary'), 'และต้องไม่อ้างว่าซ่อนอะไรไว้')
+    .not.toContainText('ซ่อนใบที่ไม่มียอด Delta');
+});
+
 test('ตัดยอดเข้าใบเกินยอดสั่ง ต้องเตือน — คำเตือนนี้ตายมาตลอดจนถึง 2 ก.ย. 2026', async ({ page }) => {
   // wipBalance() ครอบไม่ให้ติดลบ โค้ดเดิมเอา alloc บวกกลับเข้าไปเพื่อหายอด "ก่อนส่ง"
   // พอส่งเกินยอดสั่ง ค่าที่ครอบแล้วเป็น 0 บวก alloc กลับจึงได้เท่ากับ alloc พอดี
@@ -632,11 +688,33 @@ test('แถวที่โผล่เพราะ Delta ยังค้าง 
 });
 
 test('ยอดของ Delta ต้องไม่ถูกใช้ตัดแถวทิ้ง — ใช้เพิ่มแถวได้อย่างเดียว', async ({ page }) => {
-  // กับดักที่กลับทิศได้ง่ายเวลามีคนมาแก้ตัวกรองรอบหน้า
-  // ใบที่เรายังค้างส่งอยู่ แต่ Delta ไม่มีข้อมูล ต้องยังอยู่บนจอเสมอ
+  /* กับดักที่กลับทิศได้ง่ายเวลามีคนมาแก้ตัวกรองรอบหน้า
+   * ใบที่เรายังค้างส่งอยู่ แต่ Delta ไม่มีข้อมูล ต้องไม่หายไปจาก "ชั้นข้อมูล" เด็ดขาด
+   *
+   * ⚠️ ตั้งแต่ 4 ก.ย. 2026 มีช่องติ๊ก "ซ่อนใบที่ไม่มียอด Delta" ซึ่งซ่อนบนหน้าจอได้
+   *    เทสนี้จึงต้องแยกให้ชัดระหว่างสองชั้น ไม่งั้นจะกลายเป็นเทสของตัวกรอง ไม่ใช่ของกฎ
+   *
+   *      ชั้นข้อมูล (deliveryGroups)  ห้ามหาย เด็ดขาด ไม่ว่าตัวกรองจะเป็นยังไง
+   *      ชั้นแสดงผล (ช่องติ๊ก)        ซ่อนได้ แต่ปลดติ๊กต้องกลับมาครบเสมอ
+   *
+   *    ถ้าวันหนึ่งมีคนย้ายการซ่อนลงไปทำใน deliveryGroups() เทสข้อแรกจะจับได้ทันที */
   await openWithDelta(page, [deltaRow('PO-B001|' + PN_B, 34, 500)]);
+
+  await page.uncheck('#dnHideNoDelta');
+  await page.waitForTimeout(150);
   expect(await page.locator('#dnTable input.dn-alloc').count(),
-    'ใบที่ Delta ไม่มีข้อมูลต้องไม่หายไปไหน').toBe(3);
+    'ปลดติ๊กแล้วใบที่ Delta ไม่มีข้อมูลต้องกลับมาครบ').toBe(3);
+
+  /* ชั้นข้อมูลตรวจจากตัวโค้ด เพราะสคริปต์ของแอปถูกห่อไว้ เรียกฟังก์ชันจาก page.evaluate ไม่ได้
+   * สิ่งที่ห้ามคือ deliveryGroups() ไปรู้จักตัวกรองของหน้าจอ ถ้าวันหนึ่งมีคนย้ายการซ่อน
+   * ลงไปทำในนั้น ใบที่ Delta ไม่มีข้อมูลจะหายจริง ๆ และปลดติ๊กก็ไม่กลับมา */
+  const src = fs.readFileSync(
+    require('path').resolve(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
+  const body = src.slice(src.indexOf('function deliveryGroups'),
+                         src.indexOf('function dnFilter'));
+  expect(body.length, 'ตัดตัวฟังก์ชันมาได้จริง ไม่งั้นเทสนี้ไม่ได้ตรวจอะไร').toBeGreaterThan(200);
+  expect(body, 'deliveryGroups() ห้ามรู้จักตัวกรองของหน้าจอ — การซ่อนต้องอยู่ชั้นแสดงผลเท่านั้น')
+    .not.toMatch(/dnHideNoDelta|dnApplyNoDeltaHide/);
 });
 
 test('มีหลายงวด ต้องใช้งวดที่ใหม่กว่า และบอกบนจอว่างวดไหน', async ({ page }) => {
