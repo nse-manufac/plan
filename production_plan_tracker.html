@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-04.3">
+<meta name="app-version" content="2026-09-04.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -2783,19 +2783,31 @@ function renderDashTable(){
   if(hideDone && statusF !== 'done') rows = rows.filter(x=>x.st.code !== 'done');
   rows.sort((a,b)=> (a.o.week||'').localeCompare(b.o.week) || (a.o.orderDate||'').localeCompare(b.o.orderDate));
 
-  const bodyHtml = rows.map(({o,c,st,split})=>{
+  /* ⚠️ Item No. คือ "ลำดับของแถวที่เห็นอยู่ตอนนี้" ไม่ใช่เลขประจำใบสั่ง
+   *
+   *    มีไว้ให้ชี้กันรู้เรื่องตอนคุยหรือตอนถือกระดาษที่พิมพ์ออกมา ("ดูแถวที่ 12")
+   *    จึงต้องนับหลังกรองและเรียงแล้ว = นับตามที่ตาเห็น ไม่ใช่ตามลำดับในข้อมูล
+   *
+   *    เปลี่ยนตัวกรองเมื่อไหร่เลขก็เปลี่ยน ซึ่งถูกต้องตามความหมายนี้
+   *    และหัวกระดาษตอนพิมพ์บอกอยู่แล้วว่ากรองอะไรไว้ คนที่ถือกระดาษคนละใบจึงรู้ตัว
+   *
+   *    ⚠️ ห้ามเอาไปใช้เป็นกุญแจอ้างอิงใบสั่ง — กุญแจจริงคือ PO|P/N (ดู INVARIANTS)
+   *       และเลข No. ในไฟล์แผนของลูกค้าก็ไม่ใช่ตัวนี้ (ของเขาเริ่มนับใหม่ทุกสัปดาห์
+   *       และมีเลขซ้ำกับช่องว่างปนอยู่) โปรแกรมไม่ได้เก็บเลขนั้นไว้ */
+  const bodyHtml = rows.map(({o,c,st,split}, idx)=>{
     const anomaly = c.assembly>c.winding || c.support>c.assembly || c.inspection>c.support || c.shipping>c.inspection;
     // อายุงาน = จำนวนวันนับจากวันสั่งถึงวันนี้ นิยามเดียวกับคอลัมน์ Aging ในใบส่งสินค้า FM-ST-07
     // ใช้ ref ตัวเดียวกับที่ computeStatus ใช้ตัดสินล่าช้า ตัวเลขบนจอจึงมาจากวันเดียวกันเสมอ
     const aging = daysBetween(o.orderDate, ref);
     return `<tr>
+      <td class="hint">${idx + 1}</td>
       <td class="left">${escapeHtml(o.week)}</td>
-      <td class="left">${escapeHtml(o.poNo)}</td>
+      <td class="left" data-po="${escapeHtml(o.poNo)}">${escapeHtml(o.poNo)}</td>
       <td class="left">${escapeHtml(o.pn)}</td>
       <td class="left">${escapeHtml(o.subName)}</td>
       <td>${numFmt(o.orderQty)}</td>
       <td>${fmtDateTH(o.orderDate)}</td>
-      <td>${agingCell(aging, st.code)}</td>
+      <td data-aging>${agingCell(aging, st.code)}</td>
       <td>${progressCell(c.winding, split.winding, o.orderQty)}</td>
       <td>${progressCell(c.assembly, split.assembly, o.orderQty)}</td>
       <td>${progressCell(c.support, split.support, o.orderQty)}</td>
@@ -2806,9 +2818,10 @@ function renderDashTable(){
   }).join('');
 
   document.getElementById('dashTable').innerHTML = `<thead><tr>
+      <th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ ไว้ชี้กันตอนคุยหรือตอนดูกระดาษที่พิมพ์ออกมา — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>
       <th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th><th>Order Date</th><th>Aging<br>(วัน)</th>
       <th>Winding</th><th>Assembly</th><th>Support</th><th>Inspection</th><th>FG คงเหลือ<br>(รอส่ง)</th><th>สถานะ</th>
-    </tr></thead><tbody>${bodyHtml || emptyRow(13)}</tbody>`;
+    </tr></thead><tbody>${bodyHtml || emptyRow(14)}</tbody>`;
 }
 
 /* ---------- Render: Data tab ---------- */
