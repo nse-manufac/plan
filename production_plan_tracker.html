@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-05.4">
+<meta name="app-version" content="2026-09-05.5">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1581,7 +1581,7 @@ function saveDeltaWip(items, week, fileName){
    *    ต่อใบยังปลอดภัยกับรหัส PO ที่แยกหน่วยไม่ออกด้วย เพราะไม่ต้องพึ่ง subNameFromPo() เลย */
   const inFile = new Set();
   items.forEach(it=>{ if(orderById.has(it.id)) inFile.add(it.id); });
-  if(!inFile.size) return {added:0, updated:0, cleared:0, scope:[]};
+  if(!inFile.size) return {added:0, updated:0, cleared:0, blank:0};
 
   // ล้างยอดเดิมของใบเหล่านั้นให้หมดก่อน แล้วค่อยเขียนของไฟล์นี้ลงไป
   let cleared = 0;
@@ -1591,7 +1591,7 @@ function saveDeltaWip(items, week, fileName){
     cleared++;
   });
 
-  let added = 0, updated = 0;
+  let added = 0, updated = 0, blank = 0;
   items.forEach(it=>{
     if(!orderById.has(it.id)) return;          // ใบที่เราไม่รู้จัก ไม่เก็บ
 
@@ -1606,6 +1606,7 @@ function saveDeltaWip(items, week, fileName){
     const txt = String(it.fileWip == null ? '' : it.fileWip).trim();
     const num = txt === '' ? NaN : Number(txt);
     const wip = isFinite(num) ? num : null;
+    if(wip == null) blank++;
     const i = state.deltaWip.findIndex(d => d.orderId===it.id && String(d.week)===String(week));
     if(i > -1){
       Object.assign(state.deltaWip[i], {wip, fileName, voided:false, updatedAt:now, _dirty:true});
@@ -1620,7 +1621,7 @@ function saveDeltaWip(items, week, fileName){
   });
   saveState();
   doSync();
-  return {added, updated, cleared, scope:[...scope]};
+  return {added, updated, cleared, blank};
 }
 
 /* ---------- ยอดคงคลัง FG ---------- */
@@ -3524,6 +3525,7 @@ function renderDnSummary(){
   const el = document.getElementById('dnSummary');
   if(!el) return;
   const all = deliveryGroups(dnDate(), dnUnit());
+  const curWeek = currentDeltaWeek();
 
   /* ⚠️ ต้องเก็บผลของ "ตัวค้นหา" ไว้ก่อน แล้วค่อยเอาไปผ่านตัวกรอง Delta
    *
@@ -3565,6 +3567,14 @@ function renderDnSummary(){
     (extraNoShip ? ` · <b>ใส่ในใบเพิ่มอีก ${numFmt(extraNoShip)} ใบที่รอบนี้ไม่ได้ส่งของ</b>` : '') +
     // ซ่อนอยู่ต้องรู้ตัว ไม่งั้นคนหาใบไม่เจอแล้วคิดว่าข้อมูลหาย
     (hideRes.hidden ? ` · <b id="dnHiddenNoDelta">ซ่อนใบที่ไม่อยู่ในไฟล์ Call In อยู่ ${numFmt(hideRes.hidden)} ใบ</b>` : '') +
+    /* ⚠️ ต้องบอกว่ากำลังยึดงวดไหนอยู่ · ผู้ตรวจทักไว้ใน #63 ว่าเปิดไฟล์งวดเก่าดูย้อนหลัง
+     *    แล้วกดเก็บ จะทำให้งวดเก่ากลายเป็น "ล่าสุด" ทั้งเครื่อง แล้วใบของงวดปัจจุบัน
+     *    ถูกซ่อนหมด · เราไม่กันการกดเก็บ (เจ้าของอาจตั้งใจตามเก็บงวดเก่าจริง ๆ)
+     *    แต่ต้องเห็นด้วยตาทันทีว่าเลขบนจอมาจากงวดไหน จะได้รู้ตัวว่าต้องอัปงวดปัจจุบันซ้ำ
+     *
+     *    ห้ามเดาว่างวดไหน "ใหม่กว่า" ด้วยการเทียบเลข — ปลายปี wk52 -> wk01 เลขน้อยลงแต่ใหม่กว่า
+     *    บอกไปตรง ๆ ว่ายึดงวดอะไร แล้วให้คนตัดสินเอง */
+    (curWeek ? ` · ยึดยอด Delta จากไฟล์งวด <b>wk${escapeHtml(curWeek)}</b>` : '') +
     ` · ยอดที่กรอกลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
 }
 
@@ -4251,9 +4261,14 @@ document.getElementById('btnDeltaWipSave').addEventListener('click', ()=>{
     || prompt('ชื่อชีตไม่ได้บอกเลขสัปดาห์ — พิมพ์เลขสัปดาห์ของไฟล์นี้ (เช่น 34)');
   if(!week) return;
   const r = saveDeltaWip(pendingCallIn.items, week, pendingCallIn.fileName);
-  toast(`เก็บยอดของ Delta งวด wk${week} ของ ${r.scope.join(', ') || '—'} แล้ว`
-      + ` — ใช้ได้ ${r.added + r.updated} ใบ · ล้างยอดเดิมของหน่วยนี้ ${r.cleared} ใบ`
-      + ` · หน่วยอื่นไม่ถูกแตะ`);
+  /* ⚠️ ห้ามรายงาน r.cleared เป็น "ลบไปกี่ใบ" — ขอบเขตการล้างคือใบที่อยู่ในชีตนี้
+   *    ทุกใบที่ถูกล้างจึงถูกเขียนทับด้วยของใหม่ทันทีเสมอ ไม่มีอะไรหายไปจริง
+   *    ของเดิมเขียนไว้ว่า "ล้างยอดเดิม N ใบ" แล้วคนอ่านตกใจว่าข้อมูลหาย ทั้งที่ไม่หาย
+   *    (ผู้ตรวจทักไว้ใน #63) */
+  const total = r.added + r.updated;
+  toast(`เก็บยอดของ Delta งวด wk${week} แล้ว — ${total} ใบในชีตนี้`
+      + (r.blank ? ` (มียอด ${total - r.blank} · Delta เว้นช่องว่างไว้ ${r.blank})` : '')
+      + ` · ใบที่ไม่ได้อยู่ในชีตนี้ไม่ถูกแตะ`);
   renderSyncBadge();
   renderDeliveryNote();
 });

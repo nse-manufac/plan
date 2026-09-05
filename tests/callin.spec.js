@@ -270,6 +270,26 @@ test('#62 — นำเข้าชีตของหน่วยหนึ่ง
     .toEqual(['PO-H001|9100000070=222', 'PO-U001|9100000041=55']);
 });
 
+test('#62 — กดเก็บแล้วต้องขึ้น toast และหน้าใบส่งงานต้องอัปเดตทันที', async ({ page }) => {
+  /* ⚠️ ข้อนี้มีไว้จับข้อผิดพลาดที่เทสอื่นมองไม่เห็น — เทสที่เช็กแต่ localStorage จะเขียว
+   *    ถึงแม้โค้ดหลัง saveState() จะโยน error ทิ้ง เพราะ saveState() ทำงานไปแล้วก่อนพัง
+   *    เกิดขึ้นจริงตอนทำใบนี้: ค่าที่คืนยังอ้างตัวแปร scope ที่ถูกลบไปแล้ว
+   *    ทุกครั้งที่กดเก็บจึงโยน ReferenceError · toast ไม่ขึ้น · จอไม่รีเฟรช
+   *    แต่เทสทั้ง 165 ข้อยังเขียวหมด */
+  await openWith(page, [order('PO-C041', '9100000041', 300)]);
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 }
+  ], { sheetName: 'X-FRM wk35' }), 'X-FRM wk35');
+
+  const errs = [];
+  page.on('pageerror', e => errs.push(String(e)));
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(300);
+
+  expect(errs, 'กดเก็บแล้วต้องไม่มี error หลุดออกมา').toEqual([]);
+  await expect(page.locator('#toast'), 'ต้องบอกผลให้คนกดรู้').toContainText('wk35');
+});
+
 test('#62 — ประวัติต้องเก็บไว้เป็นแถวที่ยกเลิก ไม่ใช่ลบทิ้งจาก array', async ({ page }) => {
   // INVARIANTS B1 — ลบออกจาก array แต่เซิร์ฟเวอร์ยังมี ซิงค์รอบหน้าจะดึงกลับมาใหม่
   await openWith(page, [order('PO-C041', '9100000041', 300)]);
