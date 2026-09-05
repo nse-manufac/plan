@@ -395,6 +395,40 @@ test('B2 — หัวตารางเขียนว่า Wip Balance (ไ�
   expect(await rowOf(page, 'PO-C041')).toContain('555');
 });
 
+test('B4 — PO QTY เลื่อนคอลัมน์ ต้องอ่านตัวเลขถูก ไม่ใช่ไปอ่านคอลัมน์ที่แทรกเข้ามา', async ({ page }) => {
+  /* ⚠️ เคสของจริง · เปิดไฟล์ WK 35 ตัวจริงดูเมื่อ 5 ก.ย. 2026 พบว่าสองชีตในไฟล์เดียวกัน
+   *    วางคอลัมน์ไม่ตรงกัน เพราะชีตแรกมี "New SAP" แทรกอยู่ที่ D:
+   *      ชีตแรก    PO QTY=E  Wip bal.=F
+   *      ชีตที่สอง  PO QTY=D  Wip bal.=E
+   *    #53 แก้ให้ Wip bal. หาจากหัวตารางแล้ว แต่ qty ยังยึด 'D'
+   *    พออ่านชีตแรกจึงเอาเลขของ New SAP มาเป็น PO QTY แล้วฟ้อง "PO QTY ไม่ตรง" มั่วทั้งชีต */
+  await openWith(page, ORDERS);
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 },
+    { pn: '9100000040', poNo: 'PO-C040', orderDate: '2026-07-06', qty: 300, wip: 250 }
+  ], { qtyCol: 5, wipCol: 6 }), 'X-FRM wk34');
+
+  const sum = await page.locator('#callInSummary').innerText();
+  expect(sum, 'ยอดสั่งตรงกันทั้งสองใบ ต้องไม่ฟ้องว่า PO QTY ไม่ตรง')
+    .not.toContain('PO QTY ไม่ตรงกัน');
+  expect(sum, 'และต้องจับคู่ได้ครบสองใบ').toContain('จับคู่ PO ได้ 2 แถว');
+});
+
+test('B5 — ไม่มีหัวตาราง PO QTY ในชีตเลย ต้องบอกว่าขาดหัวไหน ไม่ใช่เดาคอลัมน์', async ({ page }) => {
+  await openWith(page, ORDERS);
+  await page.setInputFiles('#callInFileInput',
+    { name: 'callin.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      buffer: await callInWorkbook([
+        { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 }
+      ], { qtyHeader: '' }) });
+  await expect(page.locator('#btnCallInScan')).toBeEnabled();
+  await page.selectOption('#callInSheet', 'X-FRM wk34');
+  await page.click('#btnCallInScan');
+
+  await expect(page.locator('#toast'), 'ต้องบอกชื่อหัวตารางที่หาไม่เจอ').toContainText('PO QTY');
+  await expect(page.locator('#callInPreviewPanel'), 'และต้องไม่เปิดหน้าผลเทียบให้ดูต่อ').toBeHidden();
+});
+
 test('B3 — ไม่มีหัวตาราง Wip bal. ในชีตเลย ต้องขึ้นข้อความบอก ไม่ใช่เดาคอลัมน์เอง', async ({ page }) => {
   const rows = [{ pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 300, commit: 1 }];
   await openWith(page, ORDERS);
