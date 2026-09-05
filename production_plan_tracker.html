@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-05.4">
+<meta name="app-version" content="2026-09-05.5">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1945,9 +1945,15 @@ async function readCallInSheet(zip, path){
   return {items};
 }
 
-/** เทียบไฟล์กับข้อมูลในเครื่อง คืนสิ่งที่จะเกิดขึ้น โดยยังไม่แตะอะไร */
+/** เทียบไฟล์กับข้อมูลในเครื่อง คืนสิ่งที่จะเกิดขึ้น โดยยังไม่แตะอะไร
+ *
+ *  ⚠️ ต้องใช้ activeOrders() ให้ตรงกับ saveDeltaWip() ที่กดเก็บจริง
+ *     ตอนแรกใช้ state.orders ทั้งก้อน ใบที่ยกเลิกแล้วจึงถูกนับเป็น "เทียบได้" บนจอ
+ *     แต่ตอนกดเก็บกลับถูกข้าม จำนวนที่เห็นกับที่เก็บจริงไม่เท่ากันเงียบ ๆ
+ *     (ผู้ตรวจทักไว้ใน #66) · ใบที่เรายกเลิกแล้วต้องขึ้นเป็น "ไม่มีใบนี้ในระบบ"
+ *     ซึ่งเป็นความจริง และเป็นข้อมูลที่ต้องเอาไปคุยกับ Delta ว่าเขายังเรียก PO นี้อยู่ */
 function planCallIn(items){
-  const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
+  const orderById = {}; activeOrders().forEach(o=>orderById[o.id]=o);
   const cumMap = buildCumMap(state.records);
   const inFile = new Set();
   const update = [], missingOrder = [], qtyMismatch = [];
