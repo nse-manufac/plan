@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-05.3">
+<meta name="app-version" content="2026-09-05.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -244,6 +244,27 @@
   <div class="panel">
     <h2>ประวัติการนำเข้า</h2>
     <div class="table-wrap"><table id="importHistoryTable"></table></div>
+  </div>
+
+  <div class="panel">
+    <h2>ยกเลิกใบสั่งที่นำเข้าผิด</h2>
+    <div class="desc">
+      ใช้กับใบที่<b>พิมพ์รหัส PO ผิด</b> หรือ<b>ลูกค้ายกเลิก PO ทีหลัง</b>
+      — ใบที่ยกเลิกจะหายจากทุกหน้า แต่ยอดที่เคยคีย์ไว้ไม่ถูกลบ กดกู้คืนเมื่อไหร่ก็กลับมาครบ
+      <br>
+      ถ้าแค่<b>ยอดผิด</b> ไม่ต้องยกเลิก — นำเข้าไฟล์แผนที่แก้แล้วทับได้เลย ระบบอัปเดตยอดให้เอง
+    </div>
+    <div class="filters">
+      <div class="field">
+        <label>ค้นหา PO หรือ P/N</label>
+        <input type="search" id="voidSearch" placeholder="พิมพ์บางส่วนก็ได้" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <label style="font-weight:500;"><input type="checkbox" id="voidShowVoided"> แสดงใบที่ยกเลิกแล้ว</label>
+      </div>
+    </div>
+    <div class="table-wrap"><table id="orderVoidTable"></table></div>
   </div>
 </section>
 
@@ -1086,8 +1107,11 @@ let syncIntervalId = null;
  *  ฟิลด์ที่ไม่อยู่ในนี้จะไม่ถูกส่ง จึงโกหกไม่ได้
  *  และ tests/sync-contract.spec.js อ่านทั้งไฟล์นี้กับ .gs มาเทียบกันทุกครั้งที่รันเทส */
 const SYNC_COLS = {
+  // ⚠️ 'voided' ต้องอยู่ท้ายสุด — ฝั่ง Apps Script เขียนแถวด้วยตำแหน่ง (toRow)
+  //    แต่เติมคอลัมน์ที่ขาดต่อท้ายหัวตาราง ลำดับสองฝั่งจึงตรงกันได้ต่อเมื่อเติมท้ายเหมือนกัน
   Orders: ['id','week','poNo','pn','subName','osc','pc','orderQty','orderDate',
-           'planWinding','planAssembly','planSupport','planInspection','status','importedAt','updatedAt'],
+           'planWinding','planAssembly','planSupport','planInspection','status','importedAt','updatedAt',
+           'voided'],
   Records: ['id','date','orderId','process','qty','note','deviceName',
             'createdAt','updatedAt','voided','batchId'],
   DeliveryNotes: ['id','date','unit','orderId','pn','perBox','boxes','remainder','remark','billNo',
@@ -1472,6 +1496,17 @@ function wipBalance(order, cum){
  *     มีแถว = Delta เอ่ยถึงใบนี้ในไฟล์ที่นำเข้า
  *     มียอด = เขากรอกตัวเลขมาด้วย -> เอาไปพิมพ์ลงกระดาษได้
  *     แถวที่ wip ว่าง คือ "อยู่ในไฟล์แต่เขาไม่ได้ระบุยอด" คนละเรื่องกับ "ค้างศูนย์" */
+/** ใบสั่งที่ยังใช้งานอยู่ — ตัดใบที่ถูกยกเลิกออก (พนักงานแจ้ง 5 ก.ย. 2026 ว่านำเข้าผิดแล้วลบไม่ได้)
+ *
+ *  ⚠️ ยกเลิก ไม่ใช่ลบ (B1) — ลบออกจาก array เฉย ๆ ไม่ได้ผล เพราะรอบซิงค์ถัดไปดึงกลับมา
+ *     และยอดที่คีย์ไว้ทุกรายการอ้าง orderId อยู่ ใบหายจริงเมื่อไหร่ยอดกลายเป็นกำพร้า
+ *
+ *  ⚠️ ใช้เฉพาะที่ "ไล่รายการใบสั่ง" · ที่ค้นใบจาก orderId ของยอดที่คีย์ไว้ (พวก orderById)
+ *     ต้องเห็นใบที่ยกเลิกด้วย ไม่งั้นหน้าแก้ไข/ลบรายการจะโชว์ PO เป็น "?" แล้วตามไม่ได้ */
+function activeOrders(){
+  return state.orders.filter(o => !o.voided);
+}
+
 function deltaWipOf(orderId){
   let best = null;
   state.deltaWip.forEach(d=>{
@@ -1532,7 +1567,7 @@ function weekFromSheetName(name){
  *  เพราะไฟล์จริงมีหลายชีตต่อหนึ่งสัปดาห์ แบ่งตามกลุ่มสินค้า */
 function saveDeltaWip(items, week, fileName){
   const now = new Date().toISOString();
-  const known = new Set(state.orders.map(o=>o.id));
+  const known = new Set(activeOrders().map(o=>o.id));
 
   /* ขอบเขตของการล้าง = "ใบที่อยู่ในชีตนี้จริง ๆ" ไม่ใช่ทั้งหน่วย และไม่ใช่ทั้งงวด
    *
@@ -1608,7 +1643,7 @@ function fgRows(){
   const cum = buildCumMap(state.records);
   const byKey = new Map();
 
-  state.orders.forEach(o=>{
+  activeOrders().forEach(o=>{
     const pn = String(o.pn == null ? '' : o.pn);
     const unit = String(o.subName || '');
     const key = pn + '|' + unit;
@@ -1650,7 +1685,7 @@ function fgRows(){
 
 /** การเคลื่อนไหวของกลุ่มหนึ่ง เรียงตามวัน พร้อมยอดสะสม — โครงเดียวกับการ์ดของ Bin Card */
 function fgMoves(pn, unit){
-  const ids = new Set(state.orders
+  const ids = new Set(activeOrders()
     .filter(o=> String(o.pn == null ? '' : o.pn) === String(pn) && String(o.subName||'') === String(unit))
     .map(o=>o.id));
   const poOf = {};
@@ -1735,7 +1770,7 @@ function deliveryGroups(date, unit){
   const byPn = new Map();
   const curWeek = currentDeltaWeek();
 
-  state.orders.filter(o => o.subName === unit).forEach(o=>{
+  activeOrders().filter(o => o.subName === unit).forEach(o=>{
     const alloc = allocOf(o.id, date);
 
     /* Wip bal. คือยอดค้าง "ก่อน" ส่งรอบนี้ จึงต้องหักยอดที่ตัดเข้าใบวันนี้ออกจากยอดส่งสะสมก่อน
@@ -1929,7 +1964,7 @@ function planCallIn(items){
   // ใบที่เรายังส่งไม่ครบ แต่ไม่มีแถวในไฟล์ของ Delta
   // แปลว่าสองฝั่งมองไม่ตรงกันว่ายังมีใบนี้ค้างอยู่ — เป็นข้อมูลที่ต้องเอาไปคุยกับ Delta
   // ไม่ใช่ของที่โปรแกรมจะไปเติมให้เอง
-  const missingRow = state.orders.filter(o=>{
+  const missingRow = activeOrders().filter(o=>{
     if(inFile.has(o.id)) return false;
     return wipBalance(o, cumMap[o.id]) > 0;
   }).map(o=>({o, wip: wipBalance(o, cumMap[o.id])}));
@@ -2263,6 +2298,77 @@ function renderPreview(parsed){
   document.getElementById('previewPanel').style.display = '';
 }
 
+/* ---------- ยกเลิกใบสั่งที่นำเข้าผิด ----------
+ *
+ * ⚠️ ต้องพิมพ์ค้นหาก่อนถึงจะขึ้นรายการ — ตั้งใจ · ของจริงมีใบสั่งหลายร้อยใบ
+ *    (ชีตเดียวของ WK 35 มี 348 ใบ) ไล่ทั้งตารางมีแต่จะกดผิดใบ
+ *    คนที่มาหน้านี้รู้อยู่แล้วว่าจะยกเลิก PO ไหน
+ *
+ * ⚠️ ยกเลิกได้แม้มียอดคีย์ไว้ แต่ต้องบอกจำนวนก่อน (เจ้าของเลือก 5 ก.ย. 2026)
+ *    ยอดไม่ถูกลบ แค่ไม่ถูกนับเพราะใบหายไป · กู้คืนแล้วกลับมาครบ */
+function voidRecCount(orderId){
+  return state.records.filter(r => r.orderId === orderId && !r.voided).length;
+}
+
+function renderOrderVoidTable(){
+  const el = document.getElementById('orderVoidTable');
+  if(!el) return;
+  const q = (document.getElementById('voidSearch').value || '').trim().toLowerCase();
+  const showVoided = document.getElementById('voidShowVoided').checked;
+
+  let rows = state.orders.filter(o => showVoided || !o.voided);
+  if(q) rows = rows.filter(o =>
+    String(o.poNo||'').toLowerCase().includes(q) || String(o.pn||'').toLowerCase().includes(q));
+  else rows = [];
+
+  const body = rows.slice(0, 50).map(o=>{
+    const n = voidRecCount(o.id);
+    const btn = o.voided
+      ? `<button class="btn small" data-unvoid="${escapeHtml(o.id)}">↩️ กู้คืน</button>`
+      : `<button class="btn danger small" data-void="${escapeHtml(o.id)}">🚫 ยกเลิกใบนี้</button>`;
+    return `<tr class="${o.voided?'row-voided':''}">
+      <td class="left">${escapeHtml(o.poNo)}</td>
+      <td class="left">${escapeHtml(o.pn)}</td>
+      <td class="left">${escapeHtml(o.subName||'—')}</td>
+      <td>${fmtDateTH(o.orderDate)}</td>
+      <td>${numFmt(o.orderQty)}</td>
+      <td>${n ? numFmt(n) : '—'}</td>
+      <td>${o.voided?'<span class="badge gray">ยกเลิกแล้ว</span> ':''}${btn}</td>
+    </tr>`;
+  }).join('');
+
+  const empty = q ? 'ไม่พบใบสั่งที่ตรงกับที่ค้นหา' : 'พิมพ์ PO หรือ P/N ที่ต้องการยกเลิกก่อน';
+  el.innerHTML =
+    `<thead><tr><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Date</th>
+      <th>Open Q'ty</th><th>ยอดที่คีย์ไว้</th><th></th></tr></thead>
+     <tbody>${body || emptyRow(7, empty)}</tbody>`;
+
+  el.querySelectorAll('[data-void]').forEach(b=>
+    b.addEventListener('click', ()=>setOrderVoided(b.dataset.void, true)));
+  el.querySelectorAll('[data-unvoid]').forEach(b=>
+    b.addEventListener('click', ()=>setOrderVoided(b.dataset.unvoid, false)));
+}
+
+function setOrderVoided(id, voided){
+  const o = state.orders.find(x=>x.id===id);
+  if(!o) return;
+  if(voided){
+    const n = voidRecCount(o.id);
+    const warn = n
+      ? `\n\n⚠️ ใบนี้มียอดคีย์ไว้ ${numFmt(n)} รายการ ยกเลิกแล้วยอดพวกนี้จะหายไปจากการนับทุกหน้า`
+        + `\n(ยอดไม่ถูกลบ — กดกู้คืนเมื่อไหร่ก็กลับมาครบ)`
+      : '';
+    if(!confirm(`ยกเลิกใบสั่ง ${o.poNo} / ${o.pn} ?${warn}`)) return;
+  }
+  o.voided = !!voided;
+  o.updatedAt = new Date().toISOString();
+  o._dirty = true;
+  saveState();
+  toast(voided ? `ยกเลิกใบสั่ง ${o.poNo} แล้ว` : `กู้คืนใบสั่ง ${o.poNo} แล้ว`);
+  renderAll();
+  doSync();
+}
+
 function renderImportHistory(){
   const hist = state.importHistory || [];
   const rows = hist.map((h,origIdx)=>({h,origIdx})).slice().reverse().map(({h,origIdx})=>{
@@ -2321,7 +2427,7 @@ function renderEntryTable(){
   const prevProc = PREV_PROCESS[currentProcess];
   const procLabel = PROCESS_LABELS[currentProcess];
 
-  let orders = state.orders.filter(o=>o.status!=='closed');
+  let orders = activeOrders().filter(o=>o.status!=='closed');
   if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
   /* ⚠️ เทียบข้อความตรงตัวเหมือนหน้าอื่น — ห้ามเดาหน่วยจากรหัส PO ตรงนี้
    *    subNameFromPo() เป็นของ "ตอนนำเข้า" เท่านั้น ถ้าเอามาใช้ตอนกรองด้วย
@@ -2564,7 +2670,7 @@ function fgDiffCell(g){
 }
 
 function renderFg(){
-  fillSelect('fgUnit', uniqueSorted(state.orders.map(o=>o.subName)));
+  fillSelect('fgUnit', uniqueSorted(activeOrders().map(o=>o.subName)));
   const unit = fgUnit(), q = fgQuery();
   const hideZero = document.getElementById('fgHideZero').checked;
 
@@ -2661,7 +2767,7 @@ function renderFgCard(pn, unit){
 function renderWipCards(){
   const allCum = buildCumMap(state.records);
   let totalQty=0, sumW=0, sumA=0, sumSup=0, sumI=0, sumS=0, anomalyCount=0;
-  state.orders.forEach(o=>{
+  activeOrders().forEach(o=>{
     totalQty += o.orderQty;
     const c = allCum[o.id] || emptyCum();
     if(c.assembly > c.winding || c.support > c.assembly || c.inspection > c.support || c.shipping > c.inspection) anomalyCount++;
@@ -2797,12 +2903,12 @@ function renderChart(){
 }
 
 function renderDashFilterOptions(){
-  fillSelect('dashWeekFilter', uniqueSorted(state.orders.map(o=>o.week)));
-  fillSelect('entryWeekFilter', uniqueSorted(state.orders.map(o=>o.week)));
+  fillSelect('dashWeekFilter', uniqueSorted(activeOrders().map(o=>o.week)));
+  fillSelect('entryWeekFilter', uniqueSorted(activeOrders().map(o=>o.week)));
   // รายชื่อมาจากข้อมูลจริง ไม่ fix ไว้ — โรงงานเพิ่มหน่วยใหม่แล้วต้องโผล่เอง
   // เหมือนที่หน้า Dashboard กับหน้ายอดคงคลัง FG ทำอยู่
-  fillSelect('entrySubFilter', uniqueSorted(state.orders.map(o=>o.subName)));
-  fillSelect('dashSubFilter', uniqueSorted(state.orders.map(o=>o.subName)));
+  fillSelect('entrySubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
+  fillSelect('dashSubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
 }
 
 /** แถบ progress 2 ส่วน: ฟ้า = ยอดที่บันทึกทันหรือก่อนวัน deadline ของขั้นนั้น, เหลือง = บันทึกหลังเลย
@@ -2871,7 +2977,7 @@ function renderDashTable(){
   const search = document.getElementById('dashSearch').value.trim().toLowerCase();
   const hideDone = document.getElementById('dashHideDone').checked;
 
-  let rows = state.orders.map(o=>{
+  let rows = activeOrders().map(o=>{
     const c = allCum[o.id] || emptyCum();
     const dl = computeDeadlines(o);
     const st = computeStatus(o, c, dl, ref);
@@ -3017,7 +3123,7 @@ function applyMerge(plan){
 /* ---------- Excel report export ---------- */
 async function exportExcelReport(){
   const allCum = buildCumMap(state.records);
-  const summaryRows = state.orders.map(o=>{
+  const summaryRows = activeOrders().map(o=>{
     const c = allCum[o.id] || emptyCum();
     const dl = computeDeadlines(o);
     return {
@@ -3283,7 +3389,7 @@ const dnWeek = () => document.getElementById('dnWeek').value;
  *     ถ้าปล่อยให้เลือกได้ ตารางจะว่างเปล่าตั้งแต่เปิดหน้ามาโดยไม่มีอะไรบอกว่าทำไม */
 function renderDnUnits(){
   const el = document.getElementById('dnUnit');
-  const units = uniqueSorted(state.orders.map(o=>o.subName));
+  const units = uniqueSorted(activeOrders().map(o=>o.subName));
   const cur = el.value;
   el.innerHTML = units.map(v=>`<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
   if(units.includes(cur)) el.value = cur;
@@ -3793,6 +3899,7 @@ async function weekFromTemplate(zip, map){
 function renderAll(){
   renderDashFilterOptions();
   renderImportHistory();
+  renderOrderVoidTable();
   renderWipCards();
   renderChart();
   renderDashTable();
@@ -3814,12 +3921,15 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     document.getElementById('view-'+tab).classList.add('active');
     if(tab==='dashboard'){ renderDashFilterOptions(); renderWipCards(); renderChart(); renderDashTable(); }
     if(tab==='entry'){ renderDashFilterOptions(); renderEntryTable(); renderRecordEditor(); }
-    if(tab==='import'){ renderImportHistory(); }
+    if(tab==='import'){ renderImportHistory(); renderOrderVoidTable(); }
     if(tab==='data'){ loadSettingsIntoForm(); }
     if(tab==='delivery'){ renderDeliveryNote(); }
     if(tab==='fg'){ renderFg(); }
   });
 });
+
+document.getElementById('voidSearch').addEventListener('input', renderOrderVoidTable);
+document.getElementById('voidShowVoided').addEventListener('change', renderOrderVoidTable);
 
 document.getElementById('fileInput').addEventListener('change', async (e)=>{
   const file = e.target.files[0];
@@ -3912,7 +4022,7 @@ document.getElementById('btnConfirmImport').addEventListener('click', ()=>{
 document.getElementById('btnRecalcSubName').addEventListener('click', ()=>{
   const changes = [];
   let unresolved = 0, unchanged = 0;
-  state.orders.forEach(o=>{
+  activeOrders().forEach(o=>{
     const to = subNameFromPo(o.poNo);
     if(!to){ unresolved++; return; }
     const from = String(o.subName == null ? '' : o.subName);
