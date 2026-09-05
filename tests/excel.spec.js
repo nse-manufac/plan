@@ -34,13 +34,23 @@ const PLAN_ROWS = [
 
 // ── นำเข้าแผนงานรายสัปดาห์ ─────────────────────────────────────────
 
-/** นำเข้าแผนหนึ่งรอบเต็ม — รอทุกจังหวะแทนการกดรัว ๆ
+/** นำเข้าแผนหนึ่งรอบเต็ม — รอสัญญาณจริงของแอปทุกจังหวะ
  *
- *  ⚠️ เขียนครั้งแรกเป็น click ติดกันสามที ผ่านในเครื่องแต่ตกใน CI ซึ่งช้ากว่า
- *     เพราะกด "ยืนยันนำเข้า" ตั้งแต่แผงตัวอย่างยังไม่ทันขึ้น */
+ *  ⚠️ ห้ามอัปไฟล์แล้วกด #btnParseSheet ทันที · ตัวจัดการ change ของ #fileInput เป็น async
+ *     และจบด้วยการ "ซ่อน" previewPanel กับล้าง pendingImportItems
+ *     กดก่อนมันทำงานจบ = แผงตัวอย่างถูกซ่อนตามหลัง แล้วกดยืนยันไม่ได้จนหมดเวลา
+ *
+ *  ⚠️ และห้ามพึ่ง toBeEnabled() เฉย ๆ ในการนำเข้ารอบที่สอง · ปุ่มยัง enabled ค้าง
+ *     จากรอบแรก การรอจึงผ่านทันทีโดยไม่ได้รออะไรเลย (ผู้ตรวจชี้ไว้ใน #67)
+ *     ต้องปิดปุ่มเองก่อน แล้วรอให้ handler ของแอปเปิดกลับมา ถึงจะเป็นการรอที่จริง
+ *
+ *  ⚠️ ห้ามใช้ page.reload() แก้แทน · เทสพวกนี้เปิดหน้าด้วย openBlank() ซึ่งมี
+ *     addInitScript ที่ลบ localStorage และ addInitScript ทำงานใหม่ทุกครั้งที่โหลดหน้า
+ *     reload = ล้างของที่นำเข้าไปแล้วทิ้งทั้งหมด */
 async function importPlan(page, rows) {
+  await page.evaluate(() => { document.getElementById('btnParseSheet').disabled = true; });
   await upload(page, '#fileInput', await planWorkbook(rows), 'แผน.xlsx');
-  await expect(page.locator('#btnParseSheet')).toBeEnabled();
+  await expect(page.locator('#btnParseSheet'), 'รอให้ handler ของไฟล์ทำงานจบก่อน').toBeEnabled();
   await page.click('#btnParseSheet');
   await expect(page.locator('#previewPanel')).toBeVisible();
   await page.click('#btnConfirmImport');
@@ -60,10 +70,11 @@ test('นำเข้าไฟล์แผนทับ ต้องไม่ป�
   // ยกเลิกใบหนึ่งผ่านหน้าจอจริง
   await page.click('.tab-btn[data-tab="import"]');
   await page.fill('#voidSearch', 'TM5267H179');
-  await page.waitForTimeout(150);
+  await expect(page.locator('#orderVoidTable [data-void]')).toBeVisible();
   page.once('dialog', d => d.accept());
   await page.click('#orderVoidTable [data-void]');
-  await page.waitForTimeout(200);
+  await expect(page.locator('#orderVoidTable [data-void]'),
+    'ยกเลิกแล้วปุ่มต้องกลายเป็นกู้คืน — รอสัญญาณนี้แทนการนับเวลา').toHaveCount(0);
 
   // แล้วนำเข้าไฟล์เดิมทับ โดยยอดเปลี่ยนไป
   await importPlan(page, PLAN_ROWS.map(r =>
@@ -74,7 +85,7 @@ test('นำเข้าไฟล์แผนทับ ต้องไม่ป�
   expect(o.voided, 'แต่ต้องยังยกเลิกอยู่ ไม่ถูกปลุกกลับมา').toBe(true);
 
   await page.click('.tab-btn[data-tab="dashboard"]');
-  await page.waitForTimeout(150);
+  await expect(page.locator('#dashTable tbody tr').first()).toBeVisible();
   const dash = await page.$$eval('#dashTable tbody tr', t => t.map(x => x.textContent).join(' '));
   expect(dash, 'และต้องไม่โผล่กลับมาบน Dashboard').not.toContain('TM5267H179');
 });
