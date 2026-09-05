@@ -34,6 +34,19 @@ const PLAN_ROWS = [
 
 // ── นำเข้าแผนงานรายสัปดาห์ ─────────────────────────────────────────
 
+/** นำเข้าแผนหนึ่งรอบเต็ม — รอทุกจังหวะแทนการกดรัว ๆ
+ *
+ *  ⚠️ เขียนครั้งแรกเป็น click ติดกันสามที ผ่านในเครื่องแต่ตกใน CI ซึ่งช้ากว่า
+ *     เพราะกด "ยืนยันนำเข้า" ตั้งแต่แผงตัวอย่างยังไม่ทันขึ้น */
+async function importPlan(page, rows) {
+  await upload(page, '#fileInput', await planWorkbook(rows), 'แผน.xlsx');
+  await expect(page.locator('#btnParseSheet')).toBeEnabled();
+  await page.click('#btnParseSheet');
+  await expect(page.locator('#previewPanel')).toBeVisible();
+  await page.click('#btnConfirmImport');
+  await expect(page.locator('#previewPanel')).toBeHidden();
+}
+
 test('นำเข้าไฟล์แผนทับ ต้องไม่ปลุกใบที่ยกเลิกไปแล้วให้กลับมา', async ({ page }) => {
   /* ⚠️ ไฟล์แผนของ Delta ยังมี PO ที่เขายกเลิกไปแล้วอยู่ได้ ถ้านำเข้าแล้วปลุกกลับมา
    *    การยกเลิกจะไร้ความหมายทันทีในสัปดาห์ถัดไป
@@ -42,9 +55,7 @@ test('นำเข้าไฟล์แผนทับ ต้องไม่ป�
    *    เขียนแบบเลียนแบบไว้ครั้งแรก ผู้ตรวจทักว่ามันเทสตรรกะที่ตัวเทสเขียนเอง
    *    ไม่ใช่ตรรกะของแอป · ถ้าปุ่มนำเข้าเปลี่ยนวิธีทำงาน เทสจะยังเขียวอยู่ดี */
   await openBlank(page);
-  await upload(page, '#fileInput', await planWorkbook(PLAN_ROWS), 'แผน.xlsx');
-  await page.click('#btnParseSheet');
-  await page.click('#btnConfirmImport');
+  await importPlan(page, PLAN_ROWS);
 
   // ยกเลิกใบหนึ่งผ่านหน้าจอจริง
   await page.click('.tab-btn[data-tab="import"]');
@@ -55,10 +66,8 @@ test('นำเข้าไฟล์แผนทับ ต้องไม่ป�
   await page.waitForTimeout(200);
 
   // แล้วนำเข้าไฟล์เดิมทับ โดยยอดเปลี่ยนไป
-  await upload(page, '#fileInput', await planWorkbook(PLAN_ROWS.map(r =>
-    r.poNo === 'TM5267H179' ? Object.assign({}, r, { qty: 999 }) : r)), 'แผน.xlsx');
-  await page.click('#btnParseSheet');
-  await page.click('#btnConfirmImport');
+  await importPlan(page, PLAN_ROWS.map(r =>
+    r.poNo === 'TM5267H179' ? Object.assign({}, r, { qty: 999 }) : r));
 
   const o = (await orders(page)).find(x => x.poNo === 'TM5267H179');
   expect(o.orderQty, 'ยอดต้องถูกอัปเดตตามไฟล์').toBe(999);
