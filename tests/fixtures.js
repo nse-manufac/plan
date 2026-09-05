@@ -127,12 +127,18 @@ async function callInWorkbook(rows, opts = {}) {
   // ⚠️ ตำแหน่งคอลัมน์ Wip bal. ปรับได้ผ่าน opts.wipCol/opts.wipHeader — ของจริงเคยถูก
   //    แทรกคอลัมน์ใหม่เข้ามาจนเลื่อนจาก E ไป F มาแล้ว (3 ก.ย. 2026)
   //    ค่าเริ่มต้นยังเป็น E เหมือนเดิม เทสเดิมที่ไม่ส่ง opts นี้จึงไม่ต้องแก้อะไร
+  /* ⚠️ opts.qtyCol ไว้จำลองชีตแรกของไฟล์จริง ซึ่งมี "New SAP" แทรกอยู่ที่ D
+   *    ดัน PO QTY ไป E และ Wip bal. ไป F · สองชีตในไฟล์เดียวกันวางคอลัมน์ไม่ตรงกัน
+   *    ถ้าตั้ง qtyCol > 4 จะใส่หัว New SAP พร้อมเลขหลอกไว้ที่ 4 ให้ด้วย
+   *    เพื่อให้โค้ดที่ยังยึดคอลัมน์ D อ่านเลขหลอกนั้นมาเป็น PO QTY เหมือนของจริง */
+  const qtyCol = opts.qtyCol || 4;
   const wipCol = opts.wipCol || 5, agingCol = wipCol + 1;
   const head = ws.getRow(6);
-  [[1,'P/N'], [2,'PO  NO'], [3,'Order Date'], [4,'PO QTY'],
+  [[1,'P/N'], [2,'PO  NO'], [3,'Order Date'], [qtyCol, opts.qtyHeader === undefined ? 'PO QTY' : opts.qtyHeader],
    [wipCol, opts.wipHeader === undefined ? 'Wip bal.' : opts.wipHeader],
    [agingCol,'Aging'], [10,'commit']
   ].forEach(([c, v]) => { head.getCell(c).value = v; });
+  if(qtyCol > 4) head.getCell(4).value = 'New SAP';
 
   rows.forEach((r, i) => {
     const n = 7 + i;
@@ -140,7 +146,8 @@ async function callInWorkbook(rows, opts = {}) {
     row.getCell(1).value = r.pn;
     row.getCell(2).value = r.poNo;
     if (r.orderDate) row.getCell(3).value = new Date(r.orderDate + 'T00:00:00Z');
-    row.getCell(4).value = r.qty;
+    row.getCell(qtyCol).value = r.qty;
+    if(qtyCol > 4) row.getCell(4).value = 9999999;   // เลขหลอกในคอลัมน์ New SAP
     if (r.wip !== undefined) row.getCell(wipCol).value = r.wip;
     row.getCell(agingCol).value = { formula: `TODAY()-C${n}`, result: 0 };  // ดู result ที่ deliveryFormWorkbook
     if (r.commit !== undefined) row.getCell(10).value = r.commit;   // ของที่คนวางแผนกรอกเอง

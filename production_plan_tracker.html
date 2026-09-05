@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-05.5">
+<meta name="app-version" content="2026-09-06.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1892,7 +1892,28 @@ function saveAllocation(orderId, date, qty){
 
 let pendingCallIn = null;   // {zip, sheetMap, fileName}
 
-const CALLIN_COL = { pn:'A', po:'B', qty:'D' };
+/* หัวตารางของไฟล์ Call In — หาคอลัมน์จากข้อความ ไม่ยึดตัวอักษรคอลัมน์
+ *
+ * ⚠️ ยึดตำแหน่งตายตัวไม่ได้ · เปิดไฟล์ WK 35 ตัวจริงดูเมื่อ 5 ก.ย. 2026
+ *    สองชีตในไฟล์เดียวกันวางคอลัมน์ไม่ตรงกัน เพราะชีตแรกมี "New SAP" แทรกอยู่ที่ D
+ *
+ *      ชีตแรก    P/N=A  PO NO=B  PO QTY=E  Wip bal.=F
+ *      ชีตที่สอง  P/N=A  PO NO=B  PO QTY=D  Wip bal.=E
+ *
+ *    #53 แก้ให้ Wip bal. หาจากหัวตารางแล้ว แต่ qty ยังยึด 'D' อยู่ พออ่านชีตแรก
+ *    จึงเอาเลขของ New SAP มาเป็น PO QTY แล้วแผงเทียบยอดฟ้อง "PO QTY ไม่ตรง" มั่วทั้งชีต
+ *    ไม่ทำข้อมูลเสียเพราะ fileQty ใช้แค่ทำรายการเตือน แต่คนอ่านแล้วเลิกเชื่อหน้านี้
+ *
+ * ⚠️ เทียบแบบผ่อนปรน — ตัดทุกอย่างที่ไม่ใช่ตัวอักษรทิ้งก่อน กัน "PO  NO" (เว้นสองเคาะ)
+ *    "Wip bal." "WIP BAL" "Wip Balance" ถือเป็นชื่อเดียวกัน · ช่องที่เป็นตัวเลขล้วน
+ *    (หัวตารางมีคอลัมน์วันที่เป็นเลข serial) จะเหลือสตริงว่าง จึงไม่ไปชนกับใคร */
+const CALLIN_HEAD = [
+  {field:'pn',  label:'P/N',      test: n => n === 'pn'},
+  {field:'po',  label:'PO No.',   test: n => n.startsWith('pono')},
+  {field:'qty', label:'PO QTY',   test: n => n.startsWith('poqty')},
+  {field:'wip', label:'Wip bal.', test: n => n.startsWith('wipbal')}
+];
+const headNorm = txt => String(txt == null ? '' : txt).toLowerCase().replace(/[^a-z]/g, '');
 
 /** อ่านแถวข้อมูลของชีตที่เลือก แล้วจับคู่กับใบสั่งในเครื่อง
  *  จับคู่ด้วย PO + P/N เหมือนกุญแจของ order ในแอป (id = poNo|pn) */
@@ -1906,40 +1927,41 @@ async function readCallInSheet(zip, path){
     return m;
   };
 
-  // หาแถวหัวตารางจากข้อความ "P/N" ในคอลัมน์ A แทนที่จะ fix เลขแถวไว้
-  let headerIdx = -1;
+  /* หาแถวหัวตารางจากข้อความ "P/N" ที่ "ช่องไหนก็ได้" ไม่ใช่คอลัมน์ A เสมอ
+   *    และห้าม fix เลขแถวไว้ — ของจริงหัวตารางอยู่แถว 6 */
+  let headerIdx = -1, headerCells = null;
   for(let i=0;i<rows.length && i<20;i++){
-    if(cellText(cellsOf(rows[i])[CALLIN_COL.pn], shared).toUpperCase() === 'P/N'){ headerIdx = i; break; }
+    const cs = cellsOf(rows[i]);
+    for(const col in cs){
+      if(headNorm(cellText(cs[col], shared)) === 'pn'){ headerIdx = i; headerCells = cs; break; }
+    }
+    if(headerIdx > -1) break;
   }
   if(headerIdx < 0) return {error:'ไม่พบหัวตาราง "P/N" ในชีตนี้ — เลือกชีตให้ถูกก่อนครับ'};
 
-  /* ⚠️ คอลัมน์ Wip bal. ห้ามยึดตัวอักษรตายตัว — ไฟล์ของ Delta เคยแทรกคอลัมน์ใหม่เข้ามา
-   *    แล้วดันตำแหน่งจาก E ไป F มาแล้วจริง (พบ 3 ก.ย. 2026) ยึด E ต่อไปจะอ่านเลขของ
-   *    คอลัมน์ข้าง ๆ มาใส่เป็น Wip balance โดยไม่มีอะไรฟ้องเลย เพราะคอลัมน์ข้าง ๆ ก็มีเลขเหมือนกัน
-   *
-   *    หาโดยอ่านข้อความหัวตารางของ "แถวที่เจอจริง" ไม่ใช่แถว 1 เสมอ — Wip bal. อาจอยู่แถวอื่น
-   *    เทียบแบบผ่อนปรน ตัดช่องว่าง/จุด/ตัวพิมพ์ใหญ่เล็กทิ้งก่อน กัน "Wip bal." "WIP BAL" "Wip Balance"
-   *    ถือเป็นชื่อเดียวกัน · startsWith กันไว้เผื่อมีหน่วยต่อท้าย เช่น "Wip Bal (PCS)" */
-  const headerCells = cellsOf(rows[headerIdx]);
-  let wipCol = null;
-  for(const col in headerCells){
-    const norm = cellText(headerCells[col], shared).toLowerCase().replace(/[^a-z]/g, '');
-    if(norm.startsWith('wipbal')){ wipCol = col; break; }
+  // จับคู่ทุกคอลัมน์ที่ต้องใช้จากข้อความหัวตารางของ "แถวที่เจอจริง"
+  const col = {};
+  for(const c in headerCells){
+    const norm = headNorm(cellText(headerCells[c], shared));
+    if(!norm) continue;                                  // ช่องว่างหรือหัวที่เป็นตัวเลขล้วน
+    CALLIN_HEAD.forEach(h=>{ if(col[h.field] == null && h.test(norm)) col[h.field] = c; });
   }
-  if(!wipCol) return {error:'ไม่พบหัวตาราง "Wip bal." ในชีตนี้ — เลือกชีตให้ถูกก่อนครับ'};
+  const missing = CALLIN_HEAD.filter(h => col[h.field] == null);
+  if(missing.length) return {error:'ไม่พบหัวตาราง ' + missing.map(h=>'"'+h.label+'"').join(' และ ')
+    + ' ในชีตนี้ — เลือกชีตให้ถูกก่อนครับ'};
 
   const items = [];
   for(let i=headerIdx+1;i<rows.length;i++){
     const cs = cellsOf(rows[i]);
-    const pn = cellText(cs[CALLIN_COL.pn], shared);
-    const po = cellText(cs[CALLIN_COL.po], shared);
+    const pn = cellText(cs[col.pn], shared);
+    const po = cellText(cs[col.po], shared);
     if(!pn || !po) continue;
     items.push({
       rowNo: rows[i].getAttribute('r'),
       pn, po,
       id: po+'|'+pn,
-      fileQty: Number(cellText(cs[CALLIN_COL.qty], shared)) || 0,
-      fileWip: cellText(cs[wipCol], shared)
+      fileQty: Number(cellText(cs[col.qty], shared)) || 0,
+      fileWip: cellText(cs[col.wip], shared)
     });
   }
   return {items};
