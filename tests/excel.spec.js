@@ -34,6 +34,42 @@ const PLAN_ROWS = [
 
 // ── นำเข้าแผนงานรายสัปดาห์ ─────────────────────────────────────────
 
+test('นำเข้าไฟล์แผนทับ ต้องไม่ปลุกใบที่ยกเลิกไปแล้วให้กลับมา', async ({ page }) => {
+  /* ⚠️ ไฟล์แผนของ Delta ยังมี PO ที่เขายกเลิกไปแล้วอยู่ได้ ถ้านำเข้าแล้วปลุกกลับมา
+   *    การยกเลิกจะไร้ความหมายทันทีในสัปดาห์ถัดไป
+   *
+   * ⚠️ ข้อนี้ต้องขับผ่านปุ่มนำเข้าจริง ห้ามเลียนแบบ Object.assign ในตัวเทส
+   *    เขียนแบบเลียนแบบไว้ครั้งแรก ผู้ตรวจทักว่ามันเทสตรรกะที่ตัวเทสเขียนเอง
+   *    ไม่ใช่ตรรกะของแอป · ถ้าปุ่มนำเข้าเปลี่ยนวิธีทำงาน เทสจะยังเขียวอยู่ดี */
+  await openBlank(page);
+  await upload(page, '#fileInput', await planWorkbook(PLAN_ROWS), 'แผน.xlsx');
+  await page.click('#btnParseSheet');
+  await page.click('#btnConfirmImport');
+
+  // ยกเลิกใบหนึ่งผ่านหน้าจอจริง
+  await page.click('.tab-btn[data-tab="import"]');
+  await page.fill('#voidSearch', 'TM5267H179');
+  await page.waitForTimeout(150);
+  page.once('dialog', d => d.accept());
+  await page.click('#orderVoidTable [data-void]');
+  await page.waitForTimeout(200);
+
+  // แล้วนำเข้าไฟล์เดิมทับ โดยยอดเปลี่ยนไป
+  await upload(page, '#fileInput', await planWorkbook(PLAN_ROWS.map(r =>
+    r.poNo === 'TM5267H179' ? Object.assign({}, r, { qty: 999 }) : r)), 'แผน.xlsx');
+  await page.click('#btnParseSheet');
+  await page.click('#btnConfirmImport');
+
+  const o = (await orders(page)).find(x => x.poNo === 'TM5267H179');
+  expect(o.orderQty, 'ยอดต้องถูกอัปเดตตามไฟล์').toBe(999);
+  expect(o.voided, 'แต่ต้องยังยกเลิกอยู่ ไม่ถูกปลุกกลับมา').toBe(true);
+
+  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.waitForTimeout(150);
+  const dash = await page.$$eval('#dashTable tbody tr', t => t.map(x => x.textContent).join(' '));
+  expect(dash, 'และต้องไม่โผล่กลับมาบน Dashboard').not.toContain('TM5267H179');
+});
+
 test('C1 + C3 — นำเข้าแผนแล้ววันที่ทุกช่องต้องเป็น YYYY-MM-DD ไม่เลื่อนวัน', async ({ page }) => {
   await openBlank(page);
   await upload(page, '#fileInput', await planWorkbook(PLAN_ROWS), 'แผน.xlsx');

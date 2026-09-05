@@ -129,25 +129,6 @@ test('กู้คืนใบสั่งที่ยกเลิกแล้�
   expect(dash.join(' '), 'กู้คืนแล้วต้องกลับมาบน Dashboard').toContain('PO-1');
 });
 
-test('นำเข้าไฟล์แผนใหม่ทับ ต้องไม่ปลุกใบที่ยกเลิกไปแล้วให้กลับมา', async ({ page }) => {
-  /* ⚠️ ไฟล์แผนของ Delta ยังมี PO ที่เขายกเลิกไปแล้วอยู่ได้ ถ้านำเข้าแล้วปลุกกลับมา
-   *    การยกเลิกจะไร้ความหมายทันทีในสัปดาห์ถัดไป · กันไว้ด้วยการที่ Object.assign
-   *    ทับเฉพาะฟิลด์ที่มาจากไฟล์ ซึ่งไม่มี voided */
-  const orders = seedState().orders.map(o =>
-    o.id === 'O1' ? Object.assign({}, o, { voided: true }) : o);
-  await openApp(page, [], orders);
-
-  const still = await page.evaluate(k => {
-    const st = JSON.parse(localStorage.getItem(k));
-    const it = { id: 'O1', week: 'W32', poNo: 'PO-1', pn: 'PN-1', orderQty: 999, orderDate: '2026-08-08' };
-    const i = st.orders.findIndex(o => o.id === it.id);
-    st.orders[i] = Object.assign({}, st.orders[i], it);   // ตรรกะเดียวกับ btnConfirmImport
-    return st.orders[i];
-  }, K_STATE);
-  expect(still.orderQty, 'ยอดต้องถูกอัปเดตตามไฟล์').toBe(999);
-  expect(still.voided, 'แต่ต้องยังยกเลิกอยู่').toBe(true);
-});
-
 /** วันของ N วันก่อน ในรูปแบบ YYYY-MM-DD ตามนาฬิกาเครื่อง — ให้ตรงกับ todayISO() ของแอป */
 function isoDaysAgo(n) {
   const d = new Date();

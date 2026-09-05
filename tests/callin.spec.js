@@ -99,6 +99,33 @@ test('ต้องรายงานทั้งสองทิศ — PO ที
   await expect(page.locator('#callInTable')).toContainText('PO-NOTINAPP');
 });
 
+test('ใบที่ยกเลิกแล้ว — จอกับที่เก็บจริงต้องนับตรงกัน', async ({ page }) => {
+  /* ⚠️ ผู้ตรวจทักไว้ใน #66 · planCallIn ใช้ state.orders ทั้งก้อน แต่ saveDeltaWip
+   *    ใช้ activeOrders() ใบที่ยกเลิกแล้วจึงถูกนับเป็น "เทียบได้" บนจอ
+   *    แต่ตอนกดเก็บกลับถูกข้าม จำนวนที่เห็นกับที่เก็บจริงไม่เท่ากันเงียบ ๆ */
+  const voided = Object.assign(order('PO-C040', '9100000040', 300), { voided: true });
+  await openWith(page, [order('PO-C041', '9100000041', 300), voided]);
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 },
+    { pn: '9100000040', poNo: 'PO-C040', orderDate: '2026-07-06', qty: 300, wip: 250 }
+  ]), 'X-FRM wk34');
+
+  /* ⚠️ ต้องเทียบ "จำนวน" ไม่ใช่ข้อความ · สองบรรทัดนี้ถูกใส่ในยอดสรุปเสมอแม้จำนวนเป็น 0
+   *    เขียนเป็น toContainText('Delta รู้จัก เราไม่รู้จัก') ไว้ครั้งแรก แล้วย้อนโค้ดกลับ
+   *    ก็ยังเขียว = ไม่ได้ตรวจอะไรเลย */
+  const sum = await page.locator('#callInSummary').innerText();
+  expect(sum, 'ใบที่เรายกเลิกแล้ว ต้องนับเป็น "เราไม่รู้จัก" หนึ่งแถว')
+    .toContain('แถวในไฟล์ที่ไม่มีใบนั้นในแอป 1');
+  expect(sum, 'และต้องเหลือใบที่จับคู่ได้แค่ใบเดียว')
+    .toContain('จับคู่ PO ได้ 1 แถว');
+
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+  const live = await page.evaluate(k =>
+    JSON.parse(localStorage.getItem(k)).deltaWip.filter(d => !d.voided).map(d => d.orderId), K_STATE);
+  expect(live, 'เก็บเฉพาะใบที่ยังใช้งานอยู่ ตรงกับที่จอบอก').toEqual(['PO-C041|9100000041']);
+});
+
 test('PO QTY ไม่ตรงกัน ต้องเตือนแยกจากยอดค้างไม่ตรง เพราะร้ายแรงกว่า', async ({ page }) => {
   // ยอดสั่งคนละเลข แปลว่าสองฝั่งมองใบสั่งเดียวกันไม่เหมือนกันตั้งแต่ต้น
   await openWith(page, [order('PO-C041', '9100000041', 250), ORDERS[1]]);
