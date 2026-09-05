@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-05.1">
+<meta name="app-version" content="2026-09-05.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1210,6 +1210,9 @@ async function doSync(silent = true){
       const dirtyWip = state.deltaWip.filter(d=>d._dirty);
       if(dirtyWip.length){
         const res = await gsApi('pushRows', {table:'DeltaWip', rows: dirtyWip.map(r=>cleanForPush(r, 'DeltaWip'))});
+        // ⚠️ บรรทัดนี้เขียนทับ updatedAt ของทุกแถวที่ push ไม่ว่าเป็นงวดไหน (D4)
+        //    latestDeltaWeek() จึงห้ามตัดสิน "งวดล่าสุด" จาก updatedAt เด็ดขาด
+        //    เครื่องที่ออฟไลน์ค้างงวดเก่าไว้ พอกลับมาซิงค์จะทำให้งวดเก่าได้เวลาใหม่สุด
         dirtyWip.forEach(d=>{ d._dirty=false; if(res.serverTime) d.updatedAt=res.serverTime; });
       }
       const pulledWip = await gsApi('pullRows', {table:'DeltaWip', since: syncCfg.lastPullDeltaWip});
@@ -1452,37 +1455,37 @@ function wipBalance(order, cum){
   return Math.max(0, (order.orderQty||0) - ((cum && cum.shipping) || 0));
 }
 
-/** ยอดค้างส่งที่ Delta บันทึกไว้ สำหรับใบสั่งใบหนึ่ง — เอางวดใหม่สุดที่มี
- *
- *  ⚠️ นี่ไม่ใช่ยอดเดียวกับ wipBalance() ห้ามเอามาแทนกัน
- *     wipBalance() คือยอดค้างตามบัญชีของเรา — ใช้ตัดสินว่าจะโชว์ PO ไหนบนจอ
- *     ตัวนี้คือยอดค้างตามบัญชีของ Delta — ใช้เป็นเลขที่พิมพ์ลงกระดาษเท่านั้น
- *     สองเลขนี้ไม่ตรงกันได้ และนั่นคือข้อมูล ไม่ใช่บั๊ก
- *
- *  เลือกงวดด้วยเลขสัปดาห์ที่มากที่สุด ไม่ใช่เวลาที่นำเข้าล่าสุด
- *  เพราะถ้าเปิดไฟล์เก่าดูย้อนหลัง เลขบนใบส่งของต้องไม่เปลี่ยนตาม
- *  ข้อจำกัด: ข้ามปีแล้ว wk52 จะยังชนะ wk01 — หน้าจอโชว์เลขงวดไว้ให้คนเห็นเองว่าเก่า */
 /** งวดของไฟล์ Call In ที่นำเข้าล่าสุด — คืน null ถ้ายังไม่เคยนำเข้าอะไรเลย
  *
- *  ⚠️ ตัดสินจาก "เวลาที่นำเข้า" ไม่ใช่ "เลขสัปดาห์ที่มากที่สุด"
+ *  ⚠️ ตัดสินจาก createdAt ห้ามใช้ updatedAt และห้ามใช้เลขสัปดาห์
  *
- *     เลขสัปดาห์วนปี — WK 52 แล้วขึ้น WK 1 ใหม่ ถ้าเทียบด้วยเลข พอขึ้นปีใหม่
- *     WK 1 จะแพ้ WK 52 ตลอดไป ไฟล์ของปีใหม่จะไม่มีวันถูกใช้เลย ซึ่งแย่กว่าของเดิม
- *     ช่อง week เก็บแต่เลขสัปดาห์ ไม่มีปีกำกับ จึงเทียบเป็นตัวเลขไม่ได้
- *     ส่วน updatedAt เป็น ISO เต็มมีปีอยู่ในตัว
+ *  ทำไมไม่ใช้เลขสัปดาห์ — เลขสัปดาห์วนปี WK 52 แล้วขึ้น WK 1 ใหม่
+ *  ช่อง week เก็บแต่เลข ไม่มีปีกำกับ พอขึ้นปีใหม่ WK 1 จะแพ้ WK 52 ตลอดไป
+ *  ไฟล์ของปีใหม่จะไม่มีวันถูกใช้เลย
  *
- *  ใช้ updatedAt ไม่ใช่ createdAt เพราะการนำเข้าไฟล์งวดเดิมซ้ำจะอัปเดตแถวเดิม
- *  (createdAt ห้ามแก้หลังสร้าง — INVARIANTS B4)
+ *  ทำไมไม่ใช้ updatedAt — ซิงค์เขียนทับค่านั้นได้ (ผู้ตรวจจับได้ใน #63)
+ *    · หลัง push สำเร็จ ทุกแถวที่ _dirty ถูกตั้ง updatedAt = เวลาของเซิร์ฟเวอร์ (D4)
+ *    · ตอนบูต แถวที่ยังไม่เคยซิงค์ถูกตั้ง _dirty ทั้งหมด (D5)
+ *  เครื่องที่ออฟไลน์ค้างไว้พร้อมงวดเก่า พอกลับมาซิงค์จะ push งวดเก่าทีหลัง
+ *  งวดเก่าจึงได้เวลาใหม่สุด แล้วทั้งเครื่องจะย้อนไปใช้งวดเก่า
+ *  ใบของงวดปัจจุบันกลายเป็น "ไม่มียอด Delta" ทุกใบ และเพราะช่องติ๊กของ #61
+ *  ติ๊กไว้เป็นค่าเริ่มต้น ใบเหล่านั้นจะหายจากหน้าจอจนส่งของไม่ได้ทั้งหน่วย
+ *  นาฬิกาเครื่องที่เดินช้ากว่าเซิร์ฟเวอร์ก็ให้ผลแบบเดียวกัน
+ *
+ *  createdAt เขียนครั้งเดียวตอนสร้างแถว ห้ามแก้หลังจากนั้น (B4)
+ *  การ push ไม่แตะ และการ pull ก็ได้ค่าเดิมกลับมา จึงนิ่งข้ามเครื่อง
+ *  ผลพลอยได้ — เปิดไฟล์งวดเก่าดูย้อนหลังแล้วกดเก็บยอด เลขบนใบส่งของไม่เปลี่ยนตาม
+ *  ซึ่งเป็นข้อรับประกันเดิมที่เคยเขียนไว้ตรงนี้
  *
  *  ⚠️ เวลาเท่ากันเป๊ะ ให้ตัดสินด้วยเลขสัปดาห์ที่มากกว่า
- *     เกิดได้จริงกับแถวที่ซิงค์มาพร้อมกัน หรือที่กู้มาจากไฟล์สำรองชุดเดียวกัน
+ *     เกิดได้จริงกับแถวที่กู้มาจากไฟล์สำรองชุดเดียวกัน
  *     ถ้าไม่มีตัวตัดสินสำรอง ผลจะขึ้นกับลำดับในอาร์เรย์ซึ่งไม่แน่นอน */
 function latestDeltaWeek(){
   let newest = null;
   state.deltaWip.forEach(d=>{
     if(d.voided) return;
     if(!newest){ newest = d; return; }
-    const a = String(d.updatedAt||''), b = String(newest.updatedAt||'');
+    const a = String(d.createdAt||''), b = String(newest.createdAt||'');
     if(a > b || (a === b && (Number(d.week)||0) > (Number(newest.week)||0))) newest = d;
   });
   return newest ? String(newest.week) : null;
@@ -1511,7 +1514,8 @@ function deltaWipOf(orderId){
   let best = null;
   state.deltaWip.forEach(d=>{
     if(d.voided || d.orderId !== orderId || String(d.week) !== latest) return;
-    if(!best || String(d.updatedAt||'') > String(best.updatedAt||'')) best = d;
+    // เทียบด้วย createdAt ด้วยเหตุผลเดียวกับ latestDeltaWeek()
+    if(!best || String(d.createdAt||'') > String(best.createdAt||'')) best = d;
   });
   return best;
 }
