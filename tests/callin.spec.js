@@ -136,6 +136,131 @@ test('ช่อง Wip ที่ Delta เว้นว่าง แปลว่�
   expect(kept[0].wip).toBe(180);
 });
 
+/* ── #62 · ไฟล์ที่นำเข้าล่าสุดคือความจริงของหน่วยนั้นทั้งชุด ────────────────
+ *
+ * พนักงานแจ้ง 5 ก.ย. 2026 — อัปไฟล์ wk35 ครั้งแรกตอนตัวอ่านยังพัง (ก่อน #53)
+ * โปรแกรมเก็บเลข PO Qty ผิด ๆ ไว้ · พอ #53 แก้ตัวอ่านแล้วอัป wk35 ใหม่
+ * ยอดยังผิดอยู่ เพราะช่อง Wip bal. ของใบนั้น "ว่าง" และโค้ดเดิม return ทันที
+ * แถวที่ผิดจึงรอดมาตลอด — การอัปทับไม่มีทางแก้ข้อมูลที่ผิดได้เลย
+ *
+ * ⚠️ ขอบเขตการล้างคือ Sub-Name ไม่ใช่งวด เพราะไฟล์ Call In แยกชีตตามหน่วย
+ *    (TUE-U ชีตหนึ่ง TUE-H อีกชีตหนึ่ง) นำเข้าทีละชีต
+ *    ถ้าล้างตามงวด นำเข้าชีต TUE-U แล้วยอดของ TUE-H จะหายทั้งหน่วย */
+
+const orderIn = (poNo, pn, qty, subName) => Object.assign(order(poNo, pn, qty), { subName });
+const liveWip = page => page.evaluate(k =>
+  JSON.parse(localStorage.getItem(k)).deltaWip.filter(d => !d.voided)
+    .map(d => d.orderId + '=' + d.wip).sort(), K_STATE);
+
+test('#62 — อัปไฟล์ใหม่ที่ช่อง Wip bal. ว่าง ต้องลบยอดเดิมที่ผิดออก', async ({ page }) => {
+  await openWith(page, [order('PO-C041', '9100000041', 300), order('PO-C040', '9100000040', 300)]);
+
+  // รอบแรก — ตัวอ่านยังพัง เก็บเลขผิดไว้ให้ PO-C040
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 },
+    { pn: '9100000040', poNo: 'PO-C040', orderDate: '2026-07-06', qty: 300, wip: 300 }
+  ]), 'X-FRM wk34');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+  expect(await liveWip(page), 'รอบแรกเก็บทั้งสองใบ')
+    .toEqual(['PO-C040|9100000040=300', 'PO-C041|9100000041=180']);
+
+  // รอบสอง — ไฟล์เดิมที่แก้แล้ว ช่องของ PO-C040 ว่าง
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 },
+    { pn: '9100000040', poNo: 'PO-C040', orderDate: '2026-07-06', qty: 300 }   // ← ว่าง
+  ]), 'X-FRM wk34');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+
+  expect(await liveWip(page), 'ยอดที่ผิดของใบที่ช่องว่าง ต้องหายไป ไม่ใช่รอดมา')
+    .toEqual(['PO-C041|9100000041=180']);
+});
+
+test('#62 — ใบที่หายไปจากไฟล์รอบใหม่ ต้องไม่เหลือยอดค้างอยู่', async ({ page }) => {
+  await openWith(page, [order('PO-C041', '9100000041', 300), order('PO-C040', '9100000040', 300)]);
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 },
+    { pn: '9100000040', poNo: 'PO-C040', orderDate: '2026-07-06', qty: 300, wip: 250 }
+  ]), 'X-FRM wk34');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+
+  // งวดใหม่ Delta ไม่ได้ใส่ PO-C040 มาแล้ว
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 90 }
+  ], { sheetName: 'X-FRM wk35' }), 'X-FRM wk35');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+
+  expect(await liveWip(page), 'ใบที่ไม่อยู่ในไฟล์รอบใหม่ = ไม่ใช่ของรอบนี้')
+    .toEqual(['PO-C041|9100000041=90']);
+});
+
+test('#62 — นำเข้าชีตของหน่วยหนึ่ง ต้องไม่แตะยอดของอีกหน่วย', async ({ page }) => {
+  // ⚠️ ข้อนี้สำคัญที่สุดของกติกาใหม่ — ไฟล์ Call In แยกชีตตามหน่วย นำเข้าทีละชีต
+  await openWith(page, [
+    orderIn('PO-U001', '9100000041', 300, 'TUE-U'),
+    orderIn('PO-H001', '9100000070', 400, 'TUE-H')
+  ]);
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-U001', orderDate: '2026-07-06', qty: 300, wip: 111 },
+    { pn: '9100000070', poNo: 'PO-H001', orderDate: '2026-07-06', qty: 400, wip: 222 }
+  ]), 'X-FRM wk34');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+  expect(await liveWip(page)).toEqual(['PO-H001|9100000070=222', 'PO-U001|9100000041=111']);
+
+  // ชีตของ TUE-U งวดใหม่ — มีแต่ใบของ TUE-U
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-U001', orderDate: '2026-07-06', qty: 300, wip: 55 }
+  ], { sheetName: 'X-FRM wk35' }), 'X-FRM wk35');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+
+  expect(await liveWip(page), 'TUE-U อัปเดต · TUE-H ต้องอยู่เหมือนเดิม')
+    .toEqual(['PO-H001|9100000070=222', 'PO-U001|9100000041=55']);
+});
+
+test('#62 — ประวัติต้องเก็บไว้เป็นแถวที่ยกเลิก ไม่ใช่ลบทิ้งจาก array', async ({ page }) => {
+  // INVARIANTS B1 — ลบออกจาก array แต่เซิร์ฟเวอร์ยังมี ซิงค์รอบหน้าจะดึงกลับมาใหม่
+  await openWith(page, [order('PO-C041', '9100000041', 300)]);
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 }
+  ]), 'X-FRM wk34');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 90 }
+  ], { sheetName: 'X-FRM wk35' }), 'X-FRM wk35');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+
+  const all = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).deltaWip, K_STATE);
+  expect(all.length, 'แถวเก่าต้องยังอยู่ใน array').toBe(2);
+  expect(all.filter(d => d.voided).length, 'ของงวดเก่าต้องถูกยกเลิก ไม่ใช่หายไป').toBe(1);
+  expect(all.filter(d => d.voided)[0].wip, 'และยอดเดิมต้องไม่ถูกแก้').toBe(180);
+  expect(all.every(d => d._dirty), 'ทุกแถวที่แตะต้องถูกมาร์คให้ซิงค์ขึ้นไป').toBe(true);
+});
+
+test('#62 — ไฟล์ที่ไม่มีใบที่เรารู้จักเลย ต้องไม่ล้างอะไรทั้งสิ้น', async ({ page }) => {
+  // กันคนเผลอเลือกชีตผิดแล้วยอดของทั้งหน่วยหายไปเฉย ๆ
+  await openWith(page, [order('PO-C041', '9100000041', 300)]);
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 }
+  ]), 'X-FRM wk34');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+
+  await scan(page, await callInWorkbook([
+    { pn: '9199999999', poNo: 'PO-NOTOURS', orderDate: '2026-07-06', qty: 500, wip: 500 }
+  ], { sheetName: 'X-FRM wk35' }), 'X-FRM wk35');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+
+  expect(await liveWip(page), 'ยอดเดิมต้องอยู่ครบ').toEqual(['PO-C041|9100000041=180']);
+});
+
 test('G1 — เลือกชีตผิดต้องขึ้นข้อความภาษาไทยบอกตรง ๆ ไม่ใช่เงียบหรือเขียนมั่ว', async ({ page }) => {
   await openWith(page, ORDERS);
   await page.setInputFiles('#callInFileInput',

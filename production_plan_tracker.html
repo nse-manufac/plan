@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-05.2">
+<meta name="app-version" content="2026-09-05.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1210,9 +1210,6 @@ async function doSync(silent = true){
       const dirtyWip = state.deltaWip.filter(d=>d._dirty);
       if(dirtyWip.length){
         const res = await gsApi('pushRows', {table:'DeltaWip', rows: dirtyWip.map(r=>cleanForPush(r, 'DeltaWip'))});
-        // ⚠️ บรรทัดนี้เขียนทับ updatedAt ของทุกแถวที่ push ไม่ว่าเป็นงวดไหน (D4)
-        //    latestDeltaWeek() จึงห้ามตัดสิน "งวดล่าสุด" จาก updatedAt เด็ดขาด
-        //    เครื่องที่ออฟไลน์ค้างงวดเก่าไว้ พอกลับมาซิงค์จะทำให้งวดเก่าได้เวลาใหม่สุด
         dirtyWip.forEach(d=>{ d._dirty=false; if(res.serverTime) d.updatedAt=res.serverTime; });
       }
       const pulledWip = await gsApi('pullRows', {table:'DeltaWip', since: syncCfg.lastPullDeltaWip});
@@ -1455,67 +1452,26 @@ function wipBalance(order, cum){
   return Math.max(0, (order.orderQty||0) - ((cum && cum.shipping) || 0));
 }
 
-/** งวดของไฟล์ Call In ที่นำเข้าล่าสุด — คืน null ถ้ายังไม่เคยนำเข้าอะไรเลย
+/** ยอดค้างส่งที่ Delta บันทึกไว้ สำหรับใบสั่งใบหนึ่ง
  *
- *  ⚠️ ตัดสินจาก createdAt ห้ามใช้ updatedAt และห้ามใช้เลขสัปดาห์
+ *  ⚠️ นี่ไม่ใช่ยอดเดียวกับ wipBalance() ห้ามเอามาแทนกัน
+ *     wipBalance() คือยอดค้างตามบัญชีของเรา — ใช้ตัดสินว่าจะโชว์ PO ไหนบนจอ
+ *     ตัวนี้คือยอดค้างตามบัญชีของ Delta — ใช้เป็นเลขที่พิมพ์ลงกระดาษเท่านั้น
+ *     สองเลขนี้ไม่ตรงกันได้ และนั่นคือข้อมูล ไม่ใช่บั๊ก
  *
- *  ทำไมไม่ใช้เลขสัปดาห์ — เลขสัปดาห์วนปี WK 52 แล้วขึ้น WK 1 ใหม่
- *  ช่อง week เก็บแต่เลข ไม่มีปีกำกับ พอขึ้นปีใหม่ WK 1 จะแพ้ WK 52 ตลอดไป
- *  ไฟล์ของปีใหม่จะไม่มีวันถูกใช้เลย
+ *  ตั้งแต่ 5 ก.ย. 2026 การนำเข้าไฟล์ Call In ยกเลิกยอดเดิมของหน่วยนั้นทั้งหมดก่อนเขียนใหม่
+ *  (ดู saveDeltaWip) ปกติจึงเหลือแถวที่ยังไม่ถูกยกเลิกไม่เกินใบละหนึ่งแถว
+ *  ไม่ต้องมีตรรกะ "งวดล่าสุด" อีก และไม่ต้องเทียบเลขสัปดาห์หรือเวลาให้พลาด
  *
- *  ทำไมไม่ใช้ updatedAt — ซิงค์เขียนทับค่านั้นได้ (ผู้ตรวจจับได้ใน #63)
- *    · หลัง push สำเร็จ ทุกแถวที่ _dirty ถูกตั้ง updatedAt = เวลาของเซิร์ฟเวอร์ (D4)
- *    · ตอนบูต แถวที่ยังไม่เคยซิงค์ถูกตั้ง _dirty ทั้งหมด (D5)
- *  เครื่องที่ออฟไลน์ค้างไว้พร้อมงวดเก่า พอกลับมาซิงค์จะ push งวดเก่าทีหลัง
- *  งวดเก่าจึงได้เวลาใหม่สุด แล้วทั้งเครื่องจะย้อนไปใช้งวดเก่า
- *  ใบของงวดปัจจุบันกลายเป็น "ไม่มียอด Delta" ทุกใบ และเพราะช่องติ๊กของ #61
- *  ติ๊กไว้เป็นค่าเริ่มต้น ใบเหล่านั้นจะหายจากหน้าจอจนส่งของไม่ได้ทั้งหน่วย
- *  นาฬิกาเครื่องที่เดินช้ากว่าเซิร์ฟเวอร์ก็ให้ผลแบบเดียวกัน
- *
- *  createdAt เขียนครั้งเดียวตอนสร้างแถว ห้ามแก้หลังจากนั้น (B4)
- *  การ push ไม่แตะ และการ pull ก็ได้ค่าเดิมกลับมา จึงนิ่งข้ามเครื่อง
- *  ผลพลอยได้ — เปิดไฟล์งวดเก่าดูย้อนหลังแล้วกดเก็บยอด เลขบนใบส่งของไม่เปลี่ยนตาม
- *  ซึ่งเป็นข้อรับประกันเดิมที่เคยเขียนไว้ตรงนี้
- *
- *  ⚠️ เวลาเท่ากันเป๊ะ ให้ตัดสินด้วยเลขสัปดาห์ที่มากกว่า
- *     เกิดได้จริงกับแถวที่กู้มาจากไฟล์สำรองชุดเดียวกัน
- *     ถ้าไม่มีตัวตัดสินสำรอง ผลจะขึ้นกับลำดับในอาร์เรย์ซึ่งไม่แน่นอน */
-function latestDeltaWeek(){
-  let newest = null;
-  state.deltaWip.forEach(d=>{
-    if(d.voided) return;
-    if(!newest){ newest = d; return; }
-    const a = String(d.createdAt||''), b = String(newest.createdAt||'');
-    if(a > b || (a === b && (Number(d.week)||0) > (Number(newest.week)||0))) newest = d;
-  });
-  return newest ? String(newest.week) : null;
-}
-
-/** ยอดค้างของ Delta สำหรับใบสั่งหนึ่งใบ — เฉพาะของงวดที่นำเข้าล่าสุดเท่านั้น
- *
- *  ⚠️ ใบที่ไม่มีในไฟล์ล่าสุด ต้องคืน null ห้ามถอยไปหยิบงวดเก่ามาแทน
- *
- *     พนักงานแจ้ง 5 ก.ย. 2026 (issue #62) ว่าไฟล์ Call In ไม่มียอดของใบหนึ่ง
- *     แต่หน้าใบส่งของยังโชว์ตัวเลข และตัวเลขนั้นบังเอิญเท่ากับ PO QTY พอดี
- *     สาเหตุคือของเดิมหยิบงวดที่เลขสูงสุดเท่าที่เคยเก็บมาเสมอ ไม่มีวันหมดอายุ
- *     ใบที่ตอนงวดเก่ายังไม่ได้ส่งอะไร ยอดค้างจึงเท่ากับยอดสั่งพอดี
- *
- *     เลขนี้ไม่ได้อยู่แค่บนจอ — ถูกพิมพ์ลงช่อง Wip bal. ของ FM-ST-07 ที่ส่งให้ลูกค้า
- *     และใช้ในคอลัมน์เทียบยอดของหน้ายอดคงคลัง FG ด้วย
- *     ช่องว่างบนกระดาษบอกความจริงว่าเราไม่มีข้อมูล ดีกว่าเลขเก่าที่ดูเหมือนของจริง
- *     (เหตุผลเดียวกับที่ saveDeltaWip ไม่เก็บช่องว่างเป็น 0)
- *
- *  ⚠️ นี่เป็นการกรอง "ตอนแสดงผล" เท่านั้น — แถวของทุกงวดยังอยู่ครบใน state.deltaWip
- *     ไม่มีการ void และไม่มีการลบ เจ้าของเลือกไว้ว่าให้เก็บประวัติไว้ทั้งหมด
- *     แต่ให้ไฟล์ใหม่ทับการแสดงผลเสมอ (5 ก.ย. 2026) */
+ *  ที่ยังเทียบไว้เป็นแค่ตัวกันเหนียว เผื่อเครื่องที่ยังไม่ได้อัปเดตซิงค์ของเก่ากลับเข้ามา
+ *  เอาแถวที่สร้างทีหลังก่อน แล้วค่อยดูเลขสัปดาห์ */
 function deltaWipOf(orderId){
-  const latest = latestDeltaWeek();
-  if(latest == null) return null;
   let best = null;
   state.deltaWip.forEach(d=>{
-    if(d.voided || d.orderId !== orderId || String(d.week) !== latest) return;
-    // เทียบด้วย createdAt ด้วยเหตุผลเดียวกับ latestDeltaWeek()
-    if(!best || String(d.createdAt||'') > String(best.createdAt||'')) best = d;
+    if(d.voided || d.orderId !== orderId) return;
+    if(!best) { best = d; return; }
+    const a = String(d.createdAt||''), b = String(best.createdAt||'');
+    if(a > b || (a === b && (Number(d.week)||0) > (Number(best.week)||0))) best = d;
   });
   return best;
 }
@@ -1530,16 +1486,64 @@ function weekFromSheetName(name){
 /** เก็บยอดของ Delta จากไฟล์ที่เพิ่งเทียบ — หนึ่งแถวต่อ (ใบสั่ง + งวด)
  *  นำเข้าชีตที่สองของงวดเดียวกันต้อง "เพิ่ม" ไม่ใช่ทับของชีตแรก
  *  เพราะไฟล์จริงมีหลายชีตต่อหนึ่งสัปดาห์ แบ่งตามกลุ่มสินค้า */
+/** เก็บยอดของ Delta จากไฟล์ Call In หนึ่งชีต
+ *
+ *  ── กติกา: ไฟล์ที่นำเข้าล่าสุดคือความจริงของหน่วยนั้นทั้งชุด ─────────────
+ *
+ *  เจ้าของสั่ง 5 ก.ย. 2026 หลังเจอ issue #62 ของจริง
+ *
+ *  ⚠️ ขอบเขตคือ "หน่วย" ไม่ใช่ "งวด" — ไฟล์ Call In ของ Delta แยกชีตตามหน่วย
+ *     (TUE-U ชีตหนึ่ง TUE-H อีกชีตหนึ่ง) นำเข้าทีละชีต
+ *     ถ้าล้างตามงวด นำเข้าชีต TUE-U แล้วยอด TUE-H จะหายทั้งหน่วย
+ *
+ *  ⚠️ แยกหน่วยจาก "รหัส PO" ด้วย subNameFromPo() ทั้งสองฝั่ง
+ *     เจ้าของยืนยัน 5 ก.ย. 2026 ว่าในใบ Call In ไม่มีชื่อหน่วยเขียนไว้เลย
+ *     มีแต่รหัส PO ที่ใช้แยกได้ · ชื่อชีตก็เชื่อไม่ได้เพราะเปลี่ยนมาแล้ว
+ *
+ *     และห้ามใช้ order.subName ที่เก็บไว้ด้วย — ใบที่นำเข้าก่อน 4 ก.ย. 2026
+ *     และยังไม่ได้กดปุ่มคำนวณ Sub-Name ใหม่ ยังถือค่าเดิมจากคอลัมน์ C ซึ่งมีที่ผิดปนอยู่
+ *     ถ้าใช้ค่านั้น การล้างอาจไปโดนหน่วยผิด
+ *
+ *  ทำไมต้องล้างก่อนเขียน ไม่ใช่แค่เขียนทับทีละใบ — เพราะของเดิมแก้ไม่ได้ด้วยการเขียนทับ
+ *    · ใบที่ช่อง Wip bal. ว่าง โค้ดเดิม return ทันที แถวเดิมที่ผิดจึงรอดมาตลอด
+ *      เจ้าของอัปไฟล์ wk35 ใหม่หลัง #53 แก้ตัวอ่านแล้ว แต่ยอดยังผิดเพราะเหตุนี้
+ *    · ใบที่หายไปจากไฟล์รอบใหม่ ไม่มีอะไรไปลบของเก่าให้
+ *
+ *  ⚠️ ยกเลิกด้วย voided ห้าม splice ออกจาก array (INVARIANTS B1)
+ *     ลบออกจาก array แต่เซิร์ฟเวอร์ยังมี การซิงค์รอบหน้าจะดึงกลับมาใหม่
+ *     voided ทำให้หายจากโปรแกรม แต่ประวัติยังอยู่บน Google Sheets ให้ย้อนดูได้
+ *
+ *  ⚠️ ไฟล์ที่ไม่มีใบที่เรารู้จักเลย ต้องไม่ล้างอะไรทั้งสิ้น
+ *     กันคนเผลอเลือกชีตผิดแล้วยอดของทั้งหน่วยหายไปเฉย ๆ */
 function saveDeltaWip(items, week, fileName){
   const now = new Date().toISOString();
-  const known = new Set(state.orders.map(o=>o.id));
+  const orderById = new Map(state.orders.map(o=>[o.id, o]));
+
+  // หน่วยที่ไฟล์นี้ครอบคลุม — อ่านจากรหัส PO ของแถวที่อยู่ในไฟล์และเรารู้จัก
+  const scope = new Set();
+  items.forEach(it=>{
+    if(orderById.has(it.id)) scope.add(subNameFromPo(it.po));
+  });
+  if(!scope.size) return {added:0, updated:0, cleared:0, scope:[]};
+
+  // ล้างยอดเดิมของหน่วยเหล่านั้นให้หมดก่อน แล้วค่อยเขียนของไฟล์นี้ลงไป
+  let cleared = 0;
+  state.deltaWip.forEach(d=>{
+    if(d.voided) return;
+    const o = orderById.get(d.orderId);
+    if(!o || !scope.has(subNameFromPo(o.poNo))) return;
+    d.voided = true; d.updatedAt = now; d._dirty = true;
+    cleared++;
+  });
+
   let added = 0, updated = 0;
   items.forEach(it=>{
-    if(!known.has(it.id)) return;              // ใบที่เราไม่รู้จัก ไม่เก็บ
+    if(!orderById.has(it.id)) return;          // ใบที่เราไม่รู้จัก ไม่เก็บ
     // ⚠️ ช่องว่างในไฟล์ของ Delta แปลว่า "ไม่รู้" ไม่ใช่ "ค้างศูนย์" — ต้องไม่เก็บ
     //    Number('') ได้ 0 และ isFinite(0) เป็นจริง ถ้าเช็กแค่ isFinite ช่องว่างจะกลายเป็น 0
     //    แล้วกระดาษจะพิมพ์ 0 ส่งถึงลูกค้า ซึ่งอ่านว่า "ไม่มีของค้างแล้ว"
-    //    ไม่เก็บดีกว่า เพราะช่องว่างบนกระดาษบอกความจริงว่าเราไม่มีข้อมูล
+    //    ตอนนี้ช่องว่างยังแปลว่า "ไม่มียอด" เหมือนเดิม ต่างตรงที่ของเก่าถูกล้างไปแล้ว
+    //    การอัปไฟล์ใหม่จึงลบยอดที่ผิดออกได้จริง
     const txt = String(it.fileWip == null ? '' : it.fileWip).trim();
     if(txt === '') return;
     const wip = Number(txt);
@@ -1558,7 +1562,7 @@ function saveDeltaWip(items, week, fileName){
   });
   saveState();
   doSync();
-  return {added, updated};
+  return {added, updated, cleared, scope:[...scope]};
 }
 
 /* ---------- ยอดคงคลัง FG ---------- */
@@ -4164,7 +4168,9 @@ document.getElementById('btnDeltaWipSave').addEventListener('click', ()=>{
     || prompt('ชื่อชีตไม่ได้บอกเลขสัปดาห์ — พิมพ์เลขสัปดาห์ของไฟล์นี้ (เช่น 34)');
   if(!week) return;
   const r = saveDeltaWip(pendingCallIn.items, week, pendingCallIn.fileName);
-  toast(`เก็บยอดของ Delta งวด wk${week} แล้ว — ใหม่ ${r.added} · ทับของเดิม ${r.updated}`);
+  toast(`เก็บยอดของ Delta งวด wk${week} ของ ${r.scope.join(', ') || '—'} แล้ว`
+      + ` — ใช้ได้ ${r.added + r.updated} ใบ · ล้างยอดเดิมของหน่วยนี้ ${r.cleared} ใบ`
+      + ` · หน่วยอื่นไม่ถูกแตะ`);
   renderSyncBadge();
   renderDeliveryNote();
 });
