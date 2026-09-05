@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-04.6">
+<meta name="app-version" content="2026-09-04.7">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -3397,7 +3397,18 @@ function renderDnSummary(){
   const el = document.getElementById('dnSummary');
   if(!el) return;
   const all = deliveryGroups(dnDate(), dnUnit());
-  const hideRes = dnApplyNoDeltaHide(dnFilter(all));
+
+  /* ⚠️ ต้องเก็บผลของ "ตัวค้นหา" ไว้ก่อน แล้วค่อยเอาไปผ่านตัวกรอง Delta
+   *
+   *    dnFilter() คัดกลุ่มเดิมออกมาตรง ๆ เทียบด้วย indexOf ได้
+   *    แต่ dnApplyNoDeltaHide() สร้างกลุ่มใหม่ด้วย Object.assign เพื่อตัดแถวข้างใน
+   *    ถ้าเอาผลของมันไปเทียบ indexOf จะหาไม่เจอสักกลุ่ม แล้วตัวนับของตัวค้นหา
+   *    จะกลายเป็น "ทุกกลุ่มที่มียอด" ทั้งที่คนไม่ได้ค้นหาอะไรเลย
+   *
+   *    ผู้ตรวจจับได้ใน #61 — จอขึ้นว่า "ตัวค้นหาซ่อนอยู่ 1 กลุ่ม (กรอกไว้แล้ว 1 กลุ่ม)"
+   *    ทั้งที่กลุ่มที่ซ่อนไม่มียอดสักชิ้น เป็นคำเตือนหลอกบนหน้าจอที่คนใช้ตัดสินใจก่อนออกใบ */
+  const searched = dnFilter(all);
+  const hideRes = dnApplyNoDeltaHide(searched);
   const groups = hideRes.groups;
 
   // ⚠️ นับยอดรวมจากทุกกลุ่มของวันนั้นเสมอ ไม่ใช่เฉพาะกลุ่มที่ค้นหาเจอ
@@ -3405,8 +3416,8 @@ function renderDnSummary(){
   //    แต่ไฟล์ที่ออกมามีของที่ถูกกรองซ่อนอยู่ด้วย เพราะการออกใบไม่สนใจตัวค้นหา
   const totalPcs = all.reduce((s,g)=> s + g.qty, 0);
   const mismatch = all.filter(g => g.packQty !== g.qty).length;
-  const hidden = all.length - groups.length;
-  const hiddenFilled = all.filter(g => groups.indexOf(g) < 0 && g.qty > 0).length;
+  const hidden = all.length - searched.length;
+  const hiddenFilled = all.filter(g => searched.indexOf(g) < 0 && g.qty > 0).length;
 
   /* ⚠️ นับเฉพาะใบที่ติ๊กไว้ "และยังไม่มียอดส่ง" — ไม่ใช่ dnExtraRows.size ดื้อ ๆ
    *
