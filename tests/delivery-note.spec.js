@@ -415,8 +415,8 @@ test('PO ที่ไม่มีในไฟล์ของ Delta ต้อง�
 
   expect(await page.locator('#dnTable input.dn-alloc').count(),
     'ทุกใบต้องยังอยู่บนจอ ไม่งั้นคีย์ยอดส่งไม่ได้เลย').toBe(3);
-  await expect(page.locator('#dnTable'), 'และต้องบอกว่าใบไหนไม่มียอดของ Delta')
-    .toContainText('ไม่มียอด Delta');
+  await expect(page.locator('#dnTable'), 'และต้องบอกว่าใบไหนไม่อยู่ในไฟล์ของ Delta')
+    .toContainText('ไม่อยู่ในไฟล์');
 
   await alloc(page, 'PO-B001|' + PN_B, 1000);
   await pack(page, PN_B, 'perBox', 50);
@@ -449,7 +449,8 @@ test('ยอด Delta ที่ซิงค์ลงมาเป็นเซล�
 
   const cell = await page.locator(`#dnTable td[data-deltawip="${ID}"]`).innerText();
   expect(cell, 'ช่องยอด Delta ของใบนี้ต้องไม่โชว์ 0').not.toMatch(/^\s*0\s*$/);
-  expect(cell, 'ต้องบอกว่าไม่มียอด').toContain('ไม่มียอด Delta');
+  // ใบนี้อยู่ในไฟล์งวดล่าสุด แค่ Delta เว้นช่องไว้ — คนละป้ายกับใบที่ไม่อยู่ในไฟล์เลย
+  expect(cell, 'ต้องบอกว่าอยู่ในไฟล์แต่ไม่ระบุยอด').toContain('ไม่ระบุยอด');
 
   await alloc(page, ID, 1000);
   await pack(page, PN_B, 'perBox', 50);
@@ -460,9 +461,13 @@ test('ยอด Delta ที่ซิงค์ลงมาเป็นเซล�
   expect(g10, 'ช่อง Wip bal. ต้องไม่มีค่าเลย ไม่ใช่เซลล์ตัวเลขค่าว่าง').not.toMatch(/<v>/);
 });
 
-/* ── ช่องติ๊ก "ซ่อนใบที่ไม่มียอด Delta" ────────────────────────────────
+/* ── ช่องติ๊ก "เฉพาะใบที่อยู่ในไฟล์ Call In" ──────────────────────────────
  *
  * เจ้าของสั่ง 4 ก.ย. 2026 ให้ซ่อนใบที่ไม่มียอด Wip bal. ของ Delta
+ * แล้วเปลี่ยนเกณฑ์เมื่อ 5 ก.ย. 2026 เป็น "แสดงเฉพาะ PO/P/N ที่อยู่ในไฟล์ Call In"
+ *
+ * ⚠️ สองเกณฑ์นี้ไม่เหมือนกัน — ใบที่อยู่ในไฟล์แต่ Delta เว้นช่อง Wip bal. ว่าง
+ *    เข้าเกณฑ์ใหม่ (ต้องโชว์) แต่ไม่เข้าเกณฑ์เก่า · ไฟล์จริงของ WK 35 มีแบบนี้ 39 ใบ
  *
  * ⚠️ ทำเป็น "ช่องติ๊กบนหน้าจอ" ไม่ใช่ตัดออกจาก deliveryGroups()
  *    กฎใน #49 ยังอยู่ครบ — ยอด Delta ใช้เพิ่มแถวได้ ใช้ตัดแถวไม่ได้
@@ -472,18 +477,53 @@ test('ยอด Delta ที่ซิงค์ลงมาเป็นเซล�
 const dnRows = page => page.$$eval('#dnTable td[data-ourwip]',
   t => t.map(x => x.getAttribute('data-ourwip')));
 
-test('ซ่อนใบที่ไม่มียอด Delta เป็นค่าเริ่มต้น และปลดติ๊กแล้วกลับมาเห็นครบ', async ({ page }) => {
-  // Delta รู้จักแค่ใบเดียวจากสามใบ
+test('เห็นเฉพาะใบที่อยู่ในไฟล์ Call In เป็นค่าเริ่มต้น และปลดติ๊กแล้วกลับมาเห็นครบ', async ({ page }) => {
+  // ไฟล์รอบล่าสุดเอ่ยถึงใบเดียวจากสามใบ
   await openWithDelta(page, [deltaRow('PO-B001|' + PN_B, 36, 800)]);
 
   await expect(page.locator('#dnHideNoDelta'), 'ต้องติ๊กไว้ตั้งแต่แรก').toBeChecked();
-  expect(await dnRows(page), 'เห็นเฉพาะใบที่ Delta มียอด').toEqual(['PO-B001|' + PN_B]);
+  expect(await dnRows(page), 'เห็นเฉพาะใบที่อยู่ในไฟล์').toEqual(['PO-B001|' + PN_B]);
   await expect(page.locator('#dnSummary'), 'ต้องบอกว่าซ่อนไว้กี่ใบ ไม่ใช่หายเงียบ')
-    .toContainText('ซ่อนใบที่ไม่มียอด Delta อยู่ 2 ใบ');
+    .toContainText('ซ่อนใบที่ไม่อยู่ในไฟล์ Call In อยู่ 2 ใบ');
+  await expect(page.locator('#dnSummary'), 'และต้องบอกว่ากำลังยึดงวดไหนอยู่')
+    .toContainText('ยึดยอด Delta จากไฟล์งวด wk36');
 
   await page.uncheck('#dnHideNoDelta');
   await page.waitForTimeout(200);
   expect((await dnRows(page)).length, 'ปลดติ๊กแล้วต้องเห็นครบ').toBe(3);
+});
+
+test('ใบที่อยู่ในไฟล์แต่ Delta เว้นช่อง Wip bal. ว่าง ต้องยังอยู่บนจอ', async ({ page }) => {
+  /* ⚠️ เคสของจริงที่ทำให้ต้องเปลี่ยนเกณฑ์ — ชีตแรกของไฟล์ WK 35 มี 39 ใบแบบนี้
+   *    เขาเอ่ยถึงใบนั้นแปลว่ายังรอของอยู่ แค่ไม่ได้บอกว่าค้างเท่าไหร่
+   *    ถ้าใช้เกณฑ์เก่า ("ต้องมียอด") ใบพวกนี้จะหายจากจอจนส่งของไม่ได้ */
+  await openWithDelta(page, [
+    deltaRow('PO-B001|' + PN_B, 36, 800),
+    Object.assign(deltaRow('PO-B055|' + PN_B, 36, 0), { wip: null })
+  ]);
+
+  const shown = await dnRows(page);
+  expect(shown, 'ใบที่เว้นช่องว่างต้องยังอยู่').toContain('PO-B055|' + PN_B);
+  expect(shown, 'ส่วนใบที่ไม่อยู่ในไฟล์เลย ต้องถูกซ่อนตามเดิม').not.toContain('PO-A004|' + PN_A);
+  await expect(page.locator('#dnTable'), 'และต้องบอกว่าเป็นคนละกรณีกับใบที่ไม่อยู่ในไฟล์')
+    .toContainText('ไม่ระบุยอด');
+});
+
+test('ใบที่ Delta ตัดออกจากไฟล์งวดใหม่ ต้องหายจากจอ แม้ยังมีแถวของงวดเก่าค้างอยู่', async ({ page }) => {
+  /* ⚠️ เราเก็บประวัติไว้ ไม่ได้ลบแถวเก่าทิ้ง — ถ้าเกณฑ์เป็นแค่ "มีแถว"
+   *    ใบที่เขาตัดออกแล้วจะยังโชว์พร้อมยอดของสัปดาห์ที่แล้ว
+   *    เจ้าของสั่ง 5 ก.ย. 2026 ว่าห้ามให้พนักงานคีย์ยอดใส่ PO ที่ไม่ได้อยู่ใน Call In รอบนี้ */
+  await openWithDelta(page, [
+    Object.assign(deltaRow('PO-B055|' + PN_B, 35, 400),
+      { createdAt: '2026-08-25T00:00:00.000Z' }),          // งวดเก่า
+    Object.assign(deltaRow('PO-B001|' + PN_B, 36, 800),
+      { createdAt: '2026-09-01T00:00:00.000Z' })           // งวดล่าสุด
+  ]);
+
+  expect(await dnRows(page), 'เห็นเฉพาะใบของงวดล่าสุด').toEqual(['PO-B001|' + PN_B]);
+  await expect(page.locator('#dnSummary')).toContainText('ซ่อนใบที่ไม่อยู่ในไฟล์ Call In อยู่ 2 ใบ');
+  await expect(page.locator('#dnSummary'), 'ต้องบอกว่ายึดงวดล่าสุด ไม่ใช่งวดเก่า')
+    .toContainText('ยึดยอด Delta จากไฟล์งวด wk36');
 });
 
 test('ห้ามซ่อนแถวที่กำลังใช้งานอยู่ — มียอดคีย์ไว้ หรือติ๊กใส่ในใบไว้', async ({ page }) => {
@@ -840,7 +880,7 @@ test('ตัวกรอง Delta ทำงานอยู่ ต้องไม
   const sum = await page.locator('#dnSummary').innerText();
   expect(sum, 'ไม่ได้ค้นหาอะไร ต้องไม่อ้างว่าตัวค้นหาซ่อนอะไรไว้').not.toContain('ตัวค้นหาซ่อน');
   expect(sum, 'ต้องรายงานการซ่อนของตัวกรอง Delta ตามจริง')
-    .toContain('ซ่อนใบที่ไม่มียอด Delta');
+    .toContain('ซ่อนใบที่ไม่อยู่ในไฟล์ Call In');
 
   // พอค้นหาจริง ตัวนับของตัวค้นหาต้องกลับมาทำงานถูกต้อง
   await search(page, PN_B);
