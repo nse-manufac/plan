@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-05.1">
+<meta name="app-version" content="2026-09-05.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1729,7 +1729,11 @@ function deliveryGroups(date, unit){
     const wipBefore = (Number(o.orderQty) || 0) - shippedBefore;
     const wip = Math.max(0, wipBefore);
     const dw = deltaWipOf(o.id);
-    const deltaLeft = dw ? (Number(dw.wip) || 0) : 0;
+    /* ⚠️ อ่านยอดผ่าน deltaWipNum() เสมอ ห้ามหยิบ dw.wip ดิบ ๆ
+     *    เครื่องที่รับข้อมูลมาจากการซิงค์ได้ '' แทน null (ดูคอมเมนต์ของ deltaWipNum)
+     *    ซึ่ง Number('')||0 ได้ 0 และ '' == null เป็นเท็จ สองทางนี้พา 0 ลงกระดาษได้ทั้งคู่ */
+    const dwNum = deltaWipNum(dw);
+    const deltaLeft = dwNum == null ? 0 : dwNum;
 
     /* ⚠️ กติกาของยอด Delta ในตัวกรองนี้ — อ่านให้จบก่อนแก้
      *
@@ -1746,7 +1750,7 @@ function deliveryGroups(date, unit){
     // จัดกลุ่มด้วยข้อความเสมอ ไม่งั้น P/N เดียวกันที่มาคนละทางจะแตกเป็นสองกลุ่ม
     const key = String(o.pn == null ? '' : o.pn);
     if(!byPn.has(key)) byPn.set(key, []);
-    byPn.get(key).push({o, wip, alloc, deltaWip: dw ? dw.wip : null, deltaWeek: dw ? dw.week : '',
+    byPn.get(key).push({o, wip, alloc, deltaWip: dwNum, deltaWeek: dw ? dw.week : '',
       // แถวนี้โผล่มาเพราะ Delta ยังค้าง ทั้งที่บัญชีเราส่งครบแล้ว — ต้องบอกคนคีย์ให้รู้
       onlyDelta: wip <= 0 && alloc <= 0 && deltaLeft > 0, wipBefore});
   });
