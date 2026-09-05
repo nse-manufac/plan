@@ -121,6 +121,9 @@ test('หน้านี้ต้องอ่านอย่างเดีย�
 test('ช่อง Wip ที่ Delta เว้นว่าง แปลว่า "ไม่รู้" ห้ามเก็บเป็น 0', async ({ page }) => {
   // Number('') ได้ 0 และ isFinite(0) เป็นจริง — เช็กแค่ isFinite ช่องว่างจะกลายเป็น 0
   // แล้วกระดาษจะพิมพ์ 0 ส่งถึงลูกค้า ซึ่งอ่านว่า "ไม่มีของค้างแล้ว" ทั้งที่ความจริงคือไม่รู้
+  //
+  // ⚠️ ตั้งแต่ 5 ก.ย. 2026 แถวยังต้องถูกเก็บ เพราะ "มีแถว" คือหลักฐานว่าใบนี้อยู่ในไฟล์
+  //    ที่ห้ามคือเก็บ "ยอด" เป็น 0 · ยอดต้องเป็น null
   const rows = [
     { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180, commit: 111 },
     { pn: '9100000040', poNo: 'PO-C040', orderDate: '2026-07-06', qty: 300, commit: 222 }  // ← เว้นว่าง
@@ -131,9 +134,11 @@ test('ช่อง Wip ที่ Delta เว้นว่าง แปลว่�
   await page.waitForTimeout(200);
 
   const kept = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).deltaWip, K_STATE);
-  expect(kept.map(d => d.orderId), 'เก็บเฉพาะใบที่ Delta กรอกยอดไว้จริง')
-    .toEqual(['PO-C041|9100000041']);
-  expect(kept[0].wip).toBe(180);
+  expect(kept.map(d => d.orderId).sort(), 'ต้องเก็บทั้งสองใบ — ใบที่เว้นว่างก็อยู่ในไฟล์')
+    .toEqual(['PO-C040|9100000040', 'PO-C041|9100000041']);
+  expect(kept.find(d => d.orderId === 'PO-C041|9100000041').wip).toBe(180);
+  expect(kept.find(d => d.orderId === 'PO-C040|9100000040').wip,
+    'ช่องว่างต้องเป็น null ห้ามเป็น 0 — 0 บนกระดาษอ่านว่าไม่มีของค้างแล้ว').toBe(null);
 });
 
 /* ── #62 · ไฟล์ที่นำเข้าล่าสุดคือความจริงของหน่วยนั้นทั้งชุด ────────────────
@@ -143,9 +148,12 @@ test('ช่อง Wip ที่ Delta เว้นว่าง แปลว่�
  * ยอดยังผิดอยู่ เพราะช่อง Wip bal. ของใบนั้น "ว่าง" และโค้ดเดิม return ทันที
  * แถวที่ผิดจึงรอดมาตลอด — การอัปทับไม่มีทางแก้ข้อมูลที่ผิดได้เลย
  *
- * ⚠️ ขอบเขตการล้างคือ Sub-Name ไม่ใช่งวด เพราะไฟล์ Call In แยกชีตตามหน่วย
- *    (TUE-U ชีตหนึ่ง TUE-H อีกชีตหนึ่ง) นำเข้าทีละชีต
- *    ถ้าล้างตามงวด นำเข้าชีต TUE-U แล้วยอดของ TUE-H จะหายทั้งหน่วย */
+ * ⚠️ ขอบเขตการล้างคือ "ใบที่อยู่ในชีตนั้น" ไม่ใช่ทั้งหน่วย และไม่ใช่ทั้งงวด
+ *
+ *    เปิดไฟล์ Call In ของ WK 35 ตัวจริงดูเมื่อ 5 ก.ย. 2026 — ชีตไม่ได้แบ่งตามหน่วย
+ *    ชีตแรก 348 ใบ = TUE-H 342 + รหัสที่แยกหน่วยไม่ได้ 6
+ *    ชีตที่สอง 60 ใบ = TUE-U 59 + TUE-H ปนมา 1 ใบ
+ *    ถ้าล้างทั้งหน่วย ใบ TUE-H ที่ปนมาใบเดียวจะพายอดของ TUE-H อีก 341 ใบหายไปด้วย */
 
 const orderIn = (poNo, pn, qty, subName) => Object.assign(order(poNo, pn, qty), { subName });
 const liveWip = page => page.evaluate(k =>
@@ -174,10 +182,10 @@ test('#62 — อัปไฟล์ใหม่ที่ช่อง Wip bal. �
   await page.waitForTimeout(200);
 
   expect(await liveWip(page), 'ยอดที่ผิดของใบที่ช่องว่าง ต้องหายไป ไม่ใช่รอดมา')
-    .toEqual(['PO-C041|9100000041=180']);
+    .toEqual(['PO-C040|9100000040=null', 'PO-C041|9100000041=180']);
 });
 
-test('#62 — ใบที่หายไปจากไฟล์รอบใหม่ ต้องไม่เหลือยอดค้างอยู่', async ({ page }) => {
+test('#62 — ใบที่หายไปจากไฟล์รอบใหม่ ต้องไม่ถูกนับเป็นของงวดนี้', async ({ page }) => {
   await openWith(page, [order('PO-C041', '9100000041', 300), order('PO-C040', '9100000040', 300)]);
   await scan(page, await callInWorkbook([
     { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 },
@@ -193,8 +201,48 @@ test('#62 — ใบที่หายไปจากไฟล์รอบให
   await page.click('#btnDeltaWipSave');
   await page.waitForTimeout(200);
 
-  expect(await liveWip(page), 'ใบที่ไม่อยู่ในไฟล์รอบใหม่ = ไม่ใช่ของรอบนี้')
-    .toEqual(['PO-C041|9100000041=90']);
+  /* ⚠️ ของเดิมไม่ได้ถูกล้าง เพราะขอบเขตการล้างคือ "ใบที่อยู่ในชีตนี้" และใบนี้ไม่ได้อยู่
+   *    แถวของ wk34 จึงยังค้างอยู่เป็นประวัติ — ที่ต้องเกิดขึ้นคือมันต้องไม่ถูกนับเป็นของงวดนี้
+   *    ตัวตัดสินคือ currentDeltaWeek() ซึ่งชั้นแสดงผลเอาไปใช้ผ่าน inCallIn
+   *    (เทสฝั่งจอที่พิสูจน์ว่ามันหายจริง อยู่ใน delivery-note.spec.js) */
+  const live = await page.evaluate(k =>
+    JSON.parse(localStorage.getItem(k)).deltaWip.filter(d => !d.voided)
+      .map(d => d.orderId + '@wk' + d.week + '=' + d.wip).sort(), K_STATE);
+  expect(live, 'ใบที่ Delta ตัดออก ต้องเหลือไว้เป็นแถวของงวดเก่า ไม่ใช่ของงวดล่าสุด')
+    .toEqual(['PO-C040|9100000040@wk34=250', 'PO-C041|9100000041@wk35=90']);
+
+  // งวดล่าสุดคือ wk35 · ตัวที่พิสูจน์ว่าใบของ wk34 หายจากจอจริง อยู่ใน delivery-note.spec.js
+  // (ไม่เรียก currentDeltaWeek() ตรง ๆ เพราะแอปไม่ได้เปิดฟังก์ชันภายในออกมาให้เทสเรียก)
+});
+
+test('#62 — สองชีตของงวดเดียวกัน ชีตหลังต้องไม่ล้างของชีตแรก', async ({ page }) => {
+  /* ⚠️ ข้อที่สำคัญที่สุดของกติกาใหม่ — พิสูจน์ด้วยโครงของไฟล์ WK 35 ตัวจริง
+   *    ชีตที่สองมีใบของ TUE-H ปนมา 1 ใบ ถ้าล้างเป็น "ทั้งหน่วย" ใบนั้นใบเดียว
+   *    จะพายอดของ TUE-H ที่เพิ่งเขียนจากชีตแรกหายไปทั้งชุด */
+  await openWith(page, [
+    orderIn('PO-H001', '9100000070', 300, 'TUE-H'),
+    orderIn('PO-H002', '9100000071', 300, 'TUE-H'),
+    orderIn('PO-U001', '9100000041', 300, 'TUE-U')
+  ]);
+
+  // ชีตแรกของ wk35 — ใบของ TUE-H
+  await scan(page, await callInWorkbook([
+    { pn: '9100000070', poNo: 'PO-H001', orderDate: '2026-07-06', qty: 300, wip: 111 },
+    { pn: '9100000071', poNo: 'PO-H002', orderDate: '2026-07-06', qty: 300, wip: 222 }
+  ], { sheetName: "X-FRM wk35" }), 'X-FRM wk35');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+
+  // ชีตที่สองของงวดเดียวกัน — ส่วนใหญ่เป็น TUE-U แต่มี TUE-H ปนมาหนึ่งใบ
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-U001', orderDate: '2026-07-06', qty: 300, wip: 333 },
+    { pn: '9100000070', poNo: 'PO-H001', orderDate: '2026-07-06', qty: 300, wip: 444 }
+  ], { sheetName: "X-FRM3M4 wk35" }), 'X-FRM3M4 wk35');
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+
+  expect(await liveWip(page), 'ใบที่ชีตหลังไม่ได้เอ่ยถึง ต้องอยู่ครบเหมือนเดิม')
+    .toEqual(['PO-H001|9100000070=444', 'PO-H002|9100000071=222', 'PO-U001|9100000041=333']);
 });
 
 test('#62 — นำเข้าชีตของหน่วยหนึ่ง ต้องไม่แตะยอดของอีกหน่วย', async ({ page }) => {

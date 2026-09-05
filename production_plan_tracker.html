@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-05.3">
+<meta name="app-version" content="2026-09-05.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -368,8 +368,8 @@
       </div>
       <div class="field">
         <label>&nbsp;</label>
-        <label style="font-weight:500;" title="ใบที่ไม่มีในไฟล์ Call In ของ Delta — ซ่อนไว้ให้ตารางสั้นลง ปลดติ๊กเพื่อดูทั้งหมด">
-          <input type="checkbox" id="dnHideNoDelta" checked> ซ่อนใบที่ไม่มียอด Delta</label>
+        <label style="font-weight:500;" title="ใบที่ไม่ได้อยู่ในไฟล์ Call In รอบล่าสุด — ซ่อนไว้ก่อน ปลดติ๊กเพื่อดูทั้งหมด">
+          <input type="checkbox" id="dnHideNoDelta" checked> เฉพาะใบที่อยู่ในไฟล์ Call In</label>
       </div>
     </div>
     <div class="desc" id="dnSummary"></div>
@@ -1459,12 +1459,17 @@ function wipBalance(order, cum){
  *     ตัวนี้คือยอดค้างตามบัญชีของ Delta — ใช้เป็นเลขที่พิมพ์ลงกระดาษเท่านั้น
  *     สองเลขนี้ไม่ตรงกันได้ และนั่นคือข้อมูล ไม่ใช่บั๊ก
  *
- *  ตั้งแต่ 5 ก.ย. 2026 การนำเข้าไฟล์ Call In ยกเลิกยอดเดิมของหน่วยนั้นทั้งหมดก่อนเขียนใหม่
+ *  ตั้งแต่ 5 ก.ย. 2026 การนำเข้าไฟล์ Call In ยกเลิกยอดเดิม "ของใบที่อยู่ในชีตนั้น" ก่อนเขียนใหม่
  *  (ดู saveDeltaWip) ปกติจึงเหลือแถวที่ยังไม่ถูกยกเลิกไม่เกินใบละหนึ่งแถว
  *  ไม่ต้องมีตรรกะ "งวดล่าสุด" อีก และไม่ต้องเทียบเลขสัปดาห์หรือเวลาให้พลาด
  *
  *  ที่ยังเทียบไว้เป็นแค่ตัวกันเหนียว เผื่อเครื่องที่ยังไม่ได้อัปเดตซิงค์ของเก่ากลับเข้ามา
- *  เอาแถวที่สร้างทีหลังก่อน แล้วค่อยดูเลขสัปดาห์ */
+ *  เอาแถวที่สร้างทีหลังก่อน แล้วค่อยดูเลขสัปดาห์
+ *
+ *  ⚠️ "มีแถว" กับ "มียอด" ไม่ใช่เรื่องเดียวกันตั้งแต่ 5 ก.ย. 2026
+ *     มีแถว = Delta เอ่ยถึงใบนี้ในไฟล์รอบล่าสุด   -> ต้องโชว์บนจอใบส่งงาน
+ *     มียอด = เขากรอกตัวเลขมาด้วย                -> เอาไปพิมพ์ลงกระดาษได้
+ *     แถวที่ wip ว่าง คือ "อยู่ในไฟล์แต่เขาไม่ได้ระบุยอด" คนละเรื่องกับ "ค้างศูนย์" */
 function deltaWipOf(orderId){
   let best = null;
   state.deltaWip.forEach(d=>{
@@ -1474,6 +1479,46 @@ function deltaWipOf(orderId){
     if(a > b || (a === b && (Number(d.week)||0) > (Number(best.week)||0))) best = d;
   });
   return best;
+}
+
+/** ยอดตัวเลขของแถว deltaWip — คืน null ถ้าไฟล์ปล่อยช่องนั้นว่างไว้
+ *
+ *  ⚠️ ห้ามใช้ Number(d.wip)||0 ตรง ๆ · ช่องว่างจะกลายเป็น 0 แล้ว 0 บนกระดาษ
+ *     อ่านว่า "ไม่มีของค้างแล้ว" ซึ่งเป็นคนละความหมายกับ "เขาไม่ได้บอกมา"
+ *
+ *  ⚠️ ต้องรับทั้ง null และ '' · เราเก็บลงเครื่องเป็น null แต่ Apps Script เขียนลงชีต
+ *     ด้วย toRow() ที่แปลง null เป็น '' พอ pull กลับมาจึงได้สตริงว่าง (ไม่ใช่ 0
+ *     เพราะ getValues() คืน '' สำหรับเซลล์เปล่า) ส่วนศูนย์จริงกลับมาเป็นเลข 0 */
+/** งวดของไฟล์ Call In ที่นำเข้าล่าสุด — ตัวตัดสินว่าใบไหนนับว่า "อยู่ในรอบนี้"
+ *
+ *  ⚠️ ดูจาก createdAt ของแถวที่สร้างล่าสุด ห้ามเอาเลข week ที่มากที่สุด
+ *     ปลายปี wk52 -> wk01 เลขน้อยลงแต่ใหม่กว่า ถ้าเทียบด้วยตัวเลข
+ *     ทั้งกระดานจะค้างอยู่ที่ wk52 ข้ามปีไปเลย
+ *
+ *  ⚠️ เทียบด้วย "งวด" ไม่ใช่ "การนำเข้าครั้งล่าสุด" เพราะหนึ่งงวดมีได้หลายชีต
+ *     (ไฟล์ WK 35 ตัวจริงมีสองชีต) ถ้าเทียบเป็นครั้ง พอนำเข้าชีตที่สอง
+ *     ใบของชีตแรกจะหายจากจอทั้งชุด
+ *
+ *  ⚠️ createdAt ไม่ใช่ updatedAt — updatedAt ถูกซิงค์เขียนทับด้วยเวลาเซิร์ฟเวอร์ (D4)
+ *     และแถวที่ยังไม่ได้ส่งขึ้นจะถูกมาร์ค _dirty ใหม่ตอนบูต (D5) ผู้ตรวจจับไว้ใน #63 */
+function currentDeltaWeek(){
+  let best = null;
+  state.deltaWip.forEach(d=>{
+    if(d.voided) return;
+    if(!best){ best = d; return; }
+    const a = String(d.createdAt||''), b = String(best.createdAt||'');
+    // createdAt เท่ากันเป๊ะเกิดได้ตอนนำเข้าสองชีตในวินาทีเดียวกัน — ตัดด้วยเลขงวดให้ผลนิ่ง
+    if(a > b || (a === b && (Number(d.week)||0) > (Number(best.week)||0))) best = d;
+  });
+  return best ? String(best.week) : null;
+}
+
+function deltaWipNum(d){
+  if(!d) return null;
+  const txt = String(d.wip == null ? '' : d.wip).trim();
+  if(txt === '') return null;
+  const n = Number(txt);
+  return isFinite(n) ? n : null;
 }
 
 /** เลขสัปดาห์จากชื่อชีต เช่น "X'FRM3M4 wk34" -> "34"
@@ -1519,19 +1564,29 @@ function saveDeltaWip(items, week, fileName){
   const now = new Date().toISOString();
   const orderById = new Map(state.orders.map(o=>[o.id, o]));
 
-  // หน่วยที่ไฟล์นี้ครอบคลุม — อ่านจากรหัส PO ของแถวที่อยู่ในไฟล์และเรารู้จัก
-  const scope = new Set();
-  items.forEach(it=>{
-    if(orderById.has(it.id)) scope.add(subNameFromPo(it.po));
-  });
-  if(!scope.size) return {added:0, updated:0, cleared:0, scope:[]};
+  /* ขอบเขตของการล้าง = "ใบที่อยู่ในชีตนี้จริง ๆ" ไม่ใช่ทั้งหน่วย
+   *
+   * ⚠️ เคยเขียนเป็น "ล้างทั้งหน่วย" แล้วพังกับไฟล์จริง อย่าย้อนกลับไป
+   *    เปิดไฟล์ Call In ของ WK 35 ตัวจริงดูเมื่อ 5 ก.ย. 2026 พบว่าชีตไม่ได้แบ่งตามหน่วย
+   *    อย่างที่เข้าใจกันมาตลอด:
+   *
+   *      ชีตแรก   348 ใบ  = TUE-H 342 + รหัสที่แยกหน่วยไม่ได้ 6 (รูปแบบ TM####T###)
+   *      ชีตที่สอง  60 ใบ  = TUE-U  59 + TUE-H ปนมา 1 ใบ
+   *
+   *    ใบ TUE-H ที่ปนอยู่ในชีตที่สองใบเดียว ทำให้ TUE-H เข้าขอบเขต แล้วการนำเข้า
+   *    ชีตที่สองจะล้างยอดของ TUE-H ทั้ง 342 ใบที่เพิ่งเขียนจากชีตแรก เหลือเขียนคืน 1 ใบ
+   *    = 341 ใบไม่มียอด Delta แล้วหายจากจอไปเลย ส่งของไม่ได้ทั้งหน่วย
+   *    ซึ่งคือบั๊กตัวเดียวกับที่ทั้งก้อนนี้ตั้งใจจะแก้
+   *
+   *    ต่อใบยังปลอดภัยกับรหัส PO ที่แยกหน่วยไม่ออกด้วย เพราะไม่ต้องพึ่ง subNameFromPo() เลย */
+  const inFile = new Set();
+  items.forEach(it=>{ if(orderById.has(it.id)) inFile.add(it.id); });
+  if(!inFile.size) return {added:0, updated:0, cleared:0, scope:[]};
 
-  // ล้างยอดเดิมของหน่วยเหล่านั้นให้หมดก่อน แล้วค่อยเขียนของไฟล์นี้ลงไป
+  // ล้างยอดเดิมของใบเหล่านั้นให้หมดก่อน แล้วค่อยเขียนของไฟล์นี้ลงไป
   let cleared = 0;
   state.deltaWip.forEach(d=>{
-    if(d.voided) return;
-    const o = orderById.get(d.orderId);
-    if(!o || !scope.has(subNameFromPo(o.poNo))) return;
+    if(d.voided || !inFile.has(d.orderId)) return;
     d.voided = true; d.updatedAt = now; d._dirty = true;
     cleared++;
   });
@@ -1539,15 +1594,18 @@ function saveDeltaWip(items, week, fileName){
   let added = 0, updated = 0;
   items.forEach(it=>{
     if(!orderById.has(it.id)) return;          // ใบที่เราไม่รู้จัก ไม่เก็บ
-    // ⚠️ ช่องว่างในไฟล์ของ Delta แปลว่า "ไม่รู้" ไม่ใช่ "ค้างศูนย์" — ต้องไม่เก็บ
-    //    Number('') ได้ 0 และ isFinite(0) เป็นจริง ถ้าเช็กแค่ isFinite ช่องว่างจะกลายเป็น 0
-    //    แล้วกระดาษจะพิมพ์ 0 ส่งถึงลูกค้า ซึ่งอ่านว่า "ไม่มีของค้างแล้ว"
-    //    ตอนนี้ช่องว่างยังแปลว่า "ไม่มียอด" เหมือนเดิม ต่างตรงที่ของเก่าถูกล้างไปแล้ว
-    //    การอัปไฟล์ใหม่จึงลบยอดที่ผิดออกได้จริง
+
+    /* ⚠️ ช่องว่างในไฟล์ของ Delta แปลว่า "ไม่รู้" ไม่ใช่ "ค้างศูนย์" — เก็บเป็น wip:null
+     *    Number('') ได้ 0 และ isFinite(0) เป็นจริง ถ้าเช็กแค่ isFinite ช่องว่างจะกลายเป็น 0
+     *    แล้วกระดาษจะพิมพ์ 0 ส่งถึงลูกค้า ซึ่งอ่านว่า "ไม่มีของค้างแล้ว"
+     *
+     * ⚠️ ต้องเก็บแถวไว้ถึงจะว่าง ห้าม return ทิ้ง — ตั้งแต่ 5 ก.ย. 2026 "มีแถว" คือหลักฐาน
+     *    ว่าใบนี้อยู่ในไฟล์รอบล่าสุด ซึ่งเป็นตัวตัดสินว่าจะโชว์บนจอใบส่งงานหรือไม่
+     *    ถ้า return ทิ้งเหมือนเดิม ใบที่ Delta ใส่มาแต่เว้นช่องไว้จะหายจากจอ
+     *    ชีตแรกของไฟล์ WK 35 ตัวจริงมีแบบนี้อยู่ 39 ใบ (ตรวจ 5 ก.ย. 2026) */
     const txt = String(it.fileWip == null ? '' : it.fileWip).trim();
-    if(txt === '') return;
-    const wip = Number(txt);
-    if(!isFinite(wip)) return;
+    const num = txt === '' ? NaN : Number(txt);
+    const wip = isFinite(num) ? num : null;
     const i = state.deltaWip.findIndex(d => d.orderId===it.id && String(d.week)===String(week));
     if(i > -1){
       Object.assign(state.deltaWip[i], {wip, fileName, voided:false, updatedAt:now, _dirty:true});
@@ -1604,9 +1662,12 @@ function fgRows(){
     g.outQty += outQty;
     g.ourWip += wipBalance(o, c);
 
+    // ⚠️ นับเฉพาะใบที่ Delta กรอกตัวเลขมาจริง · ใบที่อยู่ในไฟล์แต่เว้นช่องไว้
+    //    ไม่มียอดให้เทียบ ถ้านับเป็น 0 ช่อง "ต่าง" จะฟ้องว่ายอดไม่ตรงทั้งที่ไม่มีข้อมูล
     const dw = deltaWipOf(o.id);
-    if(dw){ g.deltaWip += Number(dw.wip)||0; g.deltaHave++; }
-    g.orders.push({o, inQty, outQty, ourWip: wipBalance(o, c), delta: dw});
+    const dwNum = deltaWipNum(dw);
+    if(dwNum != null){ g.deltaWip += dwNum; g.deltaHave++; }
+    g.orders.push({o, inQty, outQty, ourWip: wipBalance(o, c), delta: dwNum == null ? null : dw});
   });
 
   const rows = [];
@@ -1708,6 +1769,7 @@ function packingOf(date, unit, pn){
 function deliveryGroups(date, unit){
   const cum = buildCumMap(state.records);
   const byPn = new Map();
+  const curWeek = currentDeltaWeek();
 
   state.orders.filter(o => o.subName === unit).forEach(o=>{
     const alloc = allocOf(o.id, date);
@@ -1725,7 +1787,8 @@ function deliveryGroups(date, unit){
     const wipBefore = (Number(o.orderQty) || 0) - shippedBefore;
     const wip = Math.max(0, wipBefore);
     const dw = deltaWipOf(o.id);
-    const deltaLeft = dw ? (Number(dw.wip) || 0) : 0;
+    const dwNum = deltaWipNum(dw);
+    const deltaLeft = dwNum == null ? 0 : dwNum;
 
     /* ⚠️ กติกาของยอด Delta ในตัวกรองนี้ — อ่านให้จบก่อนแก้
      *
@@ -1742,7 +1805,13 @@ function deliveryGroups(date, unit){
     // จัดกลุ่มด้วยข้อความเสมอ ไม่งั้น P/N เดียวกันที่มาคนละทางจะแตกเป็นสองกลุ่ม
     const key = String(o.pn == null ? '' : o.pn);
     if(!byPn.has(key)) byPn.set(key, []);
-    byPn.get(key).push({o, wip, alloc, deltaWip: dw ? dw.wip : null, deltaWeek: dw ? dw.week : '',
+    byPn.get(key).push({o, wip, alloc, deltaWip: dwNum, deltaWeek: dw ? dw.week : '',
+      /* อยู่ในไฟล์ Call In "ของงวดล่าสุด" หรือไม่ — คนละเรื่องกับ "มียอด" (ดู deltaWipNum)
+       *
+       * ⚠️ ต้องเทียบงวดด้วย ห้ามใช้แค่ !!dw · ใบที่ Delta ตัดออกจากไฟล์รอบนี้
+       *    ยังมีแถวของงวดก่อนค้างอยู่ (เราเก็บประวัติไว้ ไม่ได้ลบ) ถ้าไม่เทียบงวด
+       *    ใบนั้นจะยังโชว์อยู่บนจอพร้อมยอดของสัปดาห์ที่แล้ว ซึ่งคือสิ่งที่เจ้าของสั่งให้เลิก */
+      inCallIn: !!dw && String(dw.week) === curWeek,
       // แถวนี้โผล่มาเพราะ Delta ยังค้าง ทั้งที่บัญชีเราส่งครบแล้ว — ต้องบอกคนคีย์ให้รู้
       onlyDelta: wip <= 0 && alloc <= 0 && deltaLeft > 0, wipBefore});
   });
@@ -3289,6 +3358,9 @@ function dnEmptyMsg(all){
  *     ถ้าเอาไปตัดใน deliveryGroups() ใบที่ Delta ยังไม่ส่งไฟล์มาจะหายจนส่งของไม่ได้เลย
  *     ตัวนี้จึงกรองทีหลัง เป็นชั้นของการแสดงผลล้วน ๆ และปลดติ๊กก็กลับมาเห็นทันที
  *
+ *  ⚠️ เกณฑ์คือ "ใบนั้นอยู่ในไฟล์ Call In รอบล่าสุดหรือไม่" ไม่ใช่ "มียอด Delta หรือไม่"
+ *     ใบที่อยู่ในไฟล์แต่เขาเว้นช่อง Wip bal. ว่าง ยังต้องอยู่บนจอ
+ *
  *  ⚠️ ห้ามซ่อนแถวที่ "กำลังใช้งานอยู่" — มีจำนวนที่ส่งแล้ว หรือถูกติ๊กใส่ในใบไว้
  *     ซ่อนแล้วคนจะแก้ยอดที่ตัวเองเพิ่งคีย์ไม่ได้ ทั้งที่ยอดนั้นจะลงกระดาษจริง
  *
@@ -3303,18 +3375,22 @@ function dnApplyNoDeltaHide(groups){
   if(!dnHideNoDelta()) return {groups, hidden: 0};
 
   /* ⚠️ ถ้ารอบนี้ยังไม่มียอด Delta สักใบเดียว = ยังไม่ได้นำเข้าไฟล์ Call In ของสัปดาห์นี้
+   *    (เทียบด้วย inCallIn ไม่ใช่ deltaWip เพราะใบที่เว้นช่องว่างก็นับว่านำเข้าแล้ว)
    *    กรณีนั้นห้ามซ่อนอะไรเลย ไม่งั้นหน้าจอว่างทั้งหน้าและส่งของไม่ได้ทั้งหน่วย
    *
    *    ตัวกรองนี้มีไว้ "ตัดเสียงรบกวนตอนมีของให้เทียบ" ไม่ใช่ "ปิดหน้าจอตอนไม่มีข้อมูล"
    *    เจอตอนรันเทส — ตั้งซ่อนตรง ๆ แล้วเทสเดิมตก 17 ข้อ ทุกข้อคือกรณีที่ยังไม่มีข้อมูล Delta
    *    ซึ่งตรงกับสภาพจริงของสัปดาห์ที่ไฟล์ยังมาไม่ถึง */
-  const anyDelta = groups.some(g => g.orders.some(x => x.deltaWip != null));
-  if(!anyDelta) return {groups, hidden: 0};
+  const anyInCallIn = groups.some(g => g.orders.some(x => x.inCallIn));
+  if(!anyInCallIn) return {groups, hidden: 0};
   let hidden = 0;
   const out = [];
   groups.forEach(g=>{
     const keep = g.orders.filter(x=>{
-      if(x.deltaWip != null) return true;
+      /* ⚠️ เกณฑ์คือ "อยู่ในไฟล์" ไม่ใช่ "มียอด" — เปลี่ยนเมื่อ 5 ก.ย. 2026 ตามที่เจ้าของสั่ง
+       *    ใบที่ Delta ใส่มาแต่เว้นช่อง Wip bal. ว่าง ต้องยังอยู่บนจอ (ไฟล์จริงมี 39 ใบ)
+       *    เพราะเขาเอ่ยถึงใบนั้นแปลว่ายังรอของอยู่ แค่ไม่ได้บอกว่าค้างเท่าไหร่ */
+      if(x.inCallIn) return true;
       if(x.alloc > 0 || dnExtraRows.has(x.o.id)) return true;   // กำลังใช้งานอยู่
       hidden++;
       return false;
@@ -3370,7 +3446,7 @@ function renderDeliveryNote(){
               data-pn="${pn}" value="${escapeHtml(g.remark)}" style="width:88px" placeholder="Remark"
               title="ลงช่อง Remark ของใบส่งสินค้า เช่น NEW / RETURN / แพค 3 กล่องไม่เต็ม"></td>`;
 
-    return g.orders.map(({o, wip, alloc, deltaWip, deltaWeek, onlyDelta, wipBefore}, i)=>{
+    return g.orders.map(({o, wip, alloc, deltaWip, deltaWeek, inCallIn, onlyDelta, wipBefore}, i)=>{
       const first = i === 0;
       return `<tr${first ? ' class="dn-group"' : ''}>`
         + (first ? `<td class="dn-pn left" rowspan="${span}"><b>${pn}</b>
@@ -3380,7 +3456,7 @@ function renderDeliveryNote(){
         <td>${fmtDateTH(o.orderDate)}</td>
         <td>${numFmt(o.orderQty)}</td>
         <td data-ourwip="${escapeHtml(o.id)}">${numFmt(wip)}</td>
-        <td data-deltawip="${escapeHtml(o.id)}">${dnDeltaCell(deltaWip, deltaWeek, wip)}</td>
+        <td data-deltawip="${escapeHtml(o.id)}">${dnDeltaCell(deltaWip, deltaWeek, wip, inCallIn)}</td>
         <td><input type="number" min="0" class="row-input dn-alloc" data-order="${escapeHtml(o.id)}" data-pn="${pn}" value="${alloc||''}" placeholder="จำนวนที่ส่ง"></td>
         <td data-include="${escapeHtml(o.id)}">${dnIncludeCell(o.id, alloc)}</td>`
         + (first ? packCells : '')
@@ -3488,7 +3564,7 @@ function renderDnSummary(){
        ` — การออกใบไม่สนใจตัวค้นหา ของที่ซ่อนอยู่ก็ลงในไฟล์ด้วย</b>` : '') +
     (extraNoShip ? ` · <b>ใส่ในใบเพิ่มอีก ${numFmt(extraNoShip)} ใบที่รอบนี้ไม่ได้ส่งของ</b>` : '') +
     // ซ่อนอยู่ต้องรู้ตัว ไม่งั้นคนหาใบไม่เจอแล้วคิดว่าข้อมูลหาย
-    (hideRes.hidden ? ` · <b id="dnHiddenNoDelta">ซ่อนใบที่ไม่มียอด Delta อยู่ ${numFmt(hideRes.hidden)} ใบ</b>` : '') +
+    (hideRes.hidden ? ` · <b id="dnHiddenNoDelta">ซ่อนใบที่ไม่อยู่ในไฟล์ Call In อยู่ ${numFmt(hideRes.hidden)} ใบ</b>` : '') +
     ` · ยอดที่กรอกลงสมุดเป็นยอดส่งของให้อัตโนมัติแล้ว ไม่ต้องไปคีย์ซ้ำที่แท็บบันทึกยอดรายวัน`;
 }
 
@@ -3527,10 +3603,17 @@ function dnRowNote(wipBefore, alloc, deltaWip, onlyDelta){
  *  วางคู่กันแล้วเห็นทันทีว่าสองฝั่งห่างกันอยู่หรือเปล่า โดยไม่ต้องเปิดหน้ายอดคงคลัง FG
  *
  *  ⚠️ ไม่ตรงกันไม่ใช่ความผิดพลาด และห้ามกันการออกใบ — Delta ตัดยอดช้ากว่าเราเป็นเรื่องปกติ */
-function dnDeltaCell(deltaWip, deltaWeek, ourWip){
+function dnDeltaCell(deltaWip, deltaWeek, ourWip, inCallIn){
+  /* ⚠️ สองกรณีนี้ต่างกัน และคนคีย์ต้องแยกออกจากข้อความบนจอ
+   *    อยู่ในไฟล์แต่เว้นช่องว่าง = เขายังรอของ แต่ไม่ได้บอกยอด
+   *    ไม่อยู่ในไฟล์เลย        = รอบนี้เขาไม่ได้เรียกใบนี้ (ปกติถูกซ่อนอยู่แล้ว) */
   if(deltaWip == null){
-    return `<span class="badge amber" title="ไม่มีใบนี้ในไฟล์ Call In ของ Delta — ช่อง Wip bal. บนกระดาษจะเว้นว่าง">`
-         + `ไม่มียอด Delta</span>`;
+    const wkTxt = deltaWeek ? ` (wk${escapeHtml(deltaWeek)})` : '';
+    return inCallIn
+      ? `<span class="badge amber" title="ใบนี้อยู่ในไฟล์ Call In${wkTxt} แต่ Delta เว้นช่อง Wip bal. ว่างไว้ `
+        + `— ช่อง Wip bal. บนกระดาษจะเว้นว่างตาม">ไม่ระบุยอด</span>`
+      : `<span class="badge amber" title="ไม่มีใบนี้ในไฟล์ Call In รอบล่าสุด — ช่อง Wip bal. บนกระดาษจะเว้นว่าง">`
+        + `ไม่อยู่ในไฟล์</span>`;
   }
   const wk = deltaWeek ? `<div class="hint">wk${escapeHtml(deltaWeek)}</div>` : '';
   const diff = (Number(deltaWip) || 0) - (Number(ourWip) || 0);
