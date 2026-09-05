@@ -38,6 +38,116 @@ function seedState(records = [], orders = null) {
   };
 }
 
+/* ── ยกเลิกใบสั่งที่นำเข้าผิด ──────────────────────────────────────────
+ *
+ * พนักงานแจ้ง 5 ก.ย. 2026 — นำเข้าแผนแล้วรหัส PO ผิด หรือลูกค้ายกเลิก PO ทีหลัง
+ * แล้วลบใบนั้นไม่ได้เลย ค้างอยู่บนทุกหน้าตลอดไป
+ *
+ * ⚠️ ยกเลิก ไม่ใช่ลบ (B1) — แถวต้องยังอยู่ใน state.orders พร้อม _dirty
+ *    ลบออกจาก array เฉย ๆ รอบซิงค์ถัดไปจะดึงกลับมาจากเซิร์ฟเวอร์ */
+
+async function openImportTab(page, orders) {
+  await openApp(page, [], orders);
+  await page.click('.tab-btn[data-tab="import"]');
+  await page.waitForTimeout(100);
+}
+
+const voidRowPos = page => page.$$eval('#orderVoidTable tbody tr td:first-child',
+  t => t.map(x => x.textContent.trim()));
+
+test('ยกเลิกใบสั่ง — ต้องพิมพ์ค้นหาก่อน แล้วกดยกเลิกได้', async ({ page }) => {
+  await openImportTab(page);
+  expect(await voidRowPos(page), 'ยังไม่พิมพ์อะไร ต้องไม่ไล่ใบสั่งทั้งหมดออกมาให้กดผิด')
+    .toEqual(['พิมพ์ PO หรือ P/N ที่ต้องการยกเลิกก่อน']);
+
+  await page.fill('#voidSearch', 'PO-1');
+  await page.waitForTimeout(150);
+  expect(await voidRowPos(page)).toEqual(['PO-1']);
+
+  page.once('dialog', d => d.accept());
+  await page.click('#orderVoidTable [data-void]');
+  await page.waitForTimeout(200);
+
+  const orders = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).orders, K_STATE);
+  expect(orders.length, 'B1 — แถวต้องยังอยู่ ไม่ใช่ splice ทิ้ง').toBe(2);
+  const o1 = orders.find(o => o.id === 'O1');
+  expect(o1.voided, 'ต้องถูกทำเครื่องหมายว่ายกเลิก').toBe(true);
+  expect(o1._dirty, 'ต้องถูกมาร์คให้ซิงค์ขึ้นไป').toBe(true);
+});
+
+test('ใบสั่งที่ยกเลิกแล้ว ต้องหายจาก Dashboard และหน้าบันทึกยอดรายวัน', async ({ page }) => {
+  const orders = seedState().orders.map(o =>
+    o.id === 'O1' ? Object.assign({}, o, { voided: true }) : o);
+  await openApp(page, [], orders);
+
+  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.waitForTimeout(150);
+  const dash = await page.$$eval('#dashTable tbody tr', t => t.map(x => x.textContent));
+  expect(dash.join(' '), 'Dashboard ต้องไม่มีใบที่ยกเลิก').not.toContain('PO-1');
+  expect(dash.join(' '), 'ส่วนใบที่ยังใช้งานต้องอยู่ครบ').toContain('PO-2');
+
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForTimeout(150);
+  const entry = await page.$$eval('#entryTable tbody tr', t => t.map(x => x.textContent));
+  expect(entry.join(' '), 'หน้าบันทึกยอดรายวันต้องไม่มีใบที่ยกเลิก').not.toContain('PO-1');
+});
+
+test('ยอดที่เคยคีย์ไว้ต้องไม่ถูกลบ และยังตามที่มาได้ว่าเป็นของใบไหน', async ({ page }) => {
+  /* ⚠️ orderById ต้องมองเห็นใบที่ยกเลิกด้วย ไม่งั้นหน้าแก้ไข/ลบรายการจะโชว์ PO เป็น "?"
+   *    แล้วคนตามไม่ได้ว่ายอดนั้นของใบไหน — กู้คืนก็ไม่รู้ว่าต้องกู้ใบอะไร */
+  const orders = seedState().orders.map(o =>
+    o.id === 'O1' ? Object.assign({}, o, { voided: true }) : o);
+  await openApp(page, [rec('R1', 'O1', 'winding', TEST_DATE, 30)], orders);
+
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForTimeout(150);
+  const rows = await page.$$eval('#recordEditorTable tbody tr', t => t.map(x => x.textContent));
+  expect(rows.join(' '), 'ยอดต้องยังอยู่ในตารางแก้ไข/ลบรายการ').toContain('PO-1');
+  expect(rows.join(' '), 'และต้องไม่กลายเป็นเครื่องหมายคำถาม').not.toContain('?');
+});
+
+test('กู้คืนใบสั่งที่ยกเลิกแล้ว ต้องกลับมาครบเหมือนเดิม', async ({ page }) => {
+  const orders = seedState().orders.map(o =>
+    o.id === 'O1' ? Object.assign({}, o, { voided: true }) : o);
+  await openImportTab(page, orders);
+
+  await page.fill('#voidSearch', 'PO-1');
+  await page.waitForTimeout(150);
+  expect(await voidRowPos(page), 'ยังไม่ติ๊กแสดงใบที่ยกเลิก ต้องไม่เห็น')
+    .toEqual(['ไม่พบใบสั่งที่ตรงกับที่ค้นหา']);
+
+  await page.check('#voidShowVoided');
+  await page.waitForTimeout(150);
+  expect(await voidRowPos(page)).toEqual(['PO-1']);
+
+  await page.click('#orderVoidTable [data-unvoid]');
+  await page.waitForTimeout(200);
+
+  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.waitForTimeout(150);
+  const dash = await page.$$eval('#dashTable tbody tr', t => t.map(x => x.textContent));
+  expect(dash.join(' '), 'กู้คืนแล้วต้องกลับมาบน Dashboard').toContain('PO-1');
+});
+
+test('นำเข้าไฟล์แผนใหม่ทับ ต้องไม่ปลุกใบที่ยกเลิกไปแล้วให้กลับมา', async ({ page }) => {
+  /* ⚠️ ไฟล์แผนของ Delta ยังมี PO ที่เขายกเลิกไปแล้วอยู่ได้ ถ้านำเข้าแล้วปลุกกลับมา
+   *    การยกเลิกจะไร้ความหมายทันทีในสัปดาห์ถัดไป · กันไว้ด้วยการที่ Object.assign
+   *    ทับเฉพาะฟิลด์ที่มาจากไฟล์ ซึ่งไม่มี voided */
+  const orders = seedState().orders.map(o =>
+    o.id === 'O1' ? Object.assign({}, o, { voided: true }) : o);
+  await openApp(page, [], orders);
+
+  const still = await page.evaluate(k => {
+    const st = JSON.parse(localStorage.getItem(k));
+    const it = { id: 'O1', week: 'W32', poNo: 'PO-1', pn: 'PN-1', orderQty: 999, orderDate: '2026-08-08' };
+    const i = st.orders.findIndex(o => o.id === it.id);
+    st.orders[i] = Object.assign({}, st.orders[i], it);   // ตรรกะเดียวกับ btnConfirmImport
+    return st.orders[i];
+  }, K_STATE);
+  expect(still.orderQty, 'ยอดต้องถูกอัปเดตตามไฟล์').toBe(999);
+  expect(still.voided, 'แต่ต้องยังยกเลิกอยู่').toBe(true);
+});
+
 /** วันของ N วันก่อน ในรูปแบบ YYYY-MM-DD ตามนาฬิกาเครื่อง — ให้ตรงกับ todayISO() ของแอป */
 function isoDaysAgo(n) {
   const d = new Date();

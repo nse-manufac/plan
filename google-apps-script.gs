@@ -10,8 +10,13 @@
 const TOKEN = 'CHANGE-ME-1234';   // ⚠️ ต้องเปลี่ยน และต้องตรงกับที่กรอกในโปรแกรม
 
 // Orders / Records ใช้ระบบ upsert รายแถวอิง id — ห้ามลบคอลัมน์ id กับ updatedAt
+// ⚠️ 'voided' ต้องอยู่ท้ายสุดเสมอ — doPushRows เขียนแถวด้วยตำแหน่ง (toRow ตามลำดับ cols)
+//    ส่วน sheetOf() เติมคอลัมน์ที่ขาด "ต่อท้าย" หัวตารางของชีตเดิม
+//    ลำดับสองฝั่งจึงตรงกันได้ต่อเมื่อคอลัมน์ใหม่ถูกเติมท้ายทั้งคู่
+//    ถ้าแทรกไว้กลางรายการ ชีตที่มีอยู่แล้วจะเขียนข้อมูลเหลื่อมคอลัมน์ทั้งตารางโดยไม่มี error
 const ORDER_COLS  = ['id','week','poNo','pn','subName','osc','pc','orderQty','orderDate',
-  'planWinding','planAssembly','planSupport','planInspection','status','importedAt','updatedAt'];
+  'planWinding','planAssembly','planSupport','planInspection','status','importedAt','updatedAt',
+  'voided'];
 const RECORD_COLS = ['id','date','orderId','process','qty','note','deviceName','createdAt','updatedAt','voided','batchId'];
 
 // ใบส่งสินค้า FM-ST-07 — หนึ่งแถว = หนึ่งบรรทัดบนใบ ไม่ใช่หนึ่งใบ
