@@ -427,6 +427,39 @@ test('PO ที่ไม่มีในไฟล์ของ Delta ต้อง�
   expect(g10, 'ห้ามเดาด้วยยอดของเรา ต้องเว้นว่าง').not.toMatch(/<v>[^<]+<\/v>/);
 });
 
+test('ยอด Delta ที่ซิงค์ลงมาเป็นเซลล์ว่าง ต้องไม่กลายเป็น 0 ทั้งบนจอและบนกระดาษ', async ({ page }) => {
+  /* ⚠️ รูที่โผล่เฉพาะ "เครื่องที่รับข้อมูลมาจากการซิงค์" ไม่ใช่เครื่องที่นำเข้าไฟล์เอง
+   *
+   *    เครื่องที่นำเข้าเก็บช่องว่างเป็น wip:null แต่ Apps Script เขียน null ลงชีต
+   *    ด้วย toRow() ที่แปลงเป็นเซลล์เปล่า พอ pull กลับมา getValues() คืน '' ไม่ใช่ null
+   *    เงื่อนไข deltaWip == null จึงไม่จับ ('' == null เป็นเท็จ) แล้ว '' ไหลลงไปถึง
+   *    numFmt() บนจอซึ่งได้ "0" และ setNumberCell() บนกระดาษ
+   *    = 0 ส่งถึงลูกค้า ซึ่งอ่านว่า "ไม่มีของค้างแล้ว"
+   *
+   *    ไฟล์จริงของ WK 35 มีใบที่ Delta เว้นช่องว่างอยู่ 39 ใบ · ทางเดียวที่กันได้คือ
+   *    อ่านยอดผ่าน deltaWipNum() ทุกจุด ไม่ใช่หยิบ dw.wip ดิบ ๆ
+   *
+   * ⚠️ ใช้ใบเดียวทั้งเทส และเจาะดูช่องของใบนั้นตรง ๆ ด้วย data-deltawip
+   *    เขียนครั้งแรกเป็น toContainText กับทั้งตาราง แล้วเทสเขียวทั้งที่โค้ดยังพัง
+   *    เพราะใบอื่นที่ไม่มียอดเลยก็ขึ้นข้อความเดียวกัน */
+  const ID = 'PO-B001|' + PN_B;
+  await openWithDelta(page, [Object.assign(deltaRow(ID, 36, 0), { wip: '' })], [ORDERS[0]]);
+  await page.uncheck('#dnHideNoDelta');
+  await page.waitForTimeout(200);
+
+  const cell = await page.locator(`#dnTable td[data-deltawip="${ID}"]`).innerText();
+  expect(cell, 'ช่องยอด Delta ของใบนี้ต้องไม่โชว์ 0').not.toMatch(/^\s*0\s*$/);
+  expect(cell, 'ต้องบอกว่าไม่มียอด').toContain('ไม่มียอด Delta');
+
+  await alloc(page, ID, 1000);
+  await pack(page, PN_B, 'perBox', 50);
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+
+  const g10 = (new RegExp('<c r="G10"[^>]*>.*?</c>').exec(xml) || [])[0] || '';
+  expect(g10, 'ช่อง Wip bal. ต้องไม่มีค่าเลย ไม่ใช่เซลล์ตัวเลขค่าว่าง').not.toMatch(/<v>/);
+});
+
 /* ── ช่องติ๊ก "ซ่อนใบที่ไม่มียอด Delta" ────────────────────────────────
  *
  * เจ้าของสั่ง 4 ก.ย. 2026 ให้ซ่อนใบที่ไม่มียอด Wip bal. ของ Delta

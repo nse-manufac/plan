@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-04.7">
+<meta name="app-version" content="2026-09-05.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1459,18 +1459,44 @@ function wipBalance(order, cum){
  *     ตัวนี้คือยอดค้างตามบัญชีของ Delta — ใช้เป็นเลขที่พิมพ์ลงกระดาษเท่านั้น
  *     สองเลขนี้ไม่ตรงกันได้ และนั่นคือข้อมูล ไม่ใช่บั๊ก
  *
- *  เลือกงวดด้วยเลขสัปดาห์ที่มากที่สุด ไม่ใช่เวลาที่นำเข้าล่าสุด
- *  เพราะถ้าเปิดไฟล์เก่าดูย้อนหลัง เลขบนใบส่งของต้องไม่เปลี่ยนตาม
- *  ข้อจำกัด: ข้ามปีแล้ว wk52 จะยังชนะ wk01 — หน้าจอโชว์เลขงวดไว้ให้คนเห็นเองว่าเก่า */
+ *  ตั้งแต่ 5 ก.ย. 2026 การนำเข้าไฟล์ Call In ยกเลิกยอดเดิม "ของใบที่อยู่ในชีตนั้น" ก่อนเขียนใหม่
+ *  (ดู saveDeltaWip) ปกติจึงเหลือแถวที่ยังไม่ถูกยกเลิกไม่เกินใบละหนึ่งแถว
+ *  การเลือกงวดจึงแทบไม่มีผลแล้ว ที่เหลือไว้เป็นตัวกันเหนียวเผื่อเครื่องที่ยังไม่ได้อัปเดต
+ *  ซิงค์ของเก่ากลับเข้ามา — เอาแถวที่สร้างทีหลังก่อน แล้วค่อยดูเลขสัปดาห์
+ *
+ *  ⚠️ ตัดสินด้วย createdAt ห้ามใช้ updatedAt — updatedAt ถูกซิงค์เขียนทับด้วยเวลาเซิร์ฟเวอร์ (D4)
+ *     และแถวที่ยังไม่ได้ส่งขึ้นถูกมาร์ค _dirty ใหม่ตอนบูต (D5) เครื่องที่ออฟไลน์แล้วดัน
+ *     ของงวดเก่าขึ้นไป จะทำให้งวดเก่ากลายเป็น "ใหม่ที่สุด" ของทุกเครื่อง
+ *
+ *  ⚠️ "มีแถว" กับ "มียอด" ไม่ใช่เรื่องเดียวกันตั้งแต่ 5 ก.ย. 2026
+ *     มีแถว = Delta เอ่ยถึงใบนี้ในไฟล์ที่นำเข้า
+ *     มียอด = เขากรอกตัวเลขมาด้วย -> เอาไปพิมพ์ลงกระดาษได้
+ *     แถวที่ wip ว่าง คือ "อยู่ในไฟล์แต่เขาไม่ได้ระบุยอด" คนละเรื่องกับ "ค้างศูนย์" */
 function deltaWipOf(orderId){
   let best = null;
   state.deltaWip.forEach(d=>{
     if(d.voided || d.orderId !== orderId) return;
     if(!best) { best = d; return; }
-    const a = Number(d.week)||0, b = Number(best.week)||0;
-    if(a > b || (a === b && String(d.createdAt||'') > String(best.createdAt||''))) best = d;
+    const a = String(d.createdAt||''), b = String(best.createdAt||'');
+    if(a > b || (a === b && (Number(d.week)||0) > (Number(best.week)||0))) best = d;
   });
   return best;
+}
+
+/** ยอดตัวเลขของแถว deltaWip — คืน null ถ้าไฟล์ปล่อยช่องนั้นว่างไว้
+ *
+ *  ⚠️ ห้ามใช้ Number(d.wip)||0 ตรง ๆ · ช่องว่างจะกลายเป็น 0 แล้ว 0 บนกระดาษ
+ *     อ่านว่า "ไม่มีของค้างแล้ว" ซึ่งเป็นคนละความหมายกับ "เขาไม่ได้บอกมา"
+ *
+ *  ⚠️ ต้องรับทั้ง null และ '' · เราเก็บลงเครื่องเป็น null แต่ Apps Script เขียนลงชีต
+ *     ด้วย toRow() ที่แปลง null เป็น '' พอ pull กลับมาจึงได้สตริงว่าง (ไม่ใช่ 0
+ *     เพราะ getValues() คืน '' สำหรับเซลล์เปล่า) ส่วนศูนย์จริงกลับมาเป็นเลข 0 */
+function deltaWipNum(d){
+  if(!d) return null;
+  const txt = String(d.wip == null ? '' : d.wip).trim();
+  if(txt === '') return null;
+  const n = Number(txt);
+  return isFinite(n) ? n : null;
 }
 
 /** เลขสัปดาห์จากชื่อชีต เช่น "X'FRM3M4 wk34" -> "34"
@@ -1486,17 +1512,43 @@ function weekFromSheetName(name){
 function saveDeltaWip(items, week, fileName){
   const now = new Date().toISOString();
   const known = new Set(state.orders.map(o=>o.id));
-  let added = 0, updated = 0;
+
+  /* ขอบเขตของการล้าง = "ใบที่อยู่ในชีตนี้จริง ๆ" ไม่ใช่ทั้งหน่วย และไม่ใช่ทั้งงวด
+   *
+   * ⚠️ เปิดไฟล์ Call In ของ WK 35 ตัวจริงดูเมื่อ 5 ก.ย. 2026 — ชีตไม่ได้แบ่งตามหน่วย
+   *    อย่างที่เข้าใจกันมาตลอด:
+   *      ชีตแรก   348 ใบ = TUE-H 342 + รหัสที่แยกหน่วยไม่ได้ 6
+   *      ชีตที่สอง  60 ใบ = TUE-U  59 + TUE-H ปนมา 1 ใบ
+   *    ถ้าล้าง "ทั้งหน่วย" ใบ TUE-H ที่ปนอยู่ในชีตที่สองใบเดียว จะพายอดของ TUE-H
+   *    อีก 341 ใบที่ชีตแรกเพิ่งเขียนหายไปด้วย · ต่อใบเท่านั้นถึงจะปลอดภัย
+   *    และต่อใบยังไม่ต้องพึ่ง subNameFromPo() เลย จึงทนกับรหัส PO ที่แยกหน่วยไม่ออก */
+  const inFile = new Set();
+  items.forEach(it=>{ if(known.has(it.id)) inFile.add(it.id); });
+  if(!inFile.size) return {added:0, updated:0, cleared:0, blank:0};
+
+  // ล้างยอดเดิมของใบเหล่านั้นให้หมดก่อน แล้วค่อยเขียนของไฟล์นี้ลงไป (B1 — voided ไม่ splice)
+  let cleared = 0;
+  state.deltaWip.forEach(d=>{
+    if(d.voided || !inFile.has(d.orderId)) return;
+    d.voided = true; d.updatedAt = now; d._dirty = true;
+    cleared++;
+  });
+
+  let added = 0, updated = 0, blank = 0;
   items.forEach(it=>{
     if(!known.has(it.id)) return;              // ใบที่เราไม่รู้จัก ไม่เก็บ
-    // ⚠️ ช่องว่างในไฟล์ของ Delta แปลว่า "ไม่รู้" ไม่ใช่ "ค้างศูนย์" — ต้องไม่เก็บ
-    //    Number('') ได้ 0 และ isFinite(0) เป็นจริง ถ้าเช็กแค่ isFinite ช่องว่างจะกลายเป็น 0
-    //    แล้วกระดาษจะพิมพ์ 0 ส่งถึงลูกค้า ซึ่งอ่านว่า "ไม่มีของค้างแล้ว"
-    //    ไม่เก็บดีกว่า เพราะช่องว่างบนกระดาษบอกความจริงว่าเราไม่มีข้อมูล
+
+    /* ⚠️ ช่องว่างในไฟล์ของ Delta แปลว่า "ไม่รู้" ไม่ใช่ "ค้างศูนย์" — เก็บเป็น wip:null
+     *    Number('') ได้ 0 และ isFinite(0) เป็นจริง ถ้าเช็กแค่ isFinite ช่องว่างจะกลายเป็น 0
+     *    แล้วกระดาษจะพิมพ์ 0 ส่งถึงลูกค้า ซึ่งอ่านว่า "ไม่มีของค้างแล้ว"
+     *
+     * ⚠️ ต้องเก็บแถวไว้ถึงจะว่าง ห้าม return ทิ้ง — "มีแถว" คือหลักฐานว่าใบนี้อยู่ในไฟล์
+     *    ของเดิม return ทิ้ง ยอดที่ผิดจากการอัปครั้งก่อนจึงรอดมาตลอด อัปทับกี่ครั้งก็ไม่หาย
+     *    ซึ่งคืออาการที่ #62 แจ้งมา · ชีตแรกของไฟล์จริงมีใบแบบนี้ 39 ใบ */
     const txt = String(it.fileWip == null ? '' : it.fileWip).trim();
-    if(txt === '') return;
-    const wip = Number(txt);
-    if(!isFinite(wip)) return;
+    const num = txt === '' ? NaN : Number(txt);
+    const wip = isFinite(num) ? num : null;
+    if(wip == null) blank++;
     const i = state.deltaWip.findIndex(d => d.orderId===it.id && String(d.week)===String(week));
     if(i > -1){
       Object.assign(state.deltaWip[i], {wip, fileName, voided:false, updatedAt:now, _dirty:true});
@@ -1511,7 +1563,7 @@ function saveDeltaWip(items, week, fileName){
   });
   saveState();
   doSync();
-  return {added, updated};
+  return {added, updated, cleared, blank};
 }
 
 /* ---------- ยอดคงคลัง FG ---------- */
@@ -1553,9 +1605,12 @@ function fgRows(){
     g.outQty += outQty;
     g.ourWip += wipBalance(o, c);
 
+    // ⚠️ นับเฉพาะใบที่ Delta กรอกตัวเลขมาจริง · ใบที่อยู่ในไฟล์แต่เว้นช่องไว้
+    //    ไม่มียอดให้เทียบ ถ้านับเป็น 0 ช่อง "ต่าง" จะฟ้องว่ายอดไม่ตรงทั้งที่ไม่มีข้อมูล
     const dw = deltaWipOf(o.id);
-    if(dw){ g.deltaWip += Number(dw.wip)||0; g.deltaHave++; }
-    g.orders.push({o, inQty, outQty, ourWip: wipBalance(o, c), delta: dw});
+    const dwNum = deltaWipNum(dw);
+    if(dwNum != null){ g.deltaWip += dwNum; g.deltaHave++; }
+    g.orders.push({o, inQty, outQty, ourWip: wipBalance(o, c), delta: dwNum == null ? null : dw});
   });
 
   const rows = [];
@@ -1674,7 +1729,11 @@ function deliveryGroups(date, unit){
     const wipBefore = (Number(o.orderQty) || 0) - shippedBefore;
     const wip = Math.max(0, wipBefore);
     const dw = deltaWipOf(o.id);
-    const deltaLeft = dw ? (Number(dw.wip) || 0) : 0;
+    /* ⚠️ อ่านยอดผ่าน deltaWipNum() เสมอ ห้ามหยิบ dw.wip ดิบ ๆ
+     *    เครื่องที่รับข้อมูลมาจากการซิงค์ได้ '' แทน null (ดูคอมเมนต์ของ deltaWipNum)
+     *    ซึ่ง Number('')||0 ได้ 0 และ '' == null เป็นเท็จ สองทางนี้พา 0 ลงกระดาษได้ทั้งคู่ */
+    const dwNum = deltaWipNum(dw);
+    const deltaLeft = dwNum == null ? 0 : dwNum;
 
     /* ⚠️ กติกาของยอด Delta ในตัวกรองนี้ — อ่านให้จบก่อนแก้
      *
@@ -1691,7 +1750,7 @@ function deliveryGroups(date, unit){
     // จัดกลุ่มด้วยข้อความเสมอ ไม่งั้น P/N เดียวกันที่มาคนละทางจะแตกเป็นสองกลุ่ม
     const key = String(o.pn == null ? '' : o.pn);
     if(!byPn.has(key)) byPn.set(key, []);
-    byPn.get(key).push({o, wip, alloc, deltaWip: dw ? dw.wip : null, deltaWeek: dw ? dw.week : '',
+    byPn.get(key).push({o, wip, alloc, deltaWip: dwNum, deltaWeek: dw ? dw.week : '',
       // แถวนี้โผล่มาเพราะ Delta ยังค้าง ทั้งที่บัญชีเราส่งครบแล้ว — ต้องบอกคนคีย์ให้รู้
       onlyDelta: wip <= 0 && alloc <= 0 && deltaLeft > 0, wipBefore});
   });
@@ -4117,7 +4176,12 @@ document.getElementById('btnDeltaWipSave').addEventListener('click', ()=>{
     || prompt('ชื่อชีตไม่ได้บอกเลขสัปดาห์ — พิมพ์เลขสัปดาห์ของไฟล์นี้ (เช่น 34)');
   if(!week) return;
   const r = saveDeltaWip(pendingCallIn.items, week, pendingCallIn.fileName);
-  toast(`เก็บยอดของ Delta งวด wk${week} แล้ว — ใหม่ ${r.added} · ทับของเดิม ${r.updated}`);
+  /* ⚠️ ห้ามรายงาน r.cleared เป็น "ลบไปกี่ใบ" — ขอบเขตการล้างคือใบที่อยู่ในชีตนี้
+   *    ทุกใบที่ถูกล้างจึงถูกเขียนทับด้วยของใหม่ทันทีเสมอ ไม่มีอะไรหายไปจริง */
+  const total = r.added + r.updated;
+  toast(`เก็บยอดของ Delta งวด wk${week} แล้ว — ${total} ใบในชีตนี้`
+      + (r.blank ? ` (มียอด ${total - r.blank} · Delta เว้นช่องว่างไว้ ${r.blank})` : '')
+      + ` · ใบที่ไม่ได้อยู่ในชีตนี้ไม่ถูกแตะ`);
   renderSyncBadge();
   renderDeliveryNote();
 });
