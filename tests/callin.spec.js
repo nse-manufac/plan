@@ -414,18 +414,43 @@ test('B4 — PO QTY เลื่อนคอลัมน์ ต้องอ่�
   expect(sum, 'และต้องจับคู่ได้ครบสองใบ').toContain('จับคู่ PO ได้ 2 แถว');
 });
 
-test('B5 — ไม่มีหัวตาราง PO QTY ในชีตเลย ต้องบอกว่าขาดหัวไหน ไม่ใช่เดาคอลัมน์', async ({ page }) => {
+test('B5 — ไม่มีหัวตาราง PO QTY ต้องยังอ่านชีตได้ แค่ไม่มีคำเตือนเรื่องยอดสั่ง', async ({ page }) => {
+  /* ⚠️ PO QTY ใช้ทำคำเตือน "ยอดสั่งไม่ตรง" อย่างเดียว ไม่ได้เก็บลงข้อมูล
+   *    เคยตั้งเป็นช่องบังคับไว้ตอนแรก ผลคือถ้า Delta สะกดหัวคอลัมน์นี้ต่างไปนิดเดียว
+   *    จะเก็บ Wip bal. ของทั้งชีตไม่ได้เลย ทั้งที่ของที่หายไปคือแค่คำเตือน
+   *    (ผู้ตรวจทักไว้ใน #68) · ส่วน P/N · PO No. · Wip bal. ยังบังคับเหมือนเดิม */
+  await openWith(page, ORDERS);
+  await scan(page, await callInWorkbook([
+    { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 },
+    { pn: '9100000040', poNo: 'PO-C040', orderDate: '2026-07-06', qty: 300, wip: 250 }
+  ], { qtyHeader: '' }), 'X-FRM wk34');
+
+  const sum = await page.locator('#callInSummary').innerText();
+  expect(sum, 'ต้องยังจับคู่ใบได้ครบ ไม่ใช่ปฏิเสธทั้งชีต').toContain('จับคู่ PO ได้ 2 แถว');
+  expect(sum, 'และต้องไม่มีคำเตือนหลอกว่ายอดสั่งไม่ตรง').not.toContain('PO QTY ไม่ตรงกัน');
+
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(200);
+  const live = await page.evaluate(k =>
+    JSON.parse(localStorage.getItem(k)).deltaWip.filter(d => !d.voided)
+      .map(d => d.orderId + '=' + d.wip).sort(), K_STATE);
+  expect(live, 'ของที่หน้านี้มีไว้เก็บจริง ๆ ต้องเก็บได้ครบ')
+    .toEqual(['PO-C040|9100000040=250', 'PO-C041|9100000041=180']);
+});
+
+test('B6 — ขาดหัวตาราง Wip bal. ต้องยังปฏิเสธทั้งชีตเหมือนเดิม', async ({ page }) => {
+  // ผ่อนให้เฉพาะ PO QTY เท่านั้น · ของที่หน้านี้มีไว้เพื่อมันยังต้องบังคับ
   await openWith(page, ORDERS);
   await page.setInputFiles('#callInFileInput',
     { name: 'callin.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       buffer: await callInWorkbook([
         { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 }
-      ], { qtyHeader: '' }) });
+      ], { wipHeader: '' }) });
   await expect(page.locator('#btnCallInScan')).toBeEnabled();
   await page.selectOption('#callInSheet', 'X-FRM wk34');
   await page.click('#btnCallInScan');
 
-  await expect(page.locator('#toast'), 'ต้องบอกชื่อหัวตารางที่หาไม่เจอ').toContainText('PO QTY');
+  await expect(page.locator('#toast'), 'ต้องบอกชื่อหัวตารางที่หาไม่เจอ').toContainText('Wip bal.');
   await expect(page.locator('#callInPreviewPanel'), 'และต้องไม่เปิดหน้าผลเทียบให้ดูต่อ').toBeHidden();
 });
 
