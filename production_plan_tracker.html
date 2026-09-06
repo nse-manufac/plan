@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-06.1">
+<meta name="app-version" content="2026-09-06.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1907,11 +1907,22 @@ let pendingCallIn = null;   // {zip, sheetMap, fileName}
  * ⚠️ เทียบแบบผ่อนปรน — ตัดทุกอย่างที่ไม่ใช่ตัวอักษรทิ้งก่อน กัน "PO  NO" (เว้นสองเคาะ)
  *    "Wip bal." "WIP BAL" "Wip Balance" ถือเป็นชื่อเดียวกัน · ช่องที่เป็นตัวเลขล้วน
  *    (หัวตารางมีคอลัมน์วันที่เป็นเลข serial) จะเหลือสตริงว่าง จึงไม่ไปชนกับใคร */
+/* ⚠️ required บอกว่าขาดแล้วต้องปฏิเสธทั้งชีตหรือแค่ข้ามไป — แยกตามว่าช่องนั้นทำอะไร
+ *
+ *    pn/po  = กุญแจของแถว ขาดแล้วจับคู่ใบสั่งไม่ได้เลย
+ *    wip    = ของที่ทั้งหน้านี้มีไว้เพื่อมัน ขาดแล้วเก็บอะไรไม่ได้
+ *    qty    = ใช้ทำ "คำเตือน PO QTY ไม่ตรง" อย่างเดียว ไม่ได้เก็บลงข้อมูล
+ *
+ *    เคยตั้ง qty เป็นบังคับด้วยตอน 6 ก.ย. 2026 ด้วยเหตุผลว่า "ขาดหัวตารางต้องฟ้อง ไม่ใช่เดา"
+ *    แต่ไม่ได้สัดส่วนกับความสำคัญของช่องนั้น — Delta สะกดหัวคอลัมน์นี้ต่างไปนิดเดียว
+ *    จะทำให้เก็บ Wip bal. ของทั้งชีตไม่ได้เลย ทั้งที่ของที่หายไปคือแค่คำเตือน
+ *    (ผู้ตรวจทักไว้ใน #68) · ขาดแล้ว fileQty เป็น 0 ซึ่ง planCallIn ถือว่า "ไม่มีอะไรให้เทียบ"
+ *    อยู่แล้ว จึงเงียบไปเฉย ๆ ไม่มีคำเตือนหลอก */
 const CALLIN_HEAD = [
-  {field:'pn',  label:'P/N',      test: n => n === 'pn'},
-  {field:'po',  label:'PO No.',   test: n => n.startsWith('pono')},
-  {field:'qty', label:'PO QTY',   test: n => n.startsWith('poqty')},
-  {field:'wip', label:'Wip bal.', test: n => n.startsWith('wipbal')}
+  {field:'pn',  label:'P/N',      required:true,  test: n => n === 'pn'},
+  {field:'po',  label:'PO No.',   required:true,  test: n => n.startsWith('pono')},
+  {field:'qty', label:'PO QTY',   required:false, test: n => n.startsWith('poqty')},
+  {field:'wip', label:'Wip bal.', required:true,  test: n => n.startsWith('wipbal')}
 ];
 const headNorm = txt => String(txt == null ? '' : txt).toLowerCase().replace(/[^a-z]/g, '');
 
@@ -1946,7 +1957,7 @@ async function readCallInSheet(zip, path){
     if(!norm) continue;                                  // ช่องว่างหรือหัวที่เป็นตัวเลขล้วน
     CALLIN_HEAD.forEach(h=>{ if(col[h.field] == null && h.test(norm)) col[h.field] = c; });
   }
-  const missing = CALLIN_HEAD.filter(h => col[h.field] == null);
+  const missing = CALLIN_HEAD.filter(h => h.required && col[h.field] == null);
   if(missing.length) return {error:'ไม่พบหัวตาราง ' + missing.map(h=>'"'+h.label+'"').join(' และ ')
     + ' ในชีตนี้ — เลือกชีตให้ถูกก่อนครับ'};
 
@@ -1960,7 +1971,8 @@ async function readCallInSheet(zip, path){
       rowNo: rows[i].getAttribute('r'),
       pn, po,
       id: po+'|'+pn,
-      fileQty: Number(cellText(cs[col.qty], shared)) || 0,
+      // ไม่มีคอลัมน์ PO QTY ในชีตนี้ = 0 = "ไม่มีอะไรให้เทียบ" ไม่ใช่ "ยอดเป็นศูนย์"
+      fileQty: col.qty == null ? 0 : (Number(cellText(cs[col.qty], shared)) || 0),
       fileWip: cellText(cs[col.wip], shared)
     });
   }
