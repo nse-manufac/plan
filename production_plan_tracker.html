@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-06.2">
+<meta name="app-version" content="2026-09-06.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1072,8 +1072,13 @@ let pendingFocusOrderId = null;
 // clobbered by an incoming pull until it has been pushed.
 const SYNC_KEY = 'tue_order_tracker_sync_v1';
 function defaultSyncCfg(){
+  /* ⚠️ ทุกตารางที่ซิงค์ต้องมีนาฬิกาของตัวเองครบที่นี่
+   *    lastPullDeltaWip เคยตกหล่นตอนเพิ่มตาราง DeltaWip เข้ามา — saveSyncCfg กับ doSync
+   *    ใช้มันอยู่ แต่ defaultSyncCfg ไม่เคยประกาศ ค่าจึงเป็น undefined บนเครื่องใหม่
+   *    (ไม่ถึงกับข้อมูลหาย เพราะ since ที่เป็น undefined ทำให้ดึงมาทั้งตาราง
+   *     แต่เป็นความไม่ตรงกันที่ไม่มีอะไรฟ้อง) · มีเทสคุมไว้แล้วใน gs-server.spec.js */
   return {url:'', token:'', auto:true, lastPullOrders:'', lastPullRecords:'', lastPullDeliveryNotes:'',
-          lastOkAt:'', state:'off', error:''};
+          lastPullDeltaWip:'', lastOkAt:'', state:'off', error:''};
 }
 function loadSyncCfg(){
   try{
@@ -1296,9 +1301,19 @@ function gsCopySetupLink(){
     .catch(()=>prompt('คัดลอกลิงก์นี้ไปเปิดที่เครื่องใหม่:', link));
 }
 
+/* ⚠️ ต้องล้างนาฬิกาของ "ทุกตาราง" ไม่ใช่แค่ Orders กับ Records
+ *
+ *    นี่คือทางกู้ทางเดียวเมื่อสงสัยว่าเครื่องนี้ได้ข้อมูลไม่ครบ
+ *    ตอนแรกลืมเติม DeliveryNotes กับ DeltaWip ตอนเพิ่มสองตารางนั้นเข้ามา
+ *    ปุ่มจึงกู้ไม่ได้กับตารางที่ใหม่ที่สุด ซึ่งเป็นตารางที่เสี่ยงที่สุดพอดี
+ *
+ *    เพิ่มตารางใหม่เมื่อไหร่ ต้องเติมที่นี่ด้วยเสมอ — มีเทสคุมไว้แล้ว
+ *    (เทียบรายชื่อ lastPull* ใน defaultSyncCfg กับที่ถูกล้างในนี้) */
 function gsResetPullClock(){
   if(!confirm('ดึงรายการทั้งหมดใหม่ตั้งแต่ต้น? ใช้เมื่อสงสัยว่าข้อมูลไม่ครบ')) return;
-  syncCfg.lastPullOrders=''; syncCfg.lastPullRecords=''; saveSyncCfg(); doSync(false);
+  syncCfg.lastPullOrders=''; syncCfg.lastPullRecords='';
+  syncCfg.lastPullDeliveryNotes=''; syncCfg.lastPullDeltaWip='';
+  saveSyncCfg(); doSync(false);
 }
 
 /* ---------- แก้ไฟล์ Excel เฉพาะช่องที่ต้องแก้ ---------- */
