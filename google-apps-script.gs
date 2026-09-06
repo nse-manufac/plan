@@ -192,17 +192,40 @@ function doPing() {
 }
 
 /** ดึงรายการที่เปลี่ยนแปลงหลังเวลา since (ISO string) — ใช้ได้ทั้ง Orders และ Records */
+/** ⚠️ ประทับ serverTime "ก่อน" อ่านชีตเสมอ ห้ามย้ายไปไว้ตอนท้าย
+ *
+ *    doPushRows ประทับ stamp ตอนเริ่ม แล้วเขียนทีละแถวซึ่งกินเวลาหลายวินาที
+ *    ถ้า pull ประทับเวลาตอนอ่านเสร็จ จะได้เวลาที่ใหม่กว่าแถวที่ push ยังเขียนไม่ถึง
+ *    เครื่องที่ดึงเอาเวลานั้นไปเก็บเป็น lastPull รอบหน้า แล้วแถวที่เหลือของ push ก้อนนั้น
+ *    จะเก่ากว่า since ตลอดไป = เครื่องนั้นไม่ได้รับแถวพวกนั้นอีกเลย
+ *    ทางกู้ทางเดียวคือปุ่ม "ดึงรายการทั้งหมดใหม่" ซึ่งไม่มีอะไรบอกให้กด
+ *
+ * ⚠️ เทียบแบบ ">=" ไม่ใช่ ">" — แถวที่ประทับเวลาชนกับ serverTime ของรอบก่อนพอดี
+ *    ถ้าใช้ ">" จะไม่ถูกส่งอีกเลยตลอดกาล
+ *    ส่งซ้ำเสียแค่แบนด์วิดท์ ฝั่งแอปรวมข้อมูลซ้ำได้อยู่แล้ว (mergeRowsInto เทียบ updatedAt)
+ *    แต่ส่งขาดคือข้อมูลหาย — สองอย่างนี้ราคาไม่เท่ากัน
+ *
+ * ⚠️ จับ lock ตัวเดียวกับ push ไม่งั้นยังอ่านชีตที่ push เขียนไปได้ครึ่งเดียวอยู่ดี */
 function doPullRows(table, since) {
   var cols = ROW_TABLES[table];
   if (!cols) return { ok: false, error: 'ไม่รู้จักตาราง: ' + table };
-  var rows = readObjects(sheetOf(table, cols));
+
+  var stamp = nowIso();
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) return { ok: false, error: 'ระบบกำลังถูกใช้งาน ลองใหม่อีกครั้ง' };
+  var rows;
+  try {
+    rows = readObjects(sheetOf(table, cols));
+  } finally {
+    lock.releaseLock();
+  }
   var out = [];
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
     // แก้ updatedAt ก่อนเทียบ since เสมอ (แม้แถวนี้จะไม่ถูกส่งออกไปก็ตาม) เพราะถ้า Sheets แปลงเป็น
     // Date object แล้วปล่อยผ่าน String(Date) จะได้รูปแบบอ่านง่ายที่ไม่ใช่ ISO เทียบกับ since ไม่ได้
     fixTimestampCols(r, TIMESTAMP_COLS[table] || []);
-    if (!since || String(r.updatedAt || '') > since) {
+    if (!since || String(r.updatedAt || '') >= since) {
       delete r._row;
       fixDateOnlyCols(r, DATE_ONLY_COLS[table] || []);
       if (table === 'Orders') r.orderQty = Number(r.orderQty) || 0;
@@ -213,7 +236,7 @@ function doPullRows(table, since) {
       out.push(r);
     }
   }
-  return { ok: true, serverTime: nowIso(), rows: out };
+  return { ok: true, serverTime: stamp, rows: out };
 }
 
 /** เพิ่มหรืออัปเดตรายการ — อิง id เป็นหลัก ใครแก้ทีหลังชนะ (ตัดสินที่ฝั่ง client ก่อนส่งมาแล้ว) */
