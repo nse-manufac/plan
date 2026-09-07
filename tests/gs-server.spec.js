@@ -172,7 +172,10 @@ test('นาฬิกาซิงค์ต้องถูกประกาศ�
 
   /* รายชื่อที่ถือว่าเป็นความจริง คือ "นาฬิกาที่ doSync ใช้จริง" ไม่ใช่ที่ประกาศไว้
    * เพราะของที่ "ใช้แต่ไม่ได้ประกาศ" คือบั๊กชนิดที่เทสข้อนี้ต้องจับ */
-  const used = [...new Set([...APP.matchAll(/syncCfg\.lastPull([A-Za-z]+)\s*[=)},]/g)]
+  /* ⚠️ คลาสตัวอักษรต้องรับ ; และช่องว่างด้วย · ของเดิมรับแค่ [=)},]
+   *    ถ้าวันหน้ามีคนเขียน `const s = syncCfg.lastPullX;` เทสจะมองไม่เห็นชื่อนั้น
+   *    แล้วบั๊กแบบ #70 (นาฬิกาที่ใช้แต่ไม่ได้ประกาศ) จะหลุดได้อีก (ผู้ตรวจทักไว้ใน #71) */
+  const used = [...new Set([...APP.matchAll(/syncCfg\.lastPull([A-Za-z]+)\s*[=)},;\s]/g)]
     .map(m => m[1]))].sort();
   expect(used.length, 'ต้องหานาฬิกาที่ doSync ใช้เจอ').toBeGreaterThan(0);
 
@@ -186,6 +189,21 @@ test('นาฬิกาซิงค์ต้องถูกประกาศ�
   expect(reset, 'ต้องมี resetPullClocks เป็นตัวกลาง').not.toBeNull();
   expect(reset[1], 'ต้องกวาดทุกคีย์ที่ขึ้นต้นด้วย lastPull ไม่ใช่เขียนชื่อทีละตัว')
     .toMatch(/lastPull/);
+});
+
+test('saveSyncCfg ต้องเก็บนาฬิกาด้วยการกวาดคีย์ ไม่ใช่แจกแจงชื่อเอง', async () => {
+  /* ⚠️ ที่ที่สี่ที่เคยมีรายชื่อนาฬิกาซ้ำ · ลืมเติมชื่อที่นี่เมื่อไหร่ นาฬิกาตัวนั้น
+   *    จะไม่ถูกเก็บลง localStorage = รีเซ็ตทุกครั้งที่เปิดโปรแกรม แล้วดึงทั้งกระดาน
+   *    ลงมาใหม่ทุกวันโดยไม่มีใครสังเกต (ผู้ตรวจทักไว้ใน #71) */
+  const APP = fs.readFileSync(
+    path.join(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
+  const fn = /function saveSyncCfg\(\)\{([\s\S]*?)\n\}/.exec(APP);
+  expect(fn, 'ต้องหา saveSyncCfg เจอ').not.toBeNull();
+
+  const named = [...fn[1].matchAll(/lastPull[A-Za-z]+/g)].map(m => m[0]);
+  expect(named,
+    'saveSyncCfg ยังแจกแจงชื่อนาฬิกาเอง — ให้กวาดคีย์ที่ขึ้นต้นด้วย lastPull แทน').toEqual([]);
+  expect(fn[1], 'และต้องกวาดคีย์จริง ๆ').toMatch(/lastPull/);
 });
 
 test('ห้ามล้างนาฬิกาซิงค์ที่อื่นนอกจาก resetPullClocks', async () => {

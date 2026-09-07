@@ -1091,12 +1091,17 @@ function loadSyncCfg(){
   }catch(e){ return defaultSyncCfg(); }
 }
 function saveSyncCfg(){
-  // ⚠️ แจกแจงชื่อฟิลด์ไว้ตรง ๆ — เพิ่มตารางใหม่แล้วลืมเติมที่นี่ นาฬิกา pull จะรีเซ็ตทุกครั้งที่เปิดโปรแกรม
-  //    แล้วจะดึงข้อมูลทั้งกระดานลงมาใหม่ทุกวันโดยไม่มีใครสังเกต
-  const {url,token,auto,lastPullOrders,lastPullRecords,lastPullDeliveryNotes,
-         lastPullDeltaWip,lastOkAt} = syncCfg;
-  localStorage.setItem(SYNC_KEY, JSON.stringify({url,token,auto,lastPullOrders,lastPullRecords,
-                                                 lastPullDeliveryNotes,lastPullDeltaWip,lastOkAt}));
+  /* เก็บเฉพาะฟิลด์ที่ต้องอยู่ข้ามการเปิดโปรแกรม — state กับ error เป็นของชั่วคราวของรอบนี้
+   *
+   * ⚠️ นาฬิกา pull เก็บด้วยการกวาดคีย์ที่ขึ้นต้นด้วย lastPull ห้ามแจกแจงชื่อเอง
+   *    ของเดิมแจกแจงไว้ตรง ๆ พร้อมคอมเมนต์เตือนว่าลืมเติมแล้วนาฬิกาจะรีเซ็ตทุกครั้ง
+   *    ที่เปิดโปรแกรม แล้วดึงข้อมูลทั้งกระดานลงมาใหม่ทุกวันโดยไม่มีใครสังเกต
+   *    — คำเตือนไม่ช่วยอะไรถ้ายังต้องอาศัยความจำ นี่คือที่ที่สี่ที่เคยมีรายชื่อนาฬิกาซ้ำ
+   *    (ผู้ตรวจทักไว้ใน #71) · มีเทสคุมแล้วว่าห้ามเขียนชื่อนาฬิกาในฟังก์ชันนี้ */
+  const out = {};
+  ['url','token','auto','lastOkAt'].forEach(k=>{ out[k] = syncCfg[k]; });
+  Object.keys(syncCfg).forEach(k=>{ if(k.indexOf('lastPull') === 0) out[k] = syncCfg[k]; });
+  localStorage.setItem(SYNC_KEY, JSON.stringify(out));
 }
 let syncCfg = loadSyncCfg();
 let syncing = false;
