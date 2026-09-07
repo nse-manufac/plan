@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-07.2">
+<meta name="app-version" content="2026-09-08.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1467,6 +1467,20 @@ function cellText(c, shared){
 /** เขียนตัวเลขลงช่อง โดยรักษารูปแบบ (เส้นขอบ สี ทศนิยม) ของช่องเดิมไว้
  *  ถ้าแถวนั้นยังไม่มีช่องนี้เลย ต้องสร้างใหม่และ "แทรกให้ถูกลำดับคอลัมน์"
  *  เพราะ Excel อ่านช่องในแถวตามลำดับ ถ้าสลับลำดับไฟล์จะเสีย */
+/** คืนสูตรจำนวน/PCS ให้แถวที่ใบนี้ไม่ได้ใช้
+ *
+ *  ต้องคืน ไม่ใช่แค่ปล่อยไว้ เพราะไฟล์ที่พนักงานอัปเข้ามาอาจเป็นใบของสัปดาห์ก่อน
+ *  ที่เราเคยเขียนตัวเลขนิ่งทับสูตรไปแล้ว ถ้าปล่อยไว้ ยอดของสัปดาห์ก่อนจะค้างบนใบใหม่ */
+function restoreQtyFormula(doc, rowEl){
+  const n = rowEl.getAttribute('r');
+  const c = ensureCell(doc, rowEl, DN_QTY_COL, null);
+  c.removeAttribute('t');
+  while(c.firstChild) c.removeChild(c.firstChild);
+  const f = doc.createElementNS(XL_NS, 'f');
+  f.textContent = `M${n}*N${n}+O${n}`;
+  c.appendChild(f);
+}
+
 function setNumberCell(doc, rowEl, col, num, fallbackStyle){
   const ref = col + rowEl.getAttribute('r');
   let c = null;
@@ -3264,6 +3278,14 @@ const DN_FIRST_ROW = 10, DN_LAST_ROW = 95;
 const DN_COL = { pn:'C', po:'D', orderDate:'E', orderQty:'F', wip:'G',
                  perBox:'M', boxes:'N', remainder:'O', remark:'U' };
 
+/* ช่อง "จำนวน/PCS" แยกออกมาจาก DN_COL โดยตั้งใจ ห้ามเอาไปใส่รวม
+ *
+ * ⚠️ ลูปล้างแถวที่เหลือท้ายตารางวน Object.values(DN_COL) แล้วเรียก clearCell()
+ *    ซึ่งลบลูกทุกตัวรวมทั้ง <f> · ถ้า P อยู่ในนั้น สูตร M*N+O ของแถวที่ไม่ได้ใช้
+ *    จะถูกลบทิ้งทั้ง 80 กว่าแถว = ทำลายฟอร์มของลูกค้า
+ *    แถวที่ไม่ได้ใช้จึงต้อง "คืนสูตร" ไม่ใช่ "ล้าง" (ดู restoreQtyFormula) */
+const DN_QTY_COL = 'P';
+
 /** เขียนข้อความลงช่อง โดยรักษารูปแบบเดิมไว้
  *  ใช้ inlineStr เพื่อไม่ต้องไปยุ่งกับตาราง sharedStrings ที่ใช้ร่วมกันทั้งไฟล์
  *  แตะตารางนั้นเมื่อไหร่ ช่องอื่นที่อ้างเลขเดียวกันจะเปลี่ยนตามไปด้วย */
@@ -3310,7 +3332,10 @@ function ensureCell(doc, rowEl, col, fallbackStyle){
 /** ช่องที่ merge ข้ามแถวในกลุ่ม P/N — ตรงกับที่คนทำมือในใบจริง
  *  P รวมอยู่ด้วยเพราะเป็นสูตร M*N+O ของแถวแรก แถวอื่นในกลุ่มจะได้ 0 (M/N/O ว่าง)
  *  ยอดรวมท้ายตารางจึงยังถูกต้องแม้ merge เพราะ SUM บวก 0 ของแถวที่เหลือ */
-const DN_MERGE_COLS = ['M','N','O','P'];
+/* ⚠️ ช่อง P (จำนวน/PCS) ไม่อยู่ในนี้แล้วตั้งแต่ 8 ก.ย. 2026
+ *    Delta ขอให้เห็นยอดส่งแยกราย PO · ส่วนกล่อง/เศษยังรวมทั้งกลุ่มเหมือนเดิมตามที่เจ้าของยืนยัน
+ *    (กล่องหนึ่งใบมีของคละ PO ได้ เลขกล่องรายตัวจึงเป็นความจริงบนกระดาษไม่ได้) */
+const DN_MERGE_COLS = ['M','N','O'];
 
 /** ตั้งค่า merge ของช่วงข้อมูลใหม่ทั้งหมด — ของเดิมในช่วงแถว 10-95 ถูกล้างก่อนเสมอ
  *  ไม่งั้น merge ของใบครั้งก่อนจะค้างและซ้อนทับกับของใบใหม่จนไฟล์เสีย */
@@ -3372,7 +3397,8 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
   // ⚠️ สำคัญกับคอลัมน์ Order Date เป็นพิเศษ — ช่องที่สร้างใหม่โดยไม่มีรูปแบบ
   //    จะโชว์เป็นเลขดิบแทนที่จะเป็นวันที่ ซึ่งอ่านไม่รู้เรื่องบนกระดาษ
   const styleOf = {};
-  Object.values(DN_COL).forEach(col=>{
+  // รวม DN_QTY_COL ด้วย เพราะมันถูกแยกออกจาก DN_COL ไปแล้ว แต่ยังต้องใช้รูปแบบของช่องเดิม
+  Object.values(DN_COL).concat([DN_QTY_COL]).forEach(col=>{
     for(let n=DN_FIRST_ROW; n<=DN_LAST_ROW; n++){
       const rowEl = rowByNo[n];
       if(!rowEl) continue;
@@ -3392,7 +3418,7 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
   const merges = [];
   for(const g of groups){
     const first = n;
-    for(const {o, wip, deltaWip} of shippedOrders(g)){
+    for(const {o, wip, alloc, deltaWip} of shippedOrders(g)){
       const rowEl = rowByNo[n];
       if(rowEl){
         setTextCell(doc, rowEl, DN_COL.pn, g.pn, styleOf[DN_COL.pn]);
@@ -3405,6 +3431,21 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
         //    ใบที่ Delta ไม่มีข้อมูล เว้นว่างไว้ ห้ามเดาด้วยยอดของเรา
         if(deltaWip == null) clearCell(doc, rowEl, DN_COL.wip);
         else setNumberCell(doc, rowEl, DN_COL.wip, deltaWip, styleOf[DN_COL.wip]);
+
+        /* ยอดส่งของ "ราย PO" — Delta ขอเมื่อ 8 ก.ย. 2026
+         *
+         * ⚠️ ช่องนี้เป็นสูตร M*N+O มาแต่เดิม และมีกฎห้ามแตะสูตรของฟอร์ม
+         *    แต่เจ้าของยืนยันว่ากล่อง/เศษยังรวมทั้งกลุ่ม ไม่แยกราย PO
+         *    สูตรจึงคิดยอดรายแถวไม่ได้ (M/N/O ของแถวที่สองเป็นต้นไปว่าง)
+         *    ทางเดียวคือเขียนตัวเลขทับสูตร "เฉพาะแถวที่ออกใบจริง"
+         *    แถวที่ไม่ได้ใช้ยังเก็บสูตรไว้ครบ และ SUM(P10:P95) ท้ายตารางยังถูก
+         *
+         * ⚠️ ผลพลอยได้ที่ตั้งใจ — คอลัมน์ Fail (G-P) กลายเป็นถูกรายแถว
+         *    ของเดิม P ถูก merge แถวที่สองเป็นต้นไปจึงว่าง แล้ว Fail คิดเป็น G-0
+         *
+         * ⚠️ ยอดรวมของกลุ่มยังถูกคุมด้วยด่าน packQty !== qty เหมือนเดิม
+         *    กล่อง/เศษที่พิมพ์บนกระดาษจึงยังตรงกับผลบวกของยอดราย PO เสมอ */
+        setNumberCell(doc, rowEl, DN_QTY_COL, Number(alloc)||0, styleOf[DN_QTY_COL]);
         // ยอดบรรจุลงเฉพาะแถวแรกของกลุ่ม แถวที่เหลือเว้นว่าง
         // สูตร P ของแถวที่เหลือจึงได้ 0 และยอดรวมท้ายตารางยังถูกต้อง
         if(n === first){
@@ -3439,7 +3480,9 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
   // แถวที่เหลือจากใบครั้งก่อนต้องล้าง ไม่งั้นใบใหม่จะมีของเก่าปนโดยไม่มีใครสังเกต
   for(; n <= DN_LAST_ROW; n++){
     const rowEl = rowByNo[n];
-    if(rowEl) Object.values(DN_COL).forEach(col => clearCell(doc, rowEl, col));
+    if(!rowEl) continue;
+    Object.values(DN_COL).forEach(col => clearCell(doc, rowEl, col));
+    restoreQtyFormula(doc, rowEl);   // ช่องจำนวนต้องกลับไปเป็นสูตรของฟอร์ม ไม่ใช่ถูกล้าง
   }
 
   setDataMerges(doc, merges);
