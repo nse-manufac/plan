@@ -25,11 +25,16 @@ const rec = (id, orderId, process, qty, date = '2026-08-20', extra = {}) => Obje
   id, date, orderId, process, qty, note: '', deviceName: 't',
   createdAt: date + 'T00:00:00.000Z', updatedAt: date + 'T00:00:00.000Z', voided: false, _dirty: false
 }, extra);
-const deltaRow = (orderId, week, wip) => ({
+/** ⚠️ createdAt ต้องต่างกันตามงวด ห้ามให้ทุกแถวเท่ากัน — ดูเหตุผลเต็มใน delivery-note.spec.js */
+const deltaRow = (orderId, week, wip, createdAt) => ({
   id: 'DW-' + orderId + '-' + week, orderId, week: String(week), wip, fileName: 'c.xlsx',
-  deviceName: 't', createdAt: '2026-08-25T00:00:00.000Z', updatedAt: '2026-08-25T00:00:00.000Z',
+  deviceName: 't',
+  createdAt: createdAt || weekStamp(week), updatedAt: createdAt || weekStamp(week),
   voided: false, _dirty: false
 });
+function weekStamp(week){
+  return new Date(Date.UTC(2026, 0, 1) + Number(week) * 7 * 86400000).toISOString();
+}
 
 async function open(page, orders, records = [], deltaWip = []) {
   await page.addInitScript(([k, o, r, d]) => localStorage.setItem(k, JSON.stringify({
