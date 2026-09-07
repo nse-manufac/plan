@@ -989,6 +989,89 @@ function agingOrder(id, daysAgo) {
     importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false };
 }
 
+/* ── A5 · ลำดับการตัดสินสถานะ ห้ามสลับ ────────────────────────────────
+ *
+ * INVARIANTS A5 สั่งว่า computeStatus ต้องไล่จาก "ปลายน้ำขึ้นต้นน้ำ"
+ *   ส่งของครบ -> เกินกำหนดส่งของ -> Inspection -> Support -> Assembly -> Winding -> ใกล้ครบ -> ปกติ
+ * เพื่อให้รายงานสถานะที่ "แย่ที่สุด" ก่อน
+ *
+ * แต่ก่อนหน้านี้ไม่มีเทสข้อไหนคุมลำดับเลย — สลับ if ของ Inspection กับ Assembly
+ * แล้วเทสทั้งชุดยังเขียว (CTO agent พิสูจน์ด้วย mutation แล้ว)
+ *
+ * ใบที่ค้างหลายขั้นพร้อมกันเป็นเรื่องปกติของงานจริง ถ้ารายงานขั้นต้นน้ำก่อน
+ * คนอ่านจะคิดว่าปัญหาอยู่ที่ Assembly แล้วไปเร่งผิดจุด ทั้งที่ของค้างที่ Inspection
+ *
+ * ⚠️ ค่า deadlineOffsets ของ seedState คือ winding 10 · assembly 17 · inspection 24 · shipping 28
+ *    วันสั่งซื้อจึงถูกเลือกให้ "วันนี้" ตกอยู่ระหว่างกำหนด Inspection กับกำหนดส่งของพอดี */
+/* ช่องสถานะคือ td สุดท้ายของแถว — ไม่มี data-* ให้เกาะ จึงเจาะด้วย :last-child
+ * (เขียนเป็น td[data-status] ไว้ครั้งแรก ซึ่งไม่มีอยู่จริง แล้วได้สตริงว่างกลับมา
+ *  ถ้าใช้ not.toContain อย่างเดียว เทสจะเขียวตลอดไปโดยไม่ได้ตรวจอะไร) */
+const dashStatuses = page =>
+  page.locator('#dashTable tbody tr td:last-child').allInnerTexts();
+
+function lateOrder(id, daysAgo, qty = 100) {
+  return { id, week: 'W31', poNo: 'PO-' + id, pn: 'PN-' + id, orderQty: qty,
+    orderDate: isoDaysAgo(daysAgo), status: 'active',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false };
+}
+
+test('A5 — ค้างทั้ง Assembly และ Inspection ต้องรายงาน Inspection ซึ่งอยู่ปลายน้ำกว่า', async ({ page }) => {
+  // สั่งมา 26 วัน: กำหนด Assembly (17) และ Inspection (24) เลยมาแล้ว แต่กำหนดส่ง (28) ยังไม่ถึง
+  await openApp(page, [], [lateOrder('O1', 26)]);
+  await gotoDashboard(page);
+
+  const st = (await dashStatuses(page)).join(' ');
+  expect(st, 'ต้องรายงานขั้นที่อยู่ปลายน้ำที่สุดที่ยังค้าง').toContain('ล่าช้า Inspection');
+  expect(st, 'ห้ามรายงานขั้นต้นน้ำก่อน — คนจะไปเร่งผิดจุด').not.toContain('ล่าช้า Assembly');
+});
+
+test('A5 — เกินกำหนดส่งของ ต้องมาก่อนความล่าช้าของทุกขั้น', async ({ page }) => {
+  // สั่งมา 40 วัน: เลยกำหนดทุกขั้นรวมทั้งกำหนดส่ง
+  await openApp(page, [], [lateOrder('O1', 40)]);
+  await gotoDashboard(page);
+
+  const st = (await dashStatuses(page)).join(' ');
+  expect(st, 'ปลายน้ำสุดคือกำหนดส่งของ ต้องรายงานอันนี้').toContain('เกินกำหนดส่งของ');
+  expect(st, 'และต้องไม่รายงานขั้นอื่นแทน').not.toContain('ล่าช้า');
+});
+
+test('A5 — ส่งของครบแล้ว ต้องชนะทุกอย่าง แม้เลยกำหนดทุกขั้น', async ({ page }) => {
+  await openApp(page, [rec('R1', 'O1', 'shipping', isoDaysAgo(1), 100)], [lateOrder('O1', 40)]);
+  await gotoDashboard(page);
+  await page.uncheck('#dashHideDone');
+  await page.waitForTimeout(100);
+
+  const st = (await dashStatuses(page)).join(' ');
+  expect(st, 'ส่งครบแล้วคืองานจบ ไม่ใช่งานที่เกินกำหนด').toContain('ส่งของครบแล้ว');
+  expect(st, 'ห้ามรายงานว่าเกินกำหนด').not.toContain('เกินกำหนด');
+});
+
+/* ── แถบ ทัน/เกิน บน Dashboard ────────────────────────────────────────
+ *
+ * buildCumSplitMap แบ่งยอดของแต่ละขั้นเป็น "ทันกำหนด" กับ "เกินกำหนด"
+ * ด้วยเงื่อนไข r.date <= dl · ไม่มีเทสข้อไหนแตะแถบสองสีนี้เลยจนถึง 8 ก.ย. 2026
+ *
+ * ⚠️ ขอบเขตคือ "วันครบกำหนดพอดี = ยังทัน" ไม่ใช่เกิน
+ *    เปลี่ยนเป็น < เมื่อไหร่ ของที่ทำเสร็จวันสุดท้ายจะถูกนับเป็นสายทั้งหมด
+ *    ซึ่งเป็นวันที่คนเร่งงานกันมากที่สุด = ตัวเลขจะดูแย่กว่าความจริงเป็นประจำ */
+test('แถบ ทัน/เกิน — ทำเสร็จวันครบกำหนดพอดี ต้องนับว่าทัน ไม่ใช่เกิน', async ({ page }) => {
+  // สั่งมา 20 วัน กำหนด Winding = วันสั่ง + 10 = 10 วันก่อน · คีย์ยอดลงวันนั้นเป๊ะ
+  await openApp(page, [rec('R1', 'O1', 'winding', isoDaysAgo(10), 100)], [lateOrder('O1', 20)]);
+  await gotoDashboard(page);
+
+  const row = await page.locator('#dashTable tbody tr').first().innerText();
+  expect(row, 'วันครบกำหนดพอดียังถือว่าทัน จึงต้องไม่ขึ้นป้ายแยก ทัน/เกิน').not.toContain('เกิน 100');
+});
+
+test('แถบ ทัน/เกิน — ทำเสร็จหลังกำหนด ต้องแยกให้เห็นว่าเกินเท่าไหร่', async ({ page }) => {
+  // คีย์ยอด Winding ช้ากว่ากำหนดหนึ่งวัน
+  await openApp(page, [rec('R1', 'O1', 'winding', isoDaysAgo(9), 100)], [lateOrder('O1', 20)]);
+  await gotoDashboard(page);
+
+  const row = await page.locator('#dashTable tbody tr').first().innerText();
+  expect(row, 'ของที่ทำหลังกำหนด ต้องถูกนับเป็นเกิน').toContain('เกิน 100');
+});
+
 test('A4 — สีช่อง Aging ต้องมาจาก deadlineOffsets.shipping ไม่ใช่เลขตายตัว', async ({ page }) => {
   // seedState ตั้ง shipping = 28 → ค้างเกิน 28 วันแดง · เหลือถึงกำหนด ≤3 วันเหลือง · นอกนั้นเขียว
   // เรียงตาม orderDate จากเก่าไปใหม่ → 30, 26, 5 วัน
