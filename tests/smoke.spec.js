@@ -168,6 +168,90 @@ async function typeQty(page, orderId, value) {
   await page.waitForTimeout(150);
 }
 
+/* ── D3 · ของที่ยังไม่ได้ส่งขึ้น ห้ามถูกทับ ──────────────────────────────
+ *
+ * INVARIANTS เขียนไว้ว่า "ละเมิดข้อนี้ = ยอดที่พนักงานคีย์ไว้หายโดยไม่มีใครรู้"
+ * แต่ก่อนหน้านี้ไม่มีเทสข้อไหนคุมเลย — fixture ทุกไฟล์ตั้ง _dirty:false หมด
+ * ลองถอด `if(local._dirty) continue` ออกจาก mergeRowsInto แล้วเทสทั้ง 182 ข้อยังเขียว
+ *
+ * ── จังหวะที่ทำให้เกิดจริง ────────────────────────────────────────────
+ * doSync คำนวณรายชื่อแถวที่จะ push "ครั้งเดียว" ตอนต้น แล้วค่อย await
+ * ถ้าพนักงานคีย์ยอดระหว่างที่ push ก้อนนั้นยังไม่กลับมา แถวที่เพิ่งคีย์
+ * จะไม่ได้อยู่ในก้อนที่ push และยังเป็น _dirty อยู่ตอนที่ pull ลงมา merge
+ * ถ้าไม่มีด่าน D3 ยอดที่เพิ่งคีย์จะถูกของบนเซิร์ฟเวอร์ทับทันที
+ *
+ * เทสนี้สร้างจังหวะนั้นตรง ๆ ด้วยการ "ค้าง" คำตอบของ push ไว้
+ * แล้วคีย์ยอดระหว่างนั้น ก่อนปล่อยให้ sync เดินต่อ */
+test('D3 — ยอดที่คีย์ระหว่างซิงค์ ต้องไม่ถูกของบนเซิร์ฟเวอร์ทับ', async ({ page }) => {
+  await page.clock.install();
+
+  const ORDERS = [{ id: 'O1', week: 'W31', poNo: 'PO-1', pn: 'PN-1', orderQty: 1000,
+    orderDate: '2026-08-01', status: 'active', subName: 'TUE-U',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false }];
+
+  // R1 ซิงค์ไปแล้ว (จะถูกคีย์ทับระหว่าง push ค้าง) · R2 ยังไม่ได้ส่ง (ไว้บังคับให้เกิด push)
+  const R1 = rec('R1', 'O1', 'winding', TEST_DATE, 100);
+  const R2 = Object.assign(rec('R2', 'O1', 'assembly', TEST_DATE, 50), { _dirty: true });
+
+  /* สิ่งที่เซิร์ฟเวอร์จะส่งกลับมา — แถวเดียวกับ R1 แต่ยอดต่างและเวลาใหม่กว่ามาก
+   *
+   * ⚠️ ส่งแถวใหม่ SV1 มาด้วย เพื่อใช้เป็น "สัญญาณว่า merge ทำงานเสร็จแล้ว"
+   *    เทสรอบแรกไม่มีตัวนี้ แล้วรอด้วยการ poll ว่า qty เป็น 700 ซึ่งเป็นจริง
+   *    ตั้งแต่ตอนพิมพ์เสร็จ — เทสจึงจบก่อนที่ pull จะมาถึงด้วยซ้ำ
+   *    ถอดด่าน D3 ออกแล้วยังเขียว = ไม่ได้ตรวจอะไรเลย (พิสูจน์ด้วยการย้อนโค้ดแล้ว) */
+  const fromServer = Object.assign(rec('R1', 'O1', 'winding', TEST_DATE, 999),
+    { updatedAt: '2099-01-01T00:00:00.000Z' });
+  const marker = Object.assign(rec('SV1', 'O1', 'support', TEST_DATE, 7),
+    { updatedAt: '2099-01-01T00:00:00.000Z' });
+
+  let releasePush;
+  const pushHeld = new Promise(res => { releasePush = res; });
+  let pushSeen = false;
+
+  await page.route('**/exec', async route => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    if (body.action === 'pushRows' && body.table === 'Records') {
+      pushSeen = true;
+      await pushHeld;                    // ค้างไว้ให้ทันคีย์ยอดระหว่างนี้
+    }
+    const rows = (body.action === 'pullRows' && body.table === 'Records') ? [fromServer, marker] : [];
+    await route.fulfill({ contentType: 'application/json',
+      body: JSON.stringify({ ok: true, rows, serverTime: '2026-08-26T00:00:00.000Z' }) });
+  });
+
+  await page.addInitScript(([k, sk, st]) => {
+    localStorage.setItem(k, JSON.stringify(st));
+    localStorage.setItem(sk, JSON.stringify({ url: 'https://example.test/exec', token: 't', auto: true }));
+  }, [K_STATE, 'tue_order_tracker_sync_v1',
+      Object.assign(seedState([R1, R2], ORDERS), { deliveryNotes: [], deltaWip: [] })]);
+
+  await page.goto(APP);
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.fill('#entryDate', TEST_DATE);
+  await page.waitForTimeout(150);
+
+  // เดินนาฬิกาให้ตัวจับเวลาซิงค์ทำงาน แล้วรอจนแน่ใจว่า push ถูกยิงและกำลังค้างอยู่
+  await page.clock.runFor(21000);
+  await expect.poll(() => pushSeen, { timeout: 5000 }).toBe(true);
+
+  // ระหว่างที่ push ยังค้าง พนักงานคีย์ยอดของ R1 ทับ — แถวนี้จึงเป็น _dirty
+  // และไม่ได้อยู่ในก้อนที่กำลัง push
+  await typeQty(page, 'O1', 700);
+  expect((await readRecords(page)).find(r => r.id === 'R1')._dirty,
+    'แถวที่เพิ่งคีย์ต้องเป็น _dirty และไม่ได้อยู่ในก้อนที่กำลัง push').toBe(true);
+
+  releasePush();
+
+  // รอจนแถวใหม่จากเซิร์ฟเวอร์โผล่ = merge ทำงานจบแล้วจริง ค่อยตรวจว่า R1 รอดไหม
+  await expect.poll(() => page.evaluate(k =>
+    JSON.parse(localStorage.getItem(k)).records.some(r => r.id === 'SV1'), K_STATE),
+    { timeout: 5000, message: 'merge ต้องทำงานจริง ไม่งั้นเทสนี้ไม่ได้ตรวจอะไรเลย' }).toBe(true);
+
+  const r1 = (await readRecords(page)).find(r => r.id === 'R1');
+  expect(r1.qty, 'ยอดที่พนักงานคีย์ต้องอยู่ ไม่ใช่ถูกของบนเซิร์ฟเวอร์ทับ').toBe(700);
+  expect(r1.updatedAt, 'และต้องไม่รับเวลาของเซิร์ฟเวอร์มาด้วย').not.toBe('2099-01-01T00:00:00.000Z');
+});
+
 function readRecords(page) {
   return page.evaluate(k => JSON.parse(localStorage.getItem(k)).records, K_STATE);
 }
