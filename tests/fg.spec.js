@@ -163,6 +163,42 @@ test('กดที่แถวแล้วต้องเห็นการเ�
   expect(rows[2], 'หักที่ส่งออก 1,200').toContain('3,300');
 });
 
+/* ── ใบที่ยกเลิกแล้วต้องไม่ถูกนับในหน้า FG ────────────────────────────
+ *
+ * fgRows() ใช้ activeOrders() อยู่แล้วตั้งแต่ #66 แต่ไม่มีเทสข้อไหนตรึงไว้
+ * CTO agent ย้อนกลับไปใช้ state.orders ทั้งก้อน แล้วเทส fg ทั้ง 17 ข้อยังเขียว
+ *
+ * ที่พังคือ "ยอดคงเหลือ FG" ซึ่งเป็นเลขที่คนเอาไปตัดสินใจว่าจะส่งของได้เท่าไหร่
+ * ใบที่พิมพ์รหัสผิดแล้วยกเลิกไปแล้ว จะกลับมาบวกยอดรับเข้าของมันเข้าไปด้วย */
+test('ใบที่ยกเลิกแล้ว ต้องไม่ถูกนับในยอดคงคลัง FG', async ({ page }) => {
+  const live = order('PO-A1', PN_A, 5000);
+  const dead = Object.assign(order('PO-A2', PN_A, 5000), { voided: true });
+
+  await open(page, [live, dead], [
+    rec('R1', 'PO-A1|' + PN_A, 'inspection', 3000),
+    rec('R2', 'PO-A2|' + PN_A, 'inspection', 1500)   // ยอดของใบที่ยกเลิก ต้องไม่ถูกนับ
+  ]);
+
+  const row = page.locator(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  await expect(row, 'ยังต้องมีแถวของ P/N นี้ เพราะใบที่ใช้งานอยู่ยังมี').toHaveCount(1);
+  expect(await cellOf(page, PN_A, 'TUE-U', 2),
+    'รับเข้าต้องนับเฉพาะใบที่ใช้งานอยู่ ไม่รวม 1,500 ของใบที่ยกเลิก').toBe('3,000');
+  expect(await cellOf(page, PN_A, 'TUE-U', 4), 'FG คงเหลือต้องเป็น 3,000 ตาม').toBe('3,000');
+  expect(await cellOf(page, PN_A, 'TUE-U', 5),
+    'ยอดค้างส่งของเราต้องนับเฉพาะใบที่ใช้งานอยู่').toBe('5,000');
+});
+
+test('ใบที่ยกเลิกแล้ว ต้องไม่โผล่ในตัวเลือกหน่วยของหน้า FG', async ({ page }) => {
+  // ใบเดียวของหน่วย TUE-H และถูกยกเลิกไปแล้ว — หน่วยนั้นต้องไม่มีให้เลือก
+  await open(page, [
+    order('PO-A1', PN_A, 5000),
+    Object.assign(order('PO-H1', PN_B, 400, 'TUE-H'), { voided: true })
+  ]);
+  const units = await page.locator('#fgUnit option').allInnerTexts();
+  expect(units, 'หน่วยที่เหลือแต่ใบที่ยกเลิก ต้องไม่มีให้เลือก').not.toContain('TUE-H');
+  expect(units, 'ส่วนหน่วยที่ยังมีใบใช้งานอยู่ ต้องยังอยู่').toContain('TUE-U');
+});
+
 test('การ์ดต้องเทียบราย PO และบอกว่ายอดของ Delta มาจากงวดไหน', async ({ page }) => {
   await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 5000)], [],
                    [deltaRow('PO-A1|' + PN_A, 34, 5000)]);
