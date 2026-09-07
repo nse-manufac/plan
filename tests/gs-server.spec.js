@@ -155,22 +155,28 @@ test('แถวที่เวลาชนกับ since พอดี ต้อ
     'แต่เวลาที่ไกลกว่านั้นต้องได้ศูนย์แถว ไม่ใช่ส่งทั้งตารางทุกครั้ง').toBe(0);
 });
 
-/* ── ปุ่ม "ดึงรายการทั้งหมดใหม่" ต้องกู้ได้ครบทุกตาราง ──────────────────
+/* ── นาฬิกา "ดึงมาถึงไหนแล้ว" ต้องถูกล้างครบทุกตัว และล้างที่เดียว ──────
  *
- * นี่คือทางกู้ทางเดียวจากบั๊กข้างบน · ตอนเพิ่ม DeliveryNotes กับ DeltaWip เข้ามา
- * ลืมเติมสองตัวนั้นในปุ่ม ปุ่มจึงกู้ไม่ได้กับตารางที่ใหม่ที่สุด ซึ่งเสี่ยงที่สุดพอดี
+ * เคยเขียนรายชื่อนาฬิกาซ้ำสามที่ (ปุ่มกู้ · ปุ่มลบข้อมูลทั้งหมด · defaultSyncCfg)
+ * พอเพิ่มตาราง DeliveryNotes กับ DeltaWip เข้ามา เติมไม่ครบทั้งสามที่:
+ *   - ปุ่มกู้ล้างแค่ 2 ใน 4  -> ทางกู้ทางเดียวกู้ได้ครึ่งเดียว
+ *   - ปุ่มลบข้อมูลทั้งหมดล้างแค่ 2 ใน 4 ทั้งที่ defaultState() ล้างทุกตาราง
+ *     -> ใบส่งสินค้ากับยอดของ Delta หายถาวรจากเครื่องนั้น ทั้งที่เซิร์ฟเวอร์ยังมีครบ
+ *   - defaultSyncCfg ไม่ประกาศ lastPullDeltaWip เลย
  *
- * เทียบจากซอร์สจริงทั้งสองฝั่ง ห้ามก็อปรายชื่อมาไว้ในเทส — ถ้าเขียนเอง
- * วันหนึ่งมันจะหลุดจากของจริงแล้วเทสจะเขียวทั้งที่ปุ่มกู้ไม่ครบ */
-test('ปุ่มดึงใหม่ทั้งหมด ต้องล้างนาฬิกาของทุกตารางที่ซิงค์', async () => {
+ * เทสสองข้อนี้จึงคุมสองเรื่อง: ล้าง "ครบ" และล้าง "ที่เดียว"
+ * ข้อหลังสำคัญกว่า เพราะมันกันการเกิดซ้ำครั้งที่สี่ ไม่ใช่แค่ปะครั้งนี้ */
+test('นาฬิกาซิงค์ต้องถูกประกาศครบ และล้างครบทุกตัว', async () => {
   const APP = fs.readFileSync(
     path.join(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
 
   /* รายชื่อที่ถือว่าเป็นความจริง คือ "นาฬิกาที่ doSync ใช้จริง" ไม่ใช่ที่ประกาศไว้
-   * เพราะของที่ "ใช้แต่ไม่ได้ประกาศ" คือบั๊กชนิดที่เทสข้อนี้ต้องจับ
-   * lastPullDeltaWip เคยตกหล่นแบบนั้นมาแล้วจริง — doSync กับ saveSyncCfg ใช้อยู่
-   * แต่ defaultSyncCfg ไม่เคยประกาศ ถ้าเทียบ "ที่ประกาศ" กับ "ที่ล้าง" จะมองไม่เห็น */
-  const used = [...new Set([...APP.matchAll(/syncCfg\.lastPull([A-Za-z]+)/g)].map(m => m[1]))].sort();
+   * เพราะของที่ "ใช้แต่ไม่ได้ประกาศ" คือบั๊กชนิดที่เทสข้อนี้ต้องจับ */
+  /* ⚠️ คลาสตัวอักษรต้องรับ ; และช่องว่างด้วย · ของเดิมรับแค่ [=)},]
+   *    ถ้าวันหน้ามีคนเขียน `const s = syncCfg.lastPullX;` เทสจะมองไม่เห็นชื่อนั้น
+   *    แล้วบั๊กแบบ #70 (นาฬิกาที่ใช้แต่ไม่ได้ประกาศ) จะหลุดได้อีก (ผู้ตรวจทักไว้ใน #71) */
+  const used = [...new Set([...APP.matchAll(/syncCfg\.lastPull([A-Za-z]+)\s*[=)},;\s]/g)]
+    .map(m => m[1]))].sort();
   expect(used.length, 'ต้องหานาฬิกาที่ doSync ใช้เจอ').toBeGreaterThan(0);
 
   const dflt = /function defaultSyncCfg\(\)\{([\s\S]*?)\n\}/.exec(APP);
@@ -178,8 +184,35 @@ test('ปุ่มดึงใหม่ทั้งหมด ต้องล้�
   const declared = [...new Set([...dflt[1].matchAll(/lastPull([A-Za-z]+)\s*:/g)].map(m => m[1]))].sort();
   expect(declared, 'ทุกนาฬิกาที่ใช้ ต้องถูกประกาศใน defaultSyncCfg ด้วย').toEqual(used);
 
-  const body = /function gsResetPullClock\(\)\{([\s\S]*?)\n\}/.exec(APP);
-  expect(body, 'ต้องหา gsResetPullClock เจอ').not.toBeNull();
-  const cleared = [...new Set([...body[1].matchAll(/lastPull([A-Za-z]+)\s*=\s*''/g)].map(m => m[1]))].sort();
-  expect(cleared, 'และทุกนาฬิกาต้องถูกล้างในปุ่มกู้ ไม่งั้นกู้ได้ไม่ครบ').toEqual(used);
+  // ตัวล้างต้องกวาดทุกคีย์ที่ขึ้นต้นด้วย lastPull ไม่ใช่ไล่ชื่อทีละตัว
+  const reset = /function resetPullClocks\(\)\{([\s\S]*?)\n\}/.exec(APP);
+  expect(reset, 'ต้องมี resetPullClocks เป็นตัวกลาง').not.toBeNull();
+  expect(reset[1], 'ต้องกวาดทุกคีย์ที่ขึ้นต้นด้วย lastPull ไม่ใช่เขียนชื่อทีละตัว')
+    .toMatch(/lastPull/);
+});
+
+test('saveSyncCfg ต้องเก็บนาฬิกาด้วยการกวาดคีย์ ไม่ใช่แจกแจงชื่อเอง', async () => {
+  /* ⚠️ ที่ที่สี่ที่เคยมีรายชื่อนาฬิกาซ้ำ · ลืมเติมชื่อที่นี่เมื่อไหร่ นาฬิกาตัวนั้น
+   *    จะไม่ถูกเก็บลง localStorage = รีเซ็ตทุกครั้งที่เปิดโปรแกรม แล้วดึงทั้งกระดาน
+   *    ลงมาใหม่ทุกวันโดยไม่มีใครสังเกต (ผู้ตรวจทักไว้ใน #71) */
+  const APP = fs.readFileSync(
+    path.join(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
+  const fn = /function saveSyncCfg\(\)\{([\s\S]*?)\n\}/.exec(APP);
+  expect(fn, 'ต้องหา saveSyncCfg เจอ').not.toBeNull();
+
+  const named = [...fn[1].matchAll(/lastPull[A-Za-z]+/g)].map(m => m[0]);
+  expect(named,
+    'saveSyncCfg ยังแจกแจงชื่อนาฬิกาเอง — ให้กวาดคีย์ที่ขึ้นต้นด้วย lastPull แทน').toEqual([]);
+  expect(fn[1], 'และต้องกวาดคีย์จริง ๆ').toMatch(/lastPull/);
+});
+
+test('ห้ามล้างนาฬิกาซิงค์ที่อื่นนอกจาก resetPullClocks', async () => {
+  const APP = fs.readFileSync(
+    path.join(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
+
+  // ทุกที่ที่เซ็ตนาฬิกาเป็นค่าว่าง ต้องอยู่ในตัวกลางตัวเดียวเท่านั้น
+  const assigns = [...APP.matchAll(/syncCfg\.lastPull[A-Za-z]*\s*=\s*''/g)];
+  expect(assigns.length,
+    'มีการล้างนาฬิกาแบบเขียนชื่อเองอยู่ — ย้ายไปใช้ resetPullClocks() ' +
+    'ไม่งั้นวันหนึ่งจะเติมไม่ครบอีก (เกิดมาแล้วสองที่)').toBe(0);
 });
