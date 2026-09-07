@@ -778,6 +778,37 @@ test('แถวที่โผล่เพราะ Delta ยังค้าง 
   expect(row, 'มากกว่าที่ทั้งสองฝั่งคิดว่าค้าง ถึงจะเตือน').toContain('เกิน');
 });
 
+/* ── กติกา "แถวไหนใหม่กว่า" ต้องอยู่ที่เดียว ──────────────────────────
+ *
+ * deltaWipOf กับ currentDeltaWeek เคยเขียนสูตรเทียบ createdAt ซ้ำกันแบบตัวอักษรต่อตัวอักษร
+ * แก้ที่หนึ่งลืมอีกที่เมื่อไหร่ = จอกับกระดาษบอกคนละงวดโดยไม่มีอะไรฟ้อง
+ *
+ * เป็นรูปแบบเดียวกับรายชื่อ "นาฬิกาซิงค์" ที่เคยเขียนซ้ำสี่ที่แล้วเติมไม่ครบจนข้อมูลหาย (#70/#71)
+ * ข้อนี้จึงคุม "ห้ามเขียนซ้ำ" ไม่ใช่แค่ "ผลลัพธ์ถูก" — กันการเกิดซ้ำ ไม่ใช่ปะทีละครั้ง */
+test('การตัดสินว่าแถวไหนใหม่กว่า ต้องเขียนที่เดียวคือ deltaWipNewer', async () => {
+  const src = fs.readFileSync(
+    require('path').resolve(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
+
+  const cut = (from, to) => {
+    const a = src.indexOf(from), b = src.indexOf(to, a);
+    expect(a, 'ต้องหา ' + from + ' เจอ').toBeGreaterThan(-1);
+    expect(b, 'ต้องหา ' + to + ' เจอ').toBeGreaterThan(a);
+    return src.slice(a, b);
+  };
+
+  const newer = cut('function deltaWipNewer', '\n}');
+  expect(newer, 'ตัวกลางต้องเป็นคนเทียบ createdAt').toMatch(/createdAt/);
+
+  for (const [fn, next] of [['function deltaWipOf', '\n}'],
+                            ['function currentDeltaWeek', '\n}']]) {
+    const body = cut(fn, next);
+    expect(body.length, 'ตัดตัวฟังก์ชันมาได้จริง ไม่งั้นเทสนี้ไม่ได้ตรวจอะไร').toBeGreaterThan(60);
+    expect(body, fn + ' ห้ามเทียบ createdAt เอง — ต้องเรียก deltaWipNewer()')
+      .not.toMatch(/createdAt/);
+    expect(body, fn + ' ต้องเรียกตัวกลาง').toMatch(/deltaWipNewer\(/);
+  }
+});
+
 test('ยอดของ Delta ต้องไม่ถูกใช้ตัดแถวทิ้ง — ใช้เพิ่มแถวได้อย่างเดียว', async ({ page }) => {
   /* กับดักที่กลับทิศได้ง่ายเวลามีคนมาแก้ตัวกรองรอบหน้า
    * ใบที่เรายังค้างส่งอยู่ แต่ Delta ไม่มีข้อมูล ต้องไม่หายไปจาก "ชั้นข้อมูล" เด็ดขาด
