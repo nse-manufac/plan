@@ -201,6 +201,15 @@ async function deliveryFormWorkbook(units = ['TUE-U', 'TUE-H'], opts = {}) {
       ws.getRow(10).getCell(3).value = 'ของเก่าที่ต้องหาย';
       ws.getRow(10).getCell(13).value = 999;
     }
+    /* จำลอง "ใบของสัปดาห์ก่อนที่โปรแกรมเราเคยออกให้"
+     * ตั้งแต่ 8 ก.ย. 2026 ช่องจำนวน/PCS ของแถวที่ออกใบเป็นตัวเลขนิ่ง ไม่ใช่สูตร
+     * พนักงานอัปไฟล์นั้นกลับเข้ามาทำใบใหม่ได้ · แถวที่รอบใหม่ไม่ได้ใช้
+     * ต้องถูกคืนสูตร ไม่งั้นยอดของสัปดาห์ก่อนจะค้างอยู่บนกระดาษใบใหม่ */
+    if (opts.staleQty) {
+      (opts.staleQty.rows || [40, 41]).forEach(n => {
+        ws.getRow(n).getCell(16).value = opts.staleQty.value || 777;   // P = ตัวเลขนิ่ง ไม่มีสูตร
+      });
+    }
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
