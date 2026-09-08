@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-08.4">
+<meta name="app-version" content="2026-09-08.5">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -134,9 +134,14 @@
   .modal h3{margin-top:0;}
   .modal .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}
   .chart-wrap{overflow-x:auto;}
-  .legend{display:flex;gap:16px;font-size:12.5px;margin-bottom:6px;}
+  .legend{display:flex;gap:16px;font-size:12.5px;margin-bottom:6px;align-items:center;}
   .legend span{display:inline-flex;align-items:center;gap:5px;}
   .legend i{width:10px;height:10px;border-radius:3px;display:inline-block;}
+  .legend-items{display:flex;gap:16px;flex-wrap:wrap;}
+  .legend-item{display:inline-flex;align-items:center;gap:5px;background:none;border:0;padding:0;
+    font:inherit;color:inherit;cursor:pointer;}
+  .legend-item:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:3px;}
+  .legend-item.off{opacity:.38;text-decoration:line-through;}
   .filters{margin-bottom:12px;}
   a.linklike{color:var(--primary);cursor:pointer;text-decoration:underline;font-size:12.5px;}
   .empty-hint{padding:30px;text-align:center;color:var(--text-dim);}
@@ -506,11 +511,7 @@
       </div>
     </div>
     <div class="legend">
-      <span><i style="background:#2563eb"></i> Winding/Trimming</span>
-      <span><i style="background:#d97706"></i> Assembly</span>
-      <span><i style="background:#0891b2"></i> Support</span>
-      <span><i style="background:#16a34a"></i> Inspection</span>
-      <span><i style="background:#7c3aed"></i> ส่งของ (Shipping)</span>
+      <div class="legend-items" id="chartLegend"></div>
       <span id="chartRangeCaption" class="small muted" style="margin-left:auto;"></span>
     </div>
     <div class="chart-wrap" id="chartWrap"></div>
@@ -925,6 +926,10 @@ const SOURCE_DELIVERY = 'จากใบส่งสินค้า';
 
 const PROCESSES = ['winding','assembly','support','inspection','shipping'];
 const PROCESS_LABELS = {winding:'Winding/Trimming', assembly:'Assembly', support:'Support', inspection:'Inspection', shipping:'ส่งของ (Shipping)'};
+/** สีของแต่ละขั้น — ที่เดียวสำหรับทั้งแท่งกราฟและคำอธิบายสีเหนือกราฟ
+ *  ⚠️ เดิมสีถูกเขียนไว้สองที่ (HTML ของคำอธิบาย กับ array ใน renderChart)
+ *     แก้ที่เดียวแล้วอีกที่ค้างไว้ = คำอธิบายชี้ผิดแท่ง โดยไม่มีอะไรฟ้อง */
+const PROCESS_COLORS = {winding:'#2563eb', assembly:'#d97706', support:'#0891b2', inspection:'#16a34a', shipping:'#7c3aed'};
 const PREV_PROCESS = {winding:null, assembly:'winding', support:'assembly', inspection:'support', shipping:'inspection'};
 function emptyCum(){ return {winding:0, assembly:0, support:0, inspection:0, shipping:0}; }
 
@@ -998,7 +1003,7 @@ function defaultState(){
     // support:null = "ยังไม่กำหนด" — เจ้าของจะไปใส่เองที่หน้าตั้งค่า (issue #17)
     // ค่า null ทำให้ deadline ของขั้นนี้เป็น null → ไม่มีการตัดสินว่าล่าช้า จนกว่าจะตั้งค่า
     deadlineOffsets:{ winding:10, assembly:17, support:null, inspection:24, shipping:28 },
-    chartPref:{ mode:'14', from:'', to:'' }, // เครื่องนี้เท่านั้น ไม่ส่งขึ้น Google Sheets
+    chartPref:{ mode:'14', from:'', to:'', hidden:[] }, // เครื่องนี้เท่านั้น ไม่ส่งขึ้น Google Sheets
     orders:[],
     records:[],
     deliveryNotes:[],
@@ -2956,7 +2961,68 @@ function buildDailyTotals(startISO, endISO, subName){
   return {labels, data};
 }
 
+/** ขั้นที่ถูกกดซ่อนไว้ในกราฟ · เก็บรวมกับช่วงเวลาใน chartPref (เครื่องนี้เท่านั้น)
+ *  กรองชื่อที่ไม่รู้จักทิ้ง เพราะค่านี้อาจมาจากไฟล์ที่นำเข้าหรือรุ่นเก่าที่ชื่อขั้นไม่ตรงกัน */
+function chartHiddenProcs(){
+  const raw = state.chartPref && state.chartPref.hidden;
+  const list = Array.isArray(raw) ? raw : [];
+  return new Set(list.filter(x=>PROCESSES.indexOf(x) >= 0));
+}
+
+/** ขั้นที่กราฟกำลังวาดจริง
+ *  ⚠️ ซ่อนครบทุกขั้นแล้วถือว่าไม่ซ่อนอะไรเลย — กราฟเปล่าที่ไม่มีอะไรอธิบายว่าทำไมถึงเปล่า
+ *     จะถูกอ่านว่า "ช่วงนี้ไม่มียอดเลย" ซึ่งไม่จริง ปุ่มกันไว้ชั้นหนึ่งแล้ว นี่คือด่านที่สอง */
+function chartProcesses(){
+  const hidden = chartHiddenProcs();
+  const vis = PROCESSES.filter(x=>!hidden.has(x));
+  return vis.length ? vis : PROCESSES.slice();
+}
+
+/** คำอธิบายสีเหนือกราฟ — กดเพื่อซ่อน/แสดงทีละขั้น */
+function renderChartLegend(){
+  const hidden = chartHiddenProcs();
+  document.getElementById('chartLegend').innerHTML = PROCESSES.map(x=>{
+    const off = hidden.has(x);
+    return `<button type="button" class="legend-item${off?' off':''}" data-proc="${x}"`
+         + ` aria-pressed="${off?'false':'true'}" title="${off?'กดเพื่อแสดงขั้นนี้':'กดเพื่อซ่อนขั้นนี้'}">`
+         + `<i style="background:${PROCESS_COLORS[x]}"></i>${escapeHtml(PROCESS_LABELS[x])}</button>`;
+  }).join('');
+}
+
+/* เกินกี่วันจึงเลิกวาดรายวัน แล้วรวมเป็นรายสัปดาห์ — 21 วันคือช่วงยาวที่สุดที่แท่งยังหนาพออ่าน */
+const CHART_DAILY_MAX = 21;
+/* หลักไมล์สำหรับหาว่าวันไหนอยู่สัปดาห์เดียวกัน — 1970-01-05 เป็นวันจันทร์ */
+const MONDAY_ANCHOR = '1970-01-05';
+
+/** รวมยอดรายวันเป็นรายสัปดาห์ (จันทร์–อาทิตย์)
+ *
+ *  ⚠️ ต้องยึดวันจันทร์จริง ไม่ใช่นับทีละเจ็ดวันจากวันแรกของช่วงที่เลือก
+ *     ไม่งั้นเลือกช่วงต่างกันสองครั้ง แท่งตำแหน่งเดียวกันจะกินคนละชุดวัน เอามาเทียบกันไม่ได้
+ *     ผลที่ตามมาคือหัวกับท้ายอาจเป็นสัปดาห์ไม่เต็ม — spans จึงเก็บช่วงวันจริงไว้ให้ tooltip บอก
+ *
+ *  ⚠️ หาวันในสัปดาห์ด้วย daysBetween บนสตริงล้วน ไม่ใช่ new Date().getDay()
+ *     ด้วยเหตุผลเดียวกับที่ buildDailyTotals เลี่ยงไว้ — timezone drift */
+function bucketWeekly(labels, data){
+  const out = {labels:[], data:{}, spans:[]};
+  PROCESSES.forEach(x=>out.data[x]=[]);
+  let idx = -1, prevKey = null;
+  labels.forEach((iso,i)=>{
+    const dow = ((daysBetween(MONDAY_ANCHOR, iso) % 7) + 7) % 7;
+    const monday = addDaysISO(iso, -dow);
+    if(monday !== prevKey){
+      prevKey = monday; idx++;
+      out.labels.push(monday);
+      out.spans.push({from: iso, to: iso});
+      PROCESSES.forEach(x=>out.data[x].push(0));
+    }
+    out.spans[idx].to = iso;
+    PROCESSES.forEach(x=>{ out.data[x][idx] += data[x][i]; });
+  });
+  return out;
+}
+
 function renderChart(){
+  renderChartLegend();
   const range = getChartRange();
   const caption = document.getElementById('chartRangeCaption');
   if(!range){
@@ -2971,8 +3037,17 @@ function renderChart(){
   }
   const {startISO, endISO} = range;
   const subF = dashSubName();
-  const {labels, data} = buildDailyTotals(startISO, endISO, subF);
-  caption.textContent = `แสดง ${fmtDateTH(startISO)} – ${fmtDateTH(endISO)} (${labels.length} วัน)`
+  const daily = buildDailyTotals(startISO, endISO, subF);
+  /* ช่วงยาววาดรายวันแล้วอ่านไม่ออก — 90 วันคือ 450 แท่ง แท่งละ 2px
+     รวมเป็นรายสัปดาห์แทน เหลือ 13 กลุ่ม เต็มจอพอดีโดยไม่ต้องเลื่อน
+     และตรงกับที่ทั้งระบบคิดเป็น WK อยู่แล้ว */
+  const bucketed = daily.labels.length > CHART_DAILY_MAX;
+  const bucket = bucketed ? bucketWeekly(daily.labels, daily.data) : null;
+  const labels = bucketed ? bucket.labels : daily.labels;
+  const data = bucketed ? bucket.data : daily.data;
+  const spans = bucketed ? bucket.spans : null;
+  caption.textContent = `แสดง ${fmtDateTH(startISO)} – ${fmtDateTH(endISO)} (${daily.labels.length} วัน)`
+    + (bucketed ? ' · รวมรายสัปดาห์ จ–อา' : '')
     + (subF ? ` · ${subF}` : '');
 
   /* ความกว้างของกราฟ = ความกว้างของกล่องที่มันอยู่ ไม่ใช่เลขตายตัว (เจ้าของสั่งเมื่อ 8 ก.ย. 2026)
@@ -2980,21 +3055,32 @@ function renderChart(){
    * ⚠️ ของเดิมคิดจากจำนวนวัน × พิกเซลต่อวัน แล้วตรึงขั้นต่ำ 600px
    *    ช่วงสั้น (7 หรือ 14 วัน) จึงได้กราฟกว้าง 600px ค้างอยู่กลางจอกว้าง ๆ เสมอ
    *
-   *    ตอนนี้ยึดความกว้างจริงของกล่องเป็นหลัก แล้วค่อยขยายเกินกล่องเมื่อวันเยอะจนแท่งจะแคบเกินอ่าน
-   *    (ต่ำกว่า MIN_PER_DAY) — กรณีนั้น .chart-wrap เลื่อนดูได้เหมือนเดิม
-   *    ช่วง 90 วันจึงยังกว้าง 1260px เท่าของเดิมเป๊ะ ไม่ได้ถูกบีบให้แท่งเล็กลงกว่าเดิม */
-  const MIN_PER_DAY = 14;
+   *    ตอนนี้ยึดความกว้างจริงของกล่องเป็นหลัก แล้วค่อยขยายเกินกล่องเมื่อช่องแคบเกินอ่าน
+   *    (ต่ำกว่า minPerSlot) — กรณีนั้น .chart-wrap เลื่อนดูได้เหมือนเดิม */
+  const minPerSlot = bucketed ? 46 : 14;
   const wrapEl = document.getElementById('chartWrap');
   const avail = Math.max(320, Math.floor(wrapEl.clientWidth) || 0);
-  const w = Math.max(avail, labels.length*MIN_PER_DAY);
+  const w = Math.max(avail, labels.length*minPerSlot);
   const h = 220, padL=44, padB=28, padT=10;
-  const maxVal = Math.max(1, ...data.winding, ...data.assembly, ...data.support, ...data.inspection, ...data.shipping);
+  const procs = chartProcesses();
+  /* ⚠️ สเกลต้องคิดจากขั้นที่แสดงอยู่เท่านั้น ไม่งั้นปิดขั้นที่ยอดสูงสุดทิ้งแล้ว
+     แท่งที่เหลือยังเตี้ยติดพื้นเหมือนเดิม ทั้งที่จุดประสงค์ของการปิดคือขอดูให้ชัดขึ้น */
+  const maxVal = Math.max(1, ...procs.map(x=>Math.max(...data[x])));
   const plotH = h-padT-padB;
   const groupW = (w-padL)/labels.length;
-  /* 5 ขั้น + ช่องว่างระหว่างกลุ่ม · เพดานเดิมคือ 12px ตายตัว ทำให้ช่วงสั้นได้แท่งผอมลอยห่างกัน
-   * ทั้งที่มีที่ว่างเหลือเฟือ — ตอนนี้ให้แท่งโตตามช่องของมัน แล้วกันไม่ให้อ้วนจนดูเป็นแผ่นป้าย */
-  const barW = Math.max(2, Math.min(28, groupW/6));
+  /* กลุ่มกินแค่ 75% ของช่องแต่ละวัน ที่เหลือเป็นช่องว่างให้ตาแยกวันออกจากกัน
+   * ⚠️ ของเดิมกลุ่มกิน 93% เหลือช่องว่างระหว่างวันแค่ 6.7% แท่งทั้งแถบจึงอ่านเป็นพืดเดียว
+   *    สูตรนี้คิดกลับจากความกว้างที่กลุ่มควรกิน จึงชดเชยให้เองเมื่อขั้นถูกซ่อนไปบางขั้น */
+  const GROUP_FILL = 0.75;
+  const barW = Math.max(2, Math.min(28, GROUP_FILL*groupW/(1.15*procs.length - 0.15)));
   const gap = Math.max(0.5, barW*0.15);
+
+  /* แถบพื้นหลังสลับช่องเว้นช่อง — ตัวช่วยที่สองในการแยกกลุ่ม สำคัญตอนแท่งเตี้ยจนแทบไม่มีอะไรให้เกาะ */
+  let bands='';
+  labels.forEach((lab,i)=>{
+    if(i % 2 === 0) return;
+    bands += `<rect x="${(padL+i*groupW).toFixed(1)}" y="${padT}" width="${groupW.toFixed(1)}" height="${plotH}" fill="#f1f5f9"/>`;
+  });
 
   let grid='';
   for(let g=0; g<=4; g++){
@@ -3003,23 +3089,26 @@ function renderChart(){
     grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w}" y2="${y.toFixed(1)}" stroke="#e2e6ed" stroke-width="1"/><text x="${padL-6}" y="${(y+3).toFixed(1)}" font-size="10" text-anchor="end" fill="#6b7280">${val}</text>`;
   }
   let bars='';
-  const series = [['winding','#2563eb',-2],['assembly','#d97706',-1],['support','#0891b2',0],['inspection','#16a34a',1],['shipping','#7c3aed',2]];
+  // ตำแหน่งซ้าย-ขวาของแต่ละขั้นในกลุ่ม คิดจากจำนวนขั้นที่แสดงอยู่ กลุ่มจึงอยู่กลางช่องเสมอ
+  const series = procs.map((key,i)=>[key, PROCESS_COLORS[key], i - (procs.length-1)/2]);
   // ป้ายกำกับแกน X ถี่เกินไปจะทับกันเมื่อช่วงยาว — เว้นระยะให้เหลือไม่เกิน ~18 ป้าย
   const labelStep = Math.max(1, Math.ceil(labels.length/18));
   labels.forEach((lab,i)=>{
     const gx = padL + i*groupW + groupW/2;
+    // แท่งรายสัปดาห์ต้องบอกช่วงวันจริงของมัน เพราะหัวกับท้ายอาจเป็นสัปดาห์ไม่เต็ม
+    const when = spans ? `${fmtDateTH(spans[i].from)}–${fmtDateTH(spans[i].to)}` : lab;
     series.forEach(([key,color,offsetIdx])=>{
       const val = data[key][i];
       const barH = (val/maxVal)*plotH;
       const x = gx + offsetIdx*(barW+gap) - barW/2;
       const y = padT+plotH-barH;
-      bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${color}" rx="1.5"><title>${lab} ${key}: ${val}</title></rect>`;
+      bars += `<rect data-proc="${key}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${color}" rx="1.5"><title>${when} ${PROCESS_LABELS[key]}: ${numFmt(val)}</title></rect>`;
     });
     if(i % labelStep === 0){
       bars += `<text x="${gx.toFixed(1)}" y="${h-8}" font-size="10" text-anchor="middle" fill="#6b7280">${lab.slice(5)}</text>`;
     }
   });
-  document.getElementById('chartWrap').innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${grid}${bars}</svg>`;
+  document.getElementById('chartWrap').innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${bands}${grid}${bars}</svg>`;
 }
 
 function renderDashFilterOptions(){
@@ -3177,7 +3266,9 @@ function saveChartPref(){
   state.chartPref = {
     mode: document.getElementById('chartRange').value,
     from: document.getElementById('chartFrom').value,
-    to: document.getElementById('chartTo').value
+    to: document.getElementById('chartTo').value,
+    // ⚠️ ต้องพกขั้นที่ซ่อนไว้มาด้วย ไม่งั้นแค่เปลี่ยนช่วงเวลา ขั้นที่ปิดไว้ก็เด้งกลับมาทั้งห้า
+    hidden: Array.from(chartHiddenProcs())
   };
   saveState();
 }
@@ -4295,6 +4386,10 @@ function fillPrintHeader(){
   ];
   const search = document.getElementById('dashSearch').value.trim();
   if(search) parts.push('ค้นหา: '+search);
+  /* กระดาษที่มีกราฟซ่อนขั้นอยู่ ต้องบอกว่าซ่อนอะไร ไม่งั้นคนอ่านจะสรุปว่าขั้นนั้นไม่มียอดเลย
+     เหตุผลเดียวกับที่ต้องบอกว่าซ่อนงานที่ส่งครบแล้ว */
+  const hiddenProcs = Array.from(chartHiddenProcs());
+  if(hiddenProcs.length) parts.push('กราฟซ่อนขั้น: '+hiddenProcs.map(x=>PROCESS_LABELS[x]||x).join(', '));
   // กระดาษที่ไม่บอกว่าซ่อนอะไรไว้ จะถูกอ่านว่า "งานทั้งหมดมีเท่านี้" ซึ่งไม่จริง
   if(document.getElementById('dashHideDone').checked) parts.push('ซ่อนงานที่ส่งของครบแล้ว');
   const now = new Date();
@@ -4342,6 +4437,20 @@ document.getElementById('chartTo').addEventListener('change', ()=>{ saveChartPre
 /* ย่อ/ขยายหน้าต่างแล้ววาดกราฟใหม่ — ความกว้างของกราฟยึดจากกล่องที่มันอยู่ ถ้าไม่วาดใหม่
    กราฟจะค้างขนาดเดิมจนล้นออกนอกจอ (บนมือถือคือตอนหมุนเครื่อง)
    หน่วงไว้ก่อนวาด เพราะเบราว์เซอร์ยิง resize รัวมากระหว่างลาก และข้ามไปถ้าแท็บอื่นเปิดอยู่ */
+/* กดที่คำอธิบายสีเพื่อซ่อน/แสดงขั้นนั้นในกราฟ — ผูกไว้ที่กล่องแม่ เพราะปุ่มถูกวาดใหม่ทุกครั้ง */
+document.getElementById('chartLegend').addEventListener('click', e=>{
+  const btn = e.target.closest('.legend-item');
+  if(!btn) return;
+  const hidden = chartHiddenProcs();
+  if(hidden.has(btn.dataset.proc)) hidden.delete(btn.dataset.proc);
+  else hidden.add(btn.dataset.proc);
+  // ⚠️ ห้ามปิดจนไม่เหลือสักขั้น · กราฟเปล่าจะถูกอ่านว่า "ช่วงนี้ไม่มียอด" ซึ่งไม่จริง
+  if(hidden.size >= PROCESSES.length){ toast('ต้องเหลือไว้อย่างน้อยหนึ่งขั้น'); return; }
+  state.chartPref = Object.assign({}, state.chartPref, {hidden: Array.from(hidden)});
+  saveState();
+  renderChart();
+});
+
 let chartResizeTimer = null;
 window.addEventListener('resize', ()=>{
   clearTimeout(chartResizeTimer);
