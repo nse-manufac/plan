@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-08.3">
+<meta name="app-version" content="2026-09-08.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -478,6 +478,7 @@
     <h2 style="margin:0 0 4px;">สถานะแผนงานผลิต</h2>
     <div class="small muted" id="printMeta"></div>
   </div>
+  <div class="small muted" id="wipScopeNote" style="margin-bottom:8px;"></div>
   <div class="cards" id="wipCards"></div>
 
   <div class="panel">
@@ -2840,10 +2841,30 @@ function renderFgCard(pn, unit){
 }
 
 /* ---------- Render: Dashboard tab ---------- */
+
+/** Sub-Name ที่หน้า Dashboard กรองอยู่ · '' = ทุกหน่วย
+ *
+ *  ⚠️ ทั้งหน้าต้องใช้ค่าตัวเดียวกัน — การ์ด WIP · กราฟ · ตาราง (เจ้าของสั่งเมื่อ 8 ก.ย. 2026)
+ *     ของเดิมกรองแค่ตาราง การ์ดกับกราฟจึงเป็นยอดรวมทุกหน่วยเงียบ ๆ
+ *     คนอ่านที่เลือกหน่วยไว้แล้วเอาการ์ดไปเทียบกับตาราง จะสรุปว่ายอดไม่ตรงทั้งที่ทั้งคู่ถูก */
+function dashSubName(){
+  const el = document.getElementById('dashSubFilter');
+  return el ? el.value : '';
+}
+
+/** ชุดใบสั่งที่หน้า Dashboard กำลังพูดถึง (กรองหน่วยแล้ว) */
+function dashScopedOrders(){
+  const subF = dashSubName();
+  return subF ? activeOrders().filter(o=>o.subName === subF) : activeOrders();
+}
+
 function renderWipCards(){
   const allCum = buildCumMap(state.records);
+  const subF = dashSubName();
+  const note = document.getElementById('wipScopeNote');
+  if(note) note.textContent = subF ? 'นับเฉพาะ Sub-Name: ' + subF : 'นับรวมทุก Sub-Name';
   let totalQty=0, sumW=0, sumA=0, sumSup=0, sumI=0, sumS=0, anomalyCount=0;
-  activeOrders().forEach(o=>{
+  dashScopedOrders().forEach(o=>{
     totalQty += o.orderQty;
     const c = allCum[o.id] || emptyCum();
     if(c.assembly > c.winding || c.support > c.assembly || c.inspection > c.support || c.shipping > c.inspection) anomalyCount++;
@@ -2910,7 +2931,16 @@ function getChartRange(){
 /** สร้าง label รายวัน + ยอดรวมต่อ process ต่อวัน ระหว่าง startISO–endISO (รวมทั้งสองปลาย)
  *  ไล่ด้วย addDaysISO/daysBetween (คำนวณบนสตริงล้วน) แทน new Date()+setDate() แบบเดิม
  *  เพื่อเลี่ยงปัญหา timezone drift เดียวกับที่แก้ไปแล้วตอน parse วันที่จากไฟล์ Excel */
-function buildDailyTotals(startISO, endISO){
+function buildDailyTotals(startISO, endISO, subName){
+  /* กรองตาม Sub-Name ผ่าน "ใบสั่งของเรคคอร์ดนั้น" เพราะเรคคอร์ดไม่ได้เก็บหน่วยไว้เอง
+   * ⚠️ ดูจาก state.orders ทั้งหมด ไม่ใช่ activeOrders() — ตรงนี้ต้องเป็นการกรองหน่วยล้วน ๆ
+   *    ถ้าเผลอกรองใบที่ยกเลิกออกไปด้วย กราฟตอนเลือก "ทุกหน่วย" จะไม่เท่ากับตอนไม่กรอง
+   *    ซึ่งเป็นการเปลี่ยนความหมายของกราฟไปโดยไม่มีใครสั่ง */
+  let subOf = null;
+  if(subName){
+    subOf = {};
+    state.orders.forEach(o=>{ subOf[o.id] = o.subName; });
+  }
   const dayCount = daysBetween(startISO, endISO)+1;
   const labels = []; const data={winding:[],assembly:[],support:[],inspection:[],shipping:[]};
   for(let i=0;i<dayCount;i++){
@@ -2920,6 +2950,7 @@ function buildDailyTotals(startISO, endISO){
   const idxByDate = {}; labels.forEach((l,i)=>idxByDate[l]=i);
   state.records.forEach(r=>{
     if(r.voided) return;
+    if(subOf && subOf[r.orderId] !== subName) return;
     if(idxByDate[r.date]!=null && data[r.process]) data[r.process][idxByDate[r.date]] += Number(r.qty)||0;
   });
   return {labels, data};
@@ -2939,17 +2970,30 @@ function renderChart(){
     return;
   }
   const {startISO, endISO} = range;
-  const {labels, data} = buildDailyTotals(startISO, endISO);
-  caption.textContent = `แสดง ${fmtDateTH(startISO)} – ${fmtDateTH(endISO)} (${labels.length} วัน)`;
+  const subF = dashSubName();
+  const {labels, data} = buildDailyTotals(startISO, endISO, subF);
+  caption.textContent = `แสดง ${fmtDateTH(startISO)} – ${fmtDateTH(endISO)} (${labels.length} วัน)`
+    + (subF ? ` · ${subF}` : '');
 
-  // ช่วงยาวขึ้น -> แท่งแคบลงเพื่อไม่ให้กราฟกว้างเกินจริง (ยังเลื่อนดูได้ผ่าน .chart-wrap เหมือนเดิม)
-  const perDay = labels.length>60 ? 14 : labels.length>30 ? 22 : 46;
-  const w = Math.max(600, labels.length*perDay);
+  /* ความกว้างของกราฟ = ความกว้างของกล่องที่มันอยู่ ไม่ใช่เลขตายตัว (เจ้าของสั่งเมื่อ 8 ก.ย. 2026)
+   *
+   * ⚠️ ของเดิมคิดจากจำนวนวัน × พิกเซลต่อวัน แล้วตรึงขั้นต่ำ 600px
+   *    ช่วงสั้น (7 หรือ 14 วัน) จึงได้กราฟกว้าง 600px ค้างอยู่กลางจอกว้าง ๆ เสมอ
+   *
+   *    ตอนนี้ยึดความกว้างจริงของกล่องเป็นหลัก แล้วค่อยขยายเกินกล่องเมื่อวันเยอะจนแท่งจะแคบเกินอ่าน
+   *    (ต่ำกว่า MIN_PER_DAY) — กรณีนั้น .chart-wrap เลื่อนดูได้เหมือนเดิม
+   *    ช่วง 90 วันจึงยังกว้าง 1260px เท่าของเดิมเป๊ะ ไม่ได้ถูกบีบให้แท่งเล็กลงกว่าเดิม */
+  const MIN_PER_DAY = 14;
+  const wrapEl = document.getElementById('chartWrap');
+  const avail = Math.max(320, Math.floor(wrapEl.clientWidth) || 0);
+  const w = Math.max(avail, labels.length*MIN_PER_DAY);
   const h = 220, padL=44, padB=28, padT=10;
   const maxVal = Math.max(1, ...data.winding, ...data.assembly, ...data.support, ...data.inspection, ...data.shipping);
   const plotH = h-padT-padB;
   const groupW = (w-padL)/labels.length;
-  const barW = Math.min(12, groupW/6); // 5 ขั้น + ช่องว่างระหว่างกลุ่ม
+  /* 5 ขั้น + ช่องว่างระหว่างกลุ่ม · เพดานเดิมคือ 12px ตายตัว ทำให้ช่วงสั้นได้แท่งผอมลอยห่างกัน
+   * ทั้งที่มีที่ว่างเหลือเฟือ — ตอนนี้ให้แท่งโตตามช่องของมัน แล้วกันไม่ให้อ้วนจนดูเป็นแผ่นป้าย */
+  const barW = Math.max(2, Math.min(28, groupW/6));
   const gap = Math.max(0.5, barW*0.15);
 
   let grid='';
@@ -4216,7 +4260,10 @@ document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
 });
 
 document.getElementById('dashWeekFilter').addEventListener('change', renderDashTable);
-document.getElementById('dashSubFilter').addEventListener('change', renderDashTable);
+// ⚠️ หน่วยคุมทั้งหน้า จึงต้องวาดใหม่ครบทั้งสามส่วน ไม่ใช่แค่ตาราง
+document.getElementById('dashSubFilter').addEventListener('change', ()=>{
+  renderWipCards(); renderChart(); renderDashTable();
+});
 document.getElementById('dashStatusFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashWipFilter').addEventListener('change', renderDashTable);
 document.getElementById('dashSearch').addEventListener('input', renderDashTable);
@@ -4291,6 +4338,18 @@ document.getElementById('chartRange').addEventListener('change', ()=>{
 });
 document.getElementById('chartFrom').addEventListener('change', ()=>{ saveChartPref(); renderChart(); });
 document.getElementById('chartTo').addEventListener('change', ()=>{ saveChartPref(); renderChart(); });
+
+/* ย่อ/ขยายหน้าต่างแล้ววาดกราฟใหม่ — ความกว้างของกราฟยึดจากกล่องที่มันอยู่ ถ้าไม่วาดใหม่
+   กราฟจะค้างขนาดเดิมจนล้นออกนอกจอ (บนมือถือคือตอนหมุนเครื่อง)
+   หน่วงไว้ก่อนวาด เพราะเบราว์เซอร์ยิง resize รัวมากระหว่างลาก และข้ามไปถ้าแท็บอื่นเปิดอยู่ */
+let chartResizeTimer = null;
+window.addEventListener('resize', ()=>{
+  clearTimeout(chartResizeTimer);
+  chartResizeTimer = setTimeout(()=>{
+    const el = document.getElementById('chartWrap');
+    if(el && el.clientWidth > 0) renderChart();
+  }, 150);
+});
 
 document.getElementById('btnSaveSettings').addEventListener('click', ()=>{
   state.deviceName = document.getElementById('deviceName').value.trim();
