@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-08.2">
+<meta name="app-version" content="2026-09-08.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -3255,9 +3255,16 @@ function addSheetFromObjects(wb, name, rows){
  *   B Item(มีอยู่แล้ว) C P/N · D PO NO · E Order Date · F PO QTY · G Wip bal.
  *   M ต่อกล่อง · N กล่อง · O เศษ · U Remark
  *
- * ⚠️ ห้ามแตะ H, P, W และแถว 96 — เป็นสูตรของฟอร์มเอง
- *    H = TODAY()-E · P = M*N+O · W = G-P · แถว 96 = SUM ของทั้งคอลัมน์
+ * ⚠️ ห้ามแตะ H, W และแถว 96 — เป็นสูตรของฟอร์มเอง
+ *    H = TODAY()-E · W = G-P · แถว 96 = SUM ของทั้งคอลัมน์
  *    ถ้าเขียนตัวเลขทับ สูตรจะหายและยอดรวมจะเพี้ยนโดยไม่มีใครรู้
+ *
+ * ⚠️ P (จำนวน/PCS) เป็นข้อยกเว้นเดียว ตั้งแต่ 8 ก.ย. 2026
+ *    เดิมเป็นสูตร M*N+O และอยู่ในกลุ่ม "ห้ามแตะ" ด้วย
+ *    Delta ขอให้เห็นยอดส่งแยกราย PO แต่กล่อง/เศษยังรวมทั้งกลุ่ม
+ *    สูตรจึงคิดยอดรายแถวไม่ได้ (M/N/O ของแถวที่สองเป็นต้นไปว่าง)
+ *    เราเขียนตัวเลขทับ "เฉพาะแถวที่ออกใบจริง" · แถวที่ไม่ได้ใช้ต้องคืนสูตรเสมอ
+ *    (ดู restoreQtyFormula) และ SUM แถว 96 ยังบวกตัวเลขรายแถวได้เหมือนเดิม
  */
 
 const DN_FIRST_ROW = 10, DN_LAST_ROW = 95;
@@ -3275,7 +3282,17 @@ const DN_QTY_COL = 'P';
 /** เขียนข้อความลงช่อง โดยรักษารูปแบบเดิมไว้
  *  ใช้ inlineStr เพื่อไม่ต้องไปยุ่งกับตาราง sharedStrings ที่ใช้ร่วมกันทั้งไฟล์
  *  แตะตารางนั้นเมื่อไหร่ ช่องอื่นที่อ้างเลขเดียวกันจะเปลี่ยนตามไปด้วย */
-/** คืนสูตรจำนวน/PCS ให้แถวที่ใบนี้ไม่ได้ใช้
+function setTextCell(doc, rowEl, col, text, fallbackStyle){
+  const c = ensureCell(doc, rowEl, col, fallbackStyle);
+  c.setAttribute('t', 'inlineStr');
+  while(c.firstChild) c.removeChild(c.firstChild);
+  const is = doc.createElementNS(XL_NS, 'is');
+  const t = doc.createElementNS(XL_NS, 't');
+  t.textContent = String(text);
+  is.appendChild(t); c.appendChild(is);
+}
+
+/** คืนสูตรจำนวน/PCS ให้แถวที่ใบนี้ไม่ได้ใช้ — คู่กับ clearCell() ด้านล่าง
  *
  *  ⚠️ ต้องคืน ไม่ใช่แค่ปล่อยไว้ · ไฟล์ที่พนักงานอัปเข้ามาอาจเป็นใบของสัปดาห์ก่อน
  *     ที่เราเคยเขียนตัวเลขนิ่งทับสูตรไปแล้ว ถ้าปล่อยไว้เฉย ๆ ยอดของสัปดาห์ก่อน
@@ -3290,16 +3307,6 @@ function restoreQtyFormula(doc, rowEl){
   const f = doc.createElementNS(XL_NS, 'f');
   f.textContent = `M${n}*N${n}+O${n}`;
   c.appendChild(f);
-}
-
-function setTextCell(doc, rowEl, col, text, fallbackStyle){
-  const c = ensureCell(doc, rowEl, col, fallbackStyle);
-  c.setAttribute('t', 'inlineStr');
-  while(c.firstChild) c.removeChild(c.firstChild);
-  const is = doc.createElementNS(XL_NS, 'is');
-  const t = doc.createElementNS(XL_NS, 't');
-  t.textContent = String(text);
-  is.appendChild(t); c.appendChild(is);
 }
 
 /** ล้างค่าในช่องแต่คงรูปแบบ (เส้นขอบ สี) ไว้ — ใช้กับแถวที่เหลือจากใบครั้งก่อน */
