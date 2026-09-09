@@ -361,9 +361,10 @@ test('A1 + B1 — รายการที่ยกเลิกแล้วต�
   ]);
   await gotoEntry(page, 'winding');
 
-  // คอลัมน์ที่ 6 ของตารางคือ "สะสม" (#, สัปดาห์, PO No., P/N, Order Qty, สะสม, คงเหลือ, ยอดวันนี้)
+  /* ยอดสะสมย้ายไปอยู่ใต้แถบสถานะในช่อง Order Qty แล้ว (9 ก.ย. 2026)
+     อ่านผ่าน .cum ไม่ใช่ลำดับคอลัมน์ — ลำดับเปลี่ยนได้อีก แต่ความหมายของ .cum ไม่เปลี่ยน */
   const cum = await page.locator('#entryTable tbody tr', { has: page.locator('input[data-order="O1"]') })
-    .locator('td').nth(5).innerText();
+    .locator('.qty-note b.cum').innerText();
 
   expect(cum.trim(), 'ยอดสะสมต้องเป็น 30 — รายการที่ยกเลิกไม่ถูกนับ').toBe('30');
 
