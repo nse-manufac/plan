@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-08.5">
+<meta name="app-version" content="2026-09-09.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -120,6 +120,37 @@
   .split-note .on{color:var(--primary);font-weight:700;}
   .split-note .late{color:#b45309;font-weight:700;}
   .row-input{width:70px;padding:5px 6px;text-align:center;}
+
+  /* ── หน้าบันทึกยอดรายวัน — ตัวใหญ่อ่านง่าย (เจ้าของขอเมื่อ 9 ก.ย. 2026 เพื่อให้คนสายตายาวอ่านได้) ──
+     ⚠️ จำกัดขอบเขตไว้ที่ #view-entry เท่านั้น ห้ามขยายทั้งแอป
+        หน้าใบส่งสินค้ามี 16 คอลัมน์และเพิ่งแก้เรื่องล้นจอบนมือถือไปเมื่อ 4 ก.ย. 2026
+        ขยายตัวอักษรรวมเมื่อไหร่ ตารางนั้นล้นกลับมาทันทีโดยไม่มีใครสังเกต */
+  #view-entry .field label{font-size:14px;}
+  #view-entry input[type=text],#view-entry input[type=date],#view-entry select{font-size:16px;padding:10px 12px;}
+  #view-entry button.btn{font-size:15px;padding:11px 18px;}
+  /* ⚠️ ต้องคุมความกว้างไว้ · ตารางตั้ง width:100% ไว้ พอเหลือหกคอลัมน์บนจอ 1400px
+     แต่ละคอลัมน์จะกว้างเกิน 200px เพื่อใส่เลขห้าหลัก ตาต้องกวาดไกลโดยไม่ได้อะไรเพิ่ม
+     บนจอแคบกว่านี้ max-width ไม่มีผล ตารางยังเต็มกรอบเหมือนเดิม */
+  #entryTable{font-size:16px;max-width:900px;}
+  #entryTable th{font-size:14px;padding:11px 8px;}
+  #entryTable td{padding:9px 8px;}
+  #entryTable .row-input{font-size:19px;font-weight:700;width:130px;min-width:0;padding:10px 8px;}
+  #entryTable .qty-main{font-size:18px;font-weight:700;line-height:1.2;}
+  /* แถบกับตัวเลขอยู่บรรทัดเดียวกัน — วางซ้อนกันคนละบรรทัดทำให้แถวสูงขึ้นอีกราว 20px
+     ซึ่งสวนทางกับที่เจ้าของขอ คือ "เห็นรายการต่อหน้าจอได้มากขึ้น" */
+  #entryTable .qty-line{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:5px;}
+  #entryTable .progress{width:110px;flex:0 0 auto;height:10px;}
+  #entryTable .qty-note{font-size:13px;color:var(--text-dim);white-space:nowrap;}
+  #entryTable .qty-note b{color:var(--text);font-weight:700;}
+  /* บนมือถือบีบ "ระยะห่าง" คืน แต่ไม่แตะขนาดตัวอักษร
+     ⚠️ คนที่ต้องใช้ตัวใหญ่คือคนกลุ่มเดียวกับที่ถือมือถือ ลดฟอนต์ตรงนี้เท่ากับยกเลิกสิ่งที่เพิ่งทำ
+        ตารางนี้ต้องเลื่อนแนวนอนอยู่แล้วบนจอแคบ เป้าหมายคือ "ไม่ให้ต้องเลื่อนไกลกว่าเดิม" */
+  @media (max-width:600px){
+    #entryTable th,#entryTable td{padding-left:5px;padding-right:5px;}
+    #entryTable .row-input{width:92px;}
+    #entryTable .progress{width:60px;}
+    #entryTable .qty-line{gap:7px;}
+  }
   input.warn{border-color:var(--amber);background:var(--amber-light);}
   input.bad{border-color:var(--red);background:var(--red-light);}
   .muted{color:var(--text-dim);}
@@ -2496,6 +2527,30 @@ function renderImportHistory(){
 }
 
 /* ---------- Render: Entry tab ---------- */
+/** ช่อง Order Qty ของหน้าบันทึกยอดรายวัน — ยอดแผน + แถบสถานะ + สะสม/คงเหลือใต้แถบ
+ *
+ *  ⚠️ ยุบมาจากสามคอลัมน์ (Order Qty · สะสม · คงเหลือ) ตามที่เจ้าของขอเมื่อ 9 ก.ย. 2026
+ *     ตัวเลขทั้งสามยังอยู่ครบ ไม่ได้ตัดทิ้ง แค่เลิกกินคอลัมน์ละ 200px
+ *
+ *  ⚠️ แถบเต็ม = เสร็จ "ขั้นที่กำลังคีย์อยู่" ไม่ใช่เสร็จทั้งใบ
+ *     หัวตารางจึงต้องบอกชื่อขั้นกำกับแถบไว้เสมอ ห้ามตัดออก
+ *
+ *  ⚠️ คงเหลือครอบที่ 0 มาแต่เดิม (Math.max ในตัวเรียก) แต่ "สะสม" ไม่ครอบ
+ *     ใบที่คีย์เกินจึงเห็นสะสมมากกว่ายอดแผนได้ ซึ่งเป็นความจริงที่ต้องเห็น */
+function entryQtyCell(qty, cum, remaining, warn){
+  const pct = qty>0 ? Math.min(100, cum/qty*100) : 0;
+  const done = qty>0 && cum>=qty;
+  const warnBadge = warn ? ' <span class="badge amber" title="ยอดสะสมเกินขั้นตอนก่อนหน้า">⚠</span>' : '';
+  return `<div class="qty-main">${numFmt(qty)}</div>
+    <div class="qty-line">
+      <div class="progress ${done?'done':''}" title="สะสม ${numFmt(cum)} จาก ${numFmt(qty)}">
+        <div class="seg-on" style="width:${pct}%"></div>
+      </div>
+      <div class="qty-note">สะสม <b class="cum">${numFmt(cum)}</b>${warnBadge}` +
+    ` · เหลือ <b class="rem">${numFmt(remaining)}</b></div>
+    </div>`;
+}
+
 function renderEntryTable(){
   const dateEl = document.getElementById('entryDate');
   const date = dateEl.value || todayISO();
@@ -2537,17 +2592,16 @@ function renderEntryTable(){
       <td class="left">${escapeHtml(o.week)}</td>
       <td class="left">${escapeHtml(o.poNo)}</td>
       <td class="left">${escapeHtml(o.pn)}</td>
-      <td>${numFmt(o.orderQty)}</td>
-      <td>${numFmt(cum)}${warn?' <span class="badge amber" title="ยอดสะสมเกินขั้นตอนก่อนหน้า">⚠</span>':''}</td>
-      <td>${numFmt(remaining)}</td>
+      <td>${entryQtyCell(o.orderQty, cum, remaining, warn)}</td>
       <td><input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}"></td>
     </tr>`;
   });
 
   document.getElementById('entryTable').innerHTML =
-    `<thead><tr><th>#</th><th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Order Qty</th>
-     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนี้</th></tr></thead>
-     <tbody>${rowsHtml || emptyRow(8,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
+    `<thead><tr><th>#</th><th>สัปดาห์</th><th>PO No.</th><th>P/N</th>
+     <th>Order Qty<br><span class="muted">แถบ = สะสม ${escapeHtml(procLabel)}</span></th>
+     <th>ยอดวันนี้</th></tr></thead>
+     <tbody>${rowsHtml || emptyRow(6,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
 
   document.querySelectorAll('#entryTable input.row-input').forEach(inputEl=>{
     inputEl.addEventListener('keydown', function(e){
