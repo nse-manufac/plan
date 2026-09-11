@@ -3503,6 +3503,10 @@ function setTextCell(doc, rowEl, col, text, fallbackStyle){
  *  และกับแถวที่ไม่ได้ใช้ซึ่งมีตัวเลขนิ่งค้างจากใบที่รุ่น 8-11 ก.ย. 2026 ออกให้
  *  ถ้าปล่อยตัวเลขนั้นไว้ มันจะถูกบวกเข้ายอดรวมท้ายตารางบนใบใหม่โดยไม่มีอะไรฟ้อง
  *
+ *  ⚠️ ฟอร์มจริงเก็บสูตรคอลัมน์นี้แบบ shared (ตรวจไฟล์จริง 11 ก.ย. 2026)
+ *     ช่องแรกถือสูตร <f t="shared" ref="Q10:Q54" si="1">N10*O10+P10</f> ช่องที่เหลือเก็บแค่ <f t="shared" si="1"/>
+ *     พอเขียนทับช่องแรก ช่องที่เหลือจะอ้างถึงสูตรที่ไม่มีอยู่ — ลูปล้างแถวท้ายจึงต้องเขียนสูตรคืนให้ช่องพวกนั้นด้วย
+ *
  *  ⚠️ ห้ามใช้ clearCell() กับช่องนี้ · มันลบลูกทุกตัวรวมทั้ง <f> = ลบสูตรของฟอร์มลูกค้าทิ้ง */
 function restoreQtyFormula(doc, rowEl, col, fallbackStyle){
   const n = rowEl.getAttribute('r');
@@ -3512,48 +3516,6 @@ function restoreQtyFormula(doc, rowEl, col, fallbackStyle){
   const f = doc.createElementNS(XL_NS, 'f');
   f.textContent = `${col.perBox}${n}*${col.boxes}${n}+${col.remainder}${n}`;
   c.appendChild(f);
-}
-
-/** ขยายสูตรแบบ shared ของทั้งชีตให้เป็นสูตรธรรมดาทุกช่อง — ต้องทำก่อนเขียนอะไรลงชีต
- *
- *  ⚠️ ฟอร์มจริงเก็บสูตรประจำคอลัมน์แบบ shared (ตรวจไฟล์จริง 11 ก.ย. 2026)
- *     ช่องแรกถือสูตรตัวจริง <f t="shared" ref="Q10:Q54" si="1">N10*O10+P10</f>
- *     ช่องที่เหลือเก็บแค่ <f t="shared" si="1"/> ที่อ้างกลับไปหามัน
- *     เขียนทับช่องแรกเมื่อไหร่ ช่องที่เหลือทั้งช่วงจะอ้างถึงสูตรที่ไม่มีอยู่แล้ว
- *     และเราเขียนสูตรใหม่ลงช่องจำนวน/PCS ของแถวที่ออกใบทุกครั้ง (ดู restoreQtyFormula)
- *
- *  ช่องที่ต้นแบบหายไปแล้ว (ไฟล์ที่รุ่นก่อนเคยออกให้) เหลือเป็น <f/> เปล่า
- *  ผู้เรียกซ่อมช่องที่รู้สูตรเอง แล้ว dropEmptyFormulas() เก็บที่เหลือทิ้งตอนท้าย */
-function unshareFormulas(doc){
-  const cells = Array.from(doc.getElementsByTagNameNS(XL_NS, 'c'));
-  const fOf = c => c.getElementsByTagNameNS(XL_NS, 'f')[0];
-  const master = {};
-  cells.forEach(c => {
-    const f = fOf(c);
-    if(f && f.getAttribute('t') === 'shared' && f.textContent) master[f.getAttribute('si')] = c;
-  });
-  cells.forEach(c => {
-    const f = fOf(c);
-    if(!f || f.getAttribute('t') !== 'shared') return;
-    const m = master[f.getAttribute('si')];
-    if(m !== c) f.textContent = m ? shiftFormula(fOf(m).textContent, m.getAttribute('r'), c.getAttribute('r')) : '';
-    ['t', 'si', 'ref'].forEach(a => f.removeAttribute(a));
-  });
-}
-
-/** เลื่อนการอ้างช่องในสูตรตามระยะห่างจากช่องต้นแบบ · ส่วนที่มี $ ไม่เลื่อน */
-function shiftFormula(text, from, to){
-  const rowOf = ref => Number(String(ref).replace(/^[A-Z]+/, ''));
-  const dr = rowOf(to) - rowOf(from), dc = colIndex(colOfRef(to)) - colIndex(colOfRef(from));
-  const name = n => n > 26 ? name(Math.floor((n - 1) / 26)) + name((n - 1) % 26 + 1) : String.fromCharCode(64 + n);
-  return text.replace(/(^|[^A-Za-z0-9_$."'])(\$?)([A-Z]{1,3})(\$?)(\d+)(?![A-Za-z0-9_(!])/g,
-    (all, pre, ac, c, ar, r) => pre + ac + (ac ? c : name(colIndex(c) + dc)) + ar + (ar ? r : Number(r) + dr));
-}
-
-/** เก็บ <f/> เปล่าที่ unshareFormulas() ทิ้งไว้ — สูตรว่างทำให้ Excel ฟ้องว่าไฟล์เสีย */
-function dropEmptyFormulas(doc){
-  Array.from(doc.getElementsByTagNameNS(XL_NS, 'f'))
-    .forEach(f => { if(!f.textContent) f.parentNode.removeChild(f); });
 }
 
 /** ล้างค่าในช่องแต่คงรูปแบบ (เส้นขอบ สี) ไว้ — ใช้กับแถวที่เหลือจากใบครั้งก่อน */
@@ -3641,7 +3603,6 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
   if(lineCount > L.last - L.first + 1){
     throw new Error(`ชีต ${unit} มีที่ให้ ${L.last-L.first+1} บรรทัด แต่มี ${lineCount} บรรทัดที่จะส่ง — ต้องแยกเป็นสองใบ`);
   }
-  unshareFormulas(doc);
   const rowByNo = {};
   Array.from(doc.getElementsByTagNameNS(XL_NS, 'row'))
     .forEach(r => { rowByNo[Number(r.getAttribute('r'))] = r; });
@@ -3733,7 +3694,8 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
     if(!rowEl) continue;
     ['pn','po','orderDate','orderQty','wip','shipQty','perBox','boxes','remainder','remark']
       .forEach(k => clearCell(doc, rowEl, col[k]));
-    // ช่องจำนวนที่เป็นตัวเลขนิ่ง หรือสูตรที่ต้นแบบหายไปแล้ว ต้องกลับเป็นสูตร
+    // ช่องจำนวนต้องกลับเป็นสูตร ถ้าเป็นตัวเลขนิ่งที่ค้างมา หรือเป็นช่องที่อ้างสูตร shared <f t="shared" si="1"/>
+    // ซึ่งช่องแรกของช่วงอาจถูกเราเขียนทับไปแล้วข้างบน (ดู restoreQtyFormula)
     // ช่องที่ฟอร์มไม่มีสูตรมาแต่แรกปล่อยว่าง — เติมให้ทุกแถวไม่ได้ กระดาษจะขึ้น 0 เต็มคอลัมน์
     const pc = Array.from(rowEl.children).find(x => x.getAttribute('r') === col.pcs + n);
     const pf = pc && pc.getElementsByTagNameNS(XL_NS, 'f')[0];
@@ -3741,7 +3703,6 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
   }
 
   setDataMerges(doc, merges, L.first, L.last);
-  dropEmptyFormulas(doc);
   // ต้องทำหลังเติมค่าเสร็จ ไม่งั้นช่องสูตรที่เราเพิ่งแตะจะแคชค่าเก่าไว้อีก
   clearCachedFormulaValues(doc);
   await setFullCalcOnLoad(zip);
