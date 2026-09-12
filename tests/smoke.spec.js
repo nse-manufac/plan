@@ -364,7 +364,7 @@ test('A1 + B1 — รายการที่ยกเลิกแล้วต�
   /* ยอดสะสมย้ายไปอยู่ใต้แถบสถานะในช่อง Order Qty แล้ว (9 ก.ย. 2026)
      อ่านผ่าน .cum ไม่ใช่ลำดับคอลัมน์ — ลำดับเปลี่ยนได้อีก แต่ความหมายของ .cum ไม่เปลี่ยน */
   const cum = await page.locator('#entryTable tbody tr', { has: page.locator('input[data-order="O1"]') })
-    .locator('.qty-note b.cum').innerText();
+    .locator('.cum').innerText();
 
   expect(cum.trim(), 'ยอดสะสมต้องเป็น 30 — รายการที่ยกเลิกไม่ถูกนับ').toBe('30');
 

@@ -261,11 +261,13 @@ test('นั่งค้างหน้า FG แล้วซิงค์ดึ�
     'ข้อมูลที่ซิงค์ดึงเข้ามาต้องขึ้นบนหน้านี้ทันที ไม่ใช่รอจนสลับแท็บ').toBe('2,500');
 });
 
-// ── Dashboard: คอลัมน์ Shipping เปลี่ยนเป็น FG คงเหลือ ────────────
+// ── Dashboard: คอลัมน์ Shipping ─────────────────────────────────────
 //
-// ⚠️ ใบนี้เปลี่ยนแค่สิ่งที่ "แสดง" ไม่ได้เปลี่ยนสิ่งที่ "คำนวณ"
-//    computeStatus · ตัวกรองซ่อนงานที่ส่งครบ · การ์ดสรุปด้านบน ยังใช้ยอดส่งเหมือนเดิมทุกอย่าง
-//    เทสสองข้อล่างคือด่านที่จะจับได้ถ้ามีคนเผลอไปแตะของพวกนั้น
+// 2 ก.ย. 2026 (#50) เคยเปลี่ยนคอลัมน์นี้เป็น FG คงเหลือ · เจ้าของสั่งกลับเป็นยอดส่งเมื่อ 12 ก.ย. 2026
+// ยอด FG คงเหลือยังดูได้ที่หน้ายอดคงคลัง FG
+//
+// ⚠️ computeStatus · ตัวกรองซ่อนงานที่ส่งครบ · การ์ดสรุปด้านบน ใช้ยอดส่งมาตลอด
+//    เทสสองข้อล่างคือด่านที่จะจับได้ถ้ามีคนเผลอเอา FG ไปใช้แทน
 
 async function openDash(page, orders, records = []) {
   await page.addInitScript(([k, o, r]) => localStorage.setItem(k, JSON.stringify({
@@ -281,16 +283,17 @@ async function openDash(page, orders, records = []) {
 const dashRow = (page, po) =>
   page.locator('#dashTable tbody tr').filter({ hasText: po }).innerText();
 
-test('Dashboard โชว์ FG คงเหลือแทนยอดที่ส่งไปแล้ว', async ({ page }) => {
-  // ผ่าน Inspection 3,000 · ส่งไปแล้ว 1,200 → FG คงเหลือ 1,800
+test('Dashboard คอลัมน์ Shipping โชว์ยอดส่งสะสมเทียบ Order Qty ไม่ใช่ FG คงเหลือ', async ({ page }) => {
+  // ผ่าน Inspection 3,000 · ส่งไปแล้ว 1,200 → ถ้ายังเป็น FG คงเหลือจะเห็น 1,800
   await openDash(page, [order('PO-D1', PN_A, 5000)], [
     rec('r1', 'PO-D1|' + PN_A, 'inspection', 3000),
     rec('r2', 'PO-D1|' + PN_A, 'shipping', 1200, '2026-08-22')
   ]);
-  const r = await dashRow(page, 'PO-D1');
-  expect(r, 'FG คงเหลือ').toContain('1,800');
-  expect(r, 'ยอดที่ส่งแล้วยังเห็นได้ ไม่ได้หายไป').toContain('ส่งแล้ว 1,200');
-  await expect(page.locator('#dashTable thead')).toContainText('FG คงเหลือ');
+  const cell = await page.locator('#dashTable tbody tr').filter({ hasText: 'PO-D1' }).locator('td').nth(12).innerText();
+  expect(cell, 'ยอดส่ง / Order Qty').toContain('1,200/5,000');
+  expect(cell, 'ต้องไม่ใช่ FG คงเหลือ').not.toContain('1,800');
+  await expect(page.locator('#dashTable thead')).toContainText('Shipping');
+  await expect(page.locator('#dashTable thead')).not.toContainText('FG คงเหลือ');
 });
 
 test('ตัวกรอง "ซ่อนงานที่ส่งของครบแล้ว" ต้องยังทำงานเหมือนเดิม', async ({ page }) => {
@@ -316,14 +319,15 @@ test('การ์ดสรุปด้านบนต้องยังนั�
   expect(cards, 'และการ์ด WIP รอส่งของยังเป็น 1,800 เหมือนเดิม').toContain('1,800');
 });
 
-test('ส่งเกินที่ผ่าน Inspection — Dashboard ต้องโชว์ติดลบ ไม่ครอบเป็น 0', async ({ page }) => {
+test('ส่งเกินที่ผ่าน Inspection — Dashboard ต้องโชว์ยอดส่งตามจริงและขึ้นป้ายผิดลำดับ', async ({ page }) => {
+  // ของที่คีย์ผิดต้องเห็น ห้ามถูกกลบ — ตอนเป็นคอลัมน์ FG ช่องนี้เคยโชว์ติดลบ ตอนนี้เตือนด้วยป้ายผิดลำดับ
   await openDash(page, [order('PO-D1', PN_A, 5000)], [
     rec('r1', 'PO-D1|' + PN_A, 'inspection', 400),
     rec('r2', 'PO-D1|' + PN_A, 'shipping', 900, '2026-08-22')
   ]);
   const r = await dashRow(page, 'PO-D1');
-  expect(r, 'ต้องโชว์ตามจริง').toContain('-500');
-  expect(r, 'และบอกว่าเกิดอะไรขึ้น').toContain('ส่งเกินที่ผ่าน Inspection');
+  expect(r, 'ยอดส่งตามจริง ไม่ครอบให้เท่า Inspection').toContain('900/5,000');
+  expect(r, 'และบอกว่ายอดย้อนแย้งกัน').toContain('ผิดลำดับ');
 });
 
 test('G2 — พิมพ์ค้นหาแล้วโฟกัสต้องไม่หลุด', async ({ page }) => {

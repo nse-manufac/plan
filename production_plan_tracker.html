@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-11.1">
+<meta name="app-version" content="2026-09-12.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -128,28 +128,18 @@
   #view-entry .field label{font-size:14px;}
   #view-entry input[type=text],#view-entry input[type=date],#view-entry select{font-size:16px;padding:10px 12px;}
   #view-entry button.btn{font-size:15px;padding:11px 18px;}
-  /* ⚠️ ต้องคุมความกว้างไว้ · ตารางตั้ง width:100% ไว้ พอเหลือหกคอลัมน์บนจอ 1400px
-     แต่ละคอลัมน์จะกว้างเกิน 200px เพื่อใส่เลขห้าหลัก ตาต้องกวาดไกลโดยไม่ได้อะไรเพิ่ม
-     บนจอแคบกว่านี้ max-width ไม่มีผล ตารางยังเต็มกรอบเหมือนเดิม */
-  #entryTable{font-size:16px;max-width:900px;}
+  /* ตารางเต็มกรอบ — 9 ก.ย. 2026 (#80) เคยคุมไว้ 900px ตอนยุบเหลือหกคอลัมน์
+     เจ้าของสั่งแยกคอลัมน์กลับและให้เต็มกรอบเมื่อ 12 ก.ย. 2026 */
+  #entryTable{font-size:16px;}
   #entryTable th{font-size:14px;padding:11px 8px;}
   #entryTable td{padding:9px 8px;}
   #entryTable .row-input{font-size:19px;font-weight:700;width:130px;min-width:0;padding:10px 8px;}
-  #entryTable .qty-main{font-size:18px;font-weight:700;line-height:1.2;}
-  /* แถบกับตัวเลขอยู่บรรทัดเดียวกัน — วางซ้อนกันคนละบรรทัดทำให้แถวสูงขึ้นอีกราว 20px
-     ซึ่งสวนทางกับที่เจ้าของขอ คือ "เห็นรายการต่อหน้าจอได้มากขึ้น" */
-  #entryTable .qty-line{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:5px;}
-  #entryTable .progress{width:110px;flex:0 0 auto;height:10px;}
-  #entryTable .qty-note{font-size:13px;color:var(--text-dim);white-space:nowrap;}
-  #entryTable .qty-note b{color:var(--text);font-weight:700;}
   /* บนมือถือบีบ "ระยะห่าง" คืน แต่ไม่แตะขนาดตัวอักษร
      ⚠️ คนที่ต้องใช้ตัวใหญ่คือคนกลุ่มเดียวกับที่ถือมือถือ ลดฟอนต์ตรงนี้เท่ากับยกเลิกสิ่งที่เพิ่งทำ
-        ตารางนี้ต้องเลื่อนแนวนอนอยู่แล้วบนจอแคบ เป้าหมายคือ "ไม่ให้ต้องเลื่อนไกลกว่าเดิม" */
+        ตารางเลื่อนแนวนอนในกรอบของตัวเอง (.table-wrap) ทั้งหน้าต้องไม่เลื่อนตาม */
   @media (max-width:600px){
     #entryTable th,#entryTable td{padding-left:5px;padding-right:5px;}
     #entryTable .row-input{width:92px;}
-    #entryTable .progress{width:60px;}
-    #entryTable .qty-line{gap:7px;}
   }
   input.warn{border-color:var(--amber);background:var(--amber-light);}
   input.bad{border-color:var(--red);background:var(--red-light);}
@@ -2527,30 +2517,10 @@ function renderImportHistory(){
 }
 
 /* ---------- Render: Entry tab ---------- */
-/** ช่อง Order Qty ของหน้าบันทึกยอดรายวัน — ยอดแผน + แถบสถานะ + สะสม/คงเหลือใต้แถบ
+/* ⚠️ สะสม กับ คงเหลือ เป็นคอลัมน์ของตัวเอง — 9 ก.ย. 2026 (#80) เคยยุบเป็นแถบใต้ Order Qty
+ *    เจ้าของสั่งแยกกลับเมื่อ 12 ก.ย. 2026 พร้อมเพิ่มคอลัมน์ Aging และให้ตารางเต็มกรอบ
  *
- *  ⚠️ ยุบมาจากสามคอลัมน์ (Order Qty · สะสม · คงเหลือ) ตามที่เจ้าของขอเมื่อ 9 ก.ย. 2026
- *     ตัวเลขทั้งสามยังอยู่ครบ ไม่ได้ตัดทิ้ง แค่เลิกกินคอลัมน์ละ 200px
- *
- *  ⚠️ แถบเต็ม = เสร็จ "ขั้นที่กำลังคีย์อยู่" ไม่ใช่เสร็จทั้งใบ
- *     หัวตารางจึงต้องบอกชื่อขั้นกำกับแถบไว้เสมอ ห้ามตัดออก
- *
- *  ⚠️ คงเหลือครอบที่ 0 มาแต่เดิม (Math.max ในตัวเรียก) แต่ "สะสม" ไม่ครอบ
- *     ใบที่คีย์เกินจึงเห็นสะสมมากกว่ายอดแผนได้ ซึ่งเป็นความจริงที่ต้องเห็น */
-function entryQtyCell(qty, cum, remaining, warn){
-  const pct = qty>0 ? Math.min(100, cum/qty*100) : 0;
-  const done = qty>0 && cum>=qty;
-  const warnBadge = warn ? ' <span class="badge amber" title="ยอดสะสมเกินขั้นตอนก่อนหน้า">⚠</span>' : '';
-  return `<div class="qty-main">${numFmt(qty)}</div>
-    <div class="qty-line">
-      <div class="progress ${done?'done':''}" title="สะสม ${numFmt(cum)} จาก ${numFmt(qty)}">
-        <div class="seg-on" style="width:${pct}%"></div>
-      </div>
-      <div class="qty-note">สะสม <b class="cum">${numFmt(cum)}</b>${warnBadge}` +
-    ` · เหลือ <b class="rem">${numFmt(remaining)}</b></div>
-    </div>`;
-}
-
+ * ⚠️ คงเหลือครอบที่ 0 แต่ "สะสม" ไม่ครอบ · ใบที่คีย์เกินต้องเห็นสะสมมากกว่ายอดแผนได้ ซึ่งเป็นความจริง */
 function renderEntryTable(){
   const dateEl = document.getElementById('entryDate');
   const date = dateEl.value || todayISO();
@@ -2577,6 +2547,7 @@ function renderEntryTable(){
   lastRenderedOrderIds = [];
   let rowsHtml = '';
   let n=0;
+  const ref = todayISO();
   orders.forEach(o=>{
     const cum = (allCum[o.id] && allCum[o.id][currentProcess]) || 0;
     if(hideDone && cum>=o.orderQty) return;
@@ -2585,6 +2556,10 @@ function renderEntryTable(){
     const prevCum = prevProc!=null ? ((allCum[o.id] && allCum[o.id][prevProc]) || 0) : null;
     const warn = prevProc!=null && cum > prevCum;
     const remaining = Math.max(0, o.orderQty - cum);
+    // Aging นิยามและสีเดียวกับคอลัมน์ Aging บน Dashboard — ใช้ agingCell กับ computeStatus ตัวเดียวกัน
+    // ⚠️ นับถึง "วันนี้" ไม่ใช่วันที่เลือกคีย์ย้อนหลัง ไม่งั้นสองหน้าจะขึ้นอายุงานของใบเดียวกันไม่ตรงกัน
+    const aging = daysBetween(o.orderDate, ref);
+    const st = computeStatus(o, allCum[o.id] || emptyCum(), computeDeadlines(o), ref);
     n++;
     lastRenderedOrderIds.push(o.id);
     rowsHtml += `<tr${warn?' style="background:var(--amber-light)"':''}>
@@ -2592,16 +2567,18 @@ function renderEntryTable(){
       <td class="left">${escapeHtml(o.week)}</td>
       <td class="left">${escapeHtml(o.poNo)}</td>
       <td class="left">${escapeHtml(o.pn)}</td>
-      <td>${entryQtyCell(o.orderQty, cum, remaining, warn)}</td>
+      <td>${numFmt(o.orderQty)}</td>
+      <td data-aging>${agingCell(aging, st.code)}</td>
+      <td><span class="cum">${numFmt(cum)}</span>${warn?' <span class="badge amber" title="ยอดสะสมเกินขั้นตอนก่อนหน้า">⚠</span>':''}</td>
+      <td class="rem">${numFmt(remaining)}</td>
       <td><input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}"></td>
     </tr>`;
   });
 
   document.getElementById('entryTable').innerHTML =
-    `<thead><tr><th>#</th><th>สัปดาห์</th><th>PO No.</th><th>P/N</th>
-     <th>Order Qty<br><span class="muted">แถบ = สะสม ${escapeHtml(procLabel)}</span></th>
-     <th>ยอดวันนี้</th></tr></thead>
-     <tbody>${rowsHtml || emptyRow(6,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
+    `<thead><tr><th>#</th><th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Order Qty</th><th>Aging<br>(วัน)</th>
+     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนี้</th></tr></thead>
+     <tbody>${rowsHtml || emptyRow(9,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
 
   document.querySelectorAll('#entryTable input.row-input').forEach(inputEl=>{
     inputEl.addEventListener('keydown', function(e){
@@ -3178,27 +3155,6 @@ function renderDashFilterOptions(){
  *  deadline ไปแล้ว — เขียวทั้งแถบสงวนไว้เฉพาะกรณีเสร็จครบ "และ" ไม่มีส่วนที่ช้าเลยเท่านั้น (เสร็จครบ
  *  แบบมีส่วนช้าปนอยู่ ยังคงแสดงฟ้า+เหลืองตามจริง ไม่ใช่เขียว) ยอดแยกทัน/เกินโชว์เป็นตัวหนังสือในเซลล์
  *  เลย ไม่ต้องรอ hover เพราะผู้ใช้อยากเห็นตัวเลขทันทีตอนกวาดตาดูตาราง */
-/** ช่อง FG คงเหลือของใบสั่งหนึ่งใบ — ของที่ผ่าน Inspection แล้วแต่ยังไม่ได้ส่ง
- *
- *  ⚠️ นี่คือ "ของที่อยู่ในคลัง" ไม่ใช่ "ความคืบหน้าการส่ง" — คนละคำถามกับคอลัมน์อื่นในตารางนี้
- *     คอลัมน์อื่นตอบว่าเดินไปถึงไหนแล้ว ช่องนี้ตอบว่าตอนนี้มีของรอส่งอยู่เท่าไหร่
- *
- *  ⚠️ ยอดที่ส่งไปแล้วย้ายมาอยู่ใน tooltip ตามที่เจ้าของเลือก ไม่ได้หายไป
- *     และ computeStatus กับตัวกรอง "ซ่อนงานที่ส่งครบแล้ว" ยังใช้ c.shipping เหมือนเดิมทุกอย่าง
- *     ใบนี้เปลี่ยนแค่สิ่งที่ "แสดง" ไม่ได้เปลี่ยนสิ่งที่ "คำนวณ"
- *
- *  ยอดติดลบเตือนได้แต่ห้ามครอบ — เหมือนหน้ายอดคงคลัง FG ของจริงมีคีย์ย้อนหลัง */
-function fgDashCell(cum, qty){
-  const fg = (Number(cum.inspection) || 0) - (Number(cum.shipping) || 0);
-  const tip = `ผ่าน Inspection ${numFmt(cum.inspection)} · ส่งไปแล้ว ${numFmt(cum.shipping)} จาก ${numFmt(qty)}`;
-  if(fg < 0){
-    return `<div class="small" title="${tip}"><b style="color:var(--red)">${numFmt(fg)}</b></div>`
-         + `<div class="split-note"><span class="late">ส่งเกินที่ผ่าน Inspection</span></div>`;
-  }
-  return `<div class="small" title="${tip}"><b>${numFmt(fg)}</b></div>`
-       + `<div class="split-note"><span class="on">ส่งแล้ว ${numFmt(cum.shipping)}</span></div>`;
-}
-
 function progressCell(cum, split, qty){
   split = split || {onTime:0, late:0};
   const done = qty>0 && cum>=qty && split.late===0;
@@ -3286,7 +3242,7 @@ function renderDashTable(){
       <td>${progressCell(c.assembly, split.assembly, o.orderQty)}</td>
       <td>${progressCell(c.support, split.support, o.orderQty)}</td>
       <td>${progressCell(c.inspection, split.inspection, o.orderQty)}</td>
-      <td>${fgDashCell(c, o.orderQty)}</td>
+      <td>${progressCell(c.shipping, split.shipping, o.orderQty)}</td>
       <td><span class="badge ${st.color}">${escapeHtml(st.label)}</span>${anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
     </tr>`;
   }).join('');
@@ -3294,7 +3250,7 @@ function renderDashTable(){
   document.getElementById('dashTable').innerHTML = `<thead><tr>
       <th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ ไว้ชี้กันตอนคุยหรือตอนดูกระดาษที่พิมพ์ออกมา — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>
       <th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th><th>Order Date</th><th>Aging<br>(วัน)</th>
-      <th>Winding</th><th>Assembly</th><th>Support</th><th>Inspection</th><th>FG คงเหลือ<br>(รอส่ง)</th><th>สถานะ</th>
+      <th>Winding</th><th>Assembly</th><th>Support</th><th>Inspection</th><th>ส่งของ<br>(Shipping)</th><th>สถานะ</th>
     </tr></thead><tbody>${bodyHtml || emptyRow(14)}</tbody>`;
 }
 

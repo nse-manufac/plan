@@ -1,11 +1,10 @@
-// เทสหน้าตาของหน้าบันทึกยอดผลิตประจำวัน (เจ้าของขอเมื่อ 9 ก.ย. 2026)
+// เทสหน้าตาของหน้าบันทึกยอดผลิตประจำวัน
 //
-// สามเรื่องที่ขอมา
-//   1. ยุบคอลัมน์ "สะสม" กับ "คงเหลือ" ไปเป็นแถบสถานะใต้ยอด Order Qty
-//   2. คอลัมน์กว้างเกินไปตอนไม่ได้กรอง — ตารางยืดเต็มจอ 1400px โดยไม่ได้ข้อมูลเพิ่ม
-//   3. ตัวอักษรใหญ่ขึ้นให้คนสายตายาวอ่านได้
+// 9 ก.ย. 2026 (#80) เจ้าของขอ — ยุบสะสม/คงเหลือเป็นแถบใต้ Order Qty · คุมความกว้าง 900px · ตัวใหญ่อ่านง่าย
+// 12 ก.ย. 2026 เจ้าของสั่งใหม่ — แยกสะสม/คงเหลือกลับเป็นคอลัมน์ของตัวเอง · เพิ่มคอลัมน์ Aging · ตารางเต็มกรอบ
+// ตัวใหญ่อ่านง่ายยังคงไว้
 //
-// ⚠️ ข้อ 3 ต้องอยู่แค่หน้านี้ · หน้าใบส่งสินค้ามี 16 คอลัมน์และเพิ่งแก้เรื่องล้นจอบนมือถือ
+// ⚠️ ตัวใหญ่ต้องอยู่แค่หน้านี้ · หน้าใบส่งสินค้ามี 16 คอลัมน์และเพิ่งแก้เรื่องล้นจอบนมือถือ
 //    ไปเมื่อ 4 ก.ย. 2026 — มีเทสคุมไว้ข้างล่างว่าตัวอักษรต้องไม่รั่วไปหน้านั้น
 
 const { test, expect } = require('@playwright/test');
@@ -14,9 +13,14 @@ const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
 const PN = '9000000002';
 
-const order = (poNo, qty, unit = 'TUE-U') => ({
+/** วันที่ย้อนหลัง n วันตามเวลาเครื่อง — แอปนับ Aging ถึง "วันนี้" ตามเวลาเครื่องเหมือนกัน */
+const daysAgo = n => {
+  const d = new Date(); d.setDate(d.getDate() - n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const order = (poNo, qty, unit = 'TUE-U', orderDate = daysAgo(10)) => ({
   id: poNo, week: 'WK 34', poNo, pn: PN, subName: unit, orderQty: qty,
-  orderDate: '2026-08-03', status: 'active',
+  orderDate, status: 'active',
   importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false
 });
 const rec = (id, orderId, process, qty) => ({
@@ -40,113 +44,145 @@ async function openEntry(page, orders, records = [], width = 1400) {
 
 const ORDERS = [order('PO-1', 4000), order('PO-2', 5000, 'TUE-H')];
 const rowOf = (page, po) => page.locator('#entryTable tbody tr', { hasText: po });
+// ลำดับคอลัมน์ — # · สัปดาห์ · PO · P/N · Order Qty · Aging · สะสม · คงเหลือ · ยอดวันนี้
+const COL = { qty: 4, aging: 5, cum: 6, rem: 7 };
+const cellOf = (page, po, col) => rowOf(page, po).locator('td').nth(COL[col]);
+const th = (page, col) => page.locator('#entryTable thead th').nth(COL[col]).innerText();
 
-// ── 1. ยุบสองคอลัมน์เป็นแถบสถานะ ───────────────────────────────────
+// ── 1. สะสมกับคงเหลือเป็นคอลัมน์ของตัวเอง ─────────────────────────────
 
-test('ตารางต้องเหลือ 6 คอลัมน์ — ไม่มีคอลัมน์สะสมกับคงเหลือแยกอีกแล้ว', async ({ page }) => {
+test('ตารางมี 9 คอลัมน์ — Order Qty · Aging · สะสม · คงเหลือ แยกคอลัมน์กัน', async ({ page }) => {
   await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 1000)]);
-  expect(await page.locator('#entryTable thead th').count(), 'เดิม 8 คอลัมน์').toBe(6);
-  expect(await rowOf(page, 'PO-1').locator('td').count()).toBe(6);
+  expect(await page.locator('#entryTable thead th').count(), 'ช่วงที่ยุบเป็นแถบเหลือ 6').toBe(9);
+  expect(await rowOf(page, 'PO-1').locator('td').count()).toBe(9);
+  expect(await th(page, 'aging')).toContain('Aging');
+  expect(await th(page, 'cum')).toContain('สะสม');
+  expect(await th(page, 'rem')).toContain('คงเหลือ');
 });
 
-test('ยอดสะสมกับคงเหลือต้องยังอยู่ครบ แค่ย้ายไปใต้ Order Qty', async ({ page }) => {
+test('ยอดแผน สะสม คงเหลือ อยู่คนละคอลัมน์และตัวเลขถูก', async ({ page }) => {
   await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 1000)]);
-  const cell = rowOf(page, 'PO-1').locator('td').nth(4);
-  expect(await cell.locator('.qty-main').innerText(), 'ยอดแผน').toBe('4,000');
-  expect(await cell.locator('b.cum').innerText(), 'สะสม').toBe('1,000');
-  expect(await cell.locator('b.rem').innerText(), 'คงเหลือ 4,000 − 1,000').toBe('3,000');
+  expect(await cellOf(page, 'PO-1', 'qty').innerText(), 'ยอดแผน').toBe('4,000');
+  expect(await cellOf(page, 'PO-1', 'cum').innerText(), 'สะสม').toBe('1,000');
+  expect(await cellOf(page, 'PO-1', 'rem').innerText(), 'คงเหลือ 4,000 − 1,000').toBe('3,000');
+  expect(await rowOf(page, 'PO-1').locator('.progress').count(), 'แถบใต้ Order Qty ต้องไม่อยู่แล้ว').toBe(0);
 });
 
-test('แถบต้องยาวตามสัดส่วนที่ทำได้จริง', async ({ page }) => {
-  await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 1000)]);
-  const pct = await rowOf(page, 'PO-1').locator('.seg-on')
-    .evaluate(el => el.style.width);
-  expect(pct, '1,000 จาก 4,000 = 25%').toBe('25%');
-});
-
-test('ทำครบขั้นนี้แล้วแถบต้องเต็มและเป็นสีเขียว', async ({ page }) => {
-  await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 4000)]);
-  const bar = rowOf(page, 'PO-1').locator('.progress');
-  expect(await bar.getAttribute('class'), 'ต้องติดคลาส done').toContain('done');
-  expect(await rowOf(page, 'PO-1').locator('b.rem').innerText()).toBe('0');
-});
-
-test('คีย์เกินยอดแผน — แถบต้องไม่ล้น แต่ยอดสะสมต้องบอกความจริง', async ({ page }) => {
+test('คีย์เกินยอดแผน — สะสมต้องบอกความจริง คงเหลือครอบที่ 0', async ({ page }) => {
   // ⚠️ สะสมไม่ครอบ · ใบที่คีย์เกินต้องเห็นว่าเกิน ไม่ใช่ถูกกลบให้เท่ายอดแผน
   await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 5200)]);
-  expect(await rowOf(page, 'PO-1').locator('.seg-on').evaluate(el => el.style.width))
-    .toBe('100%');
-  expect(await rowOf(page, 'PO-1').locator('b.cum').innerText(), 'สะสมตามจริง').toBe('5,200');
-  expect(await rowOf(page, 'PO-1').locator('b.rem').innerText(), 'คงเหลือครอบที่ 0').toBe('0');
+  expect(await cellOf(page, 'PO-1', 'cum').innerText(), 'สะสมตามจริง').toBe('5,200');
+  expect(await cellOf(page, 'PO-1', 'rem').innerText(), 'คงเหลือครอบที่ 0').toBe('0');
 });
 
-test('หัวตารางต้องบอกว่าแถบเป็นของขั้นไหน', async ({ page }) => {
+test('หัวคอลัมน์สะสมต้องบอกว่าเป็นของขั้นไหน', async ({ page }) => {
   await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 1000)]);
-  const th = await page.locator('#entryTable thead th').nth(4).innerText();
-  // แถบเต็มแปลว่าเสร็จ "ขั้นที่กำลังคีย์" ไม่ใช่เสร็จทั้งใบ ถ้าไม่บอกขั้นไว้จะอ่านผิดทันที
-  expect(th, 'ตอนอยู่ขั้น Winding').toContain('Winding');
+  expect(await th(page, 'cum'), 'ตอนอยู่ขั้น Winding').toContain('Winding');
   await page.click('#procBtn-inspection');
   await page.waitForTimeout(200);
-  expect(await page.locator('#entryTable thead th').nth(4).innerText(), 'สลับขั้นแล้วต้องเปลี่ยนตาม')
-    .toContain('Inspection');
+  expect(await th(page, 'cum'), 'สลับขั้นแล้วต้องเปลี่ยนตาม').toContain('Inspection');
 });
 
-test('ป้ายเตือนยอดสะสมเกินขั้นก่อนหน้า ต้องยังอยู่', async ({ page }) => {
-  // คีย์ Assembly มากกว่า Winding — เดิมป้ายอยู่ในคอลัมน์สะสมที่ถูกยุบไปแล้ว
+test('ป้ายเตือนยอดสะสมเกินขั้นก่อนหน้า ต้องอยู่ในคอลัมน์สะสม', async ({ page }) => {
+  // คีย์ Assembly มากกว่า Winding
   await openEntry(page, ORDERS, [
     rec('r1', 'PO-1', 'winding', 500), rec('r2', 'PO-1', 'assembly', 900)
   ]);
   await page.click('#procBtn-assembly');
   await page.waitForTimeout(200);
-  expect(await rowOf(page, 'PO-1').locator('.qty-note .badge.amber').count(),
+  expect(await cellOf(page, 'PO-1', 'cum').locator('.badge.amber').count(),
     'ไม่มีป้ายเตือน = คีย์ข้ามขั้นแล้วไม่มีอะไรฟ้อง').toBe(1);
 });
 
-// ── 2. ความกว้างของตาราง ───────────────────────────────────────────
+// ── 2. คอลัมน์ Aging ───────────────────────────────────────────────
 
-test('จอกว้าง ตารางต้องไม่ยืดจนคอลัมน์ละ 200px', async ({ page }) => {
-  await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 1000)], 1400);
-  const w = await page.locator('#entryTable').evaluate(el => el.getBoundingClientRect().width);
-  expect(w, 'ตารางต้องถูกคุมความกว้างไว้').toBeLessThanOrEqual(920);
-  const panel = await page.locator('#view-entry .panel').first()
-    .evaluate(el => el.getBoundingClientRect().width);
-  expect(panel, 'และแผงต้องยังกว้างกว่าตาราง ไม่งั้นเทสนี้ไม่ได้พิสูจน์อะไร').toBeGreaterThan(1000);
+test('Aging = จำนวนวันนับจากวันสั่งถึงวันนี้ และสีตามเกณฑ์กำหนดส่งของ', async ({ page }) => {
+  // เกณฑ์ส่งของ 28 วัน — เกิน 28 แดง · เหลือไม่เกิน 3 วันเหลือง · ที่เหลือเขียว (เหมือน Dashboard)
+  await openEntry(page, [
+    order('PO-NEW', 1000, 'TUE-U', daysAgo(10)),
+    order('PO-NEAR', 1000, 'TUE-U', daysAgo(26)),
+    order('PO-LATE', 1000, 'TUE-U', daysAgo(40))
+  ]);
+  const badge = po => cellOf(page, po, 'aging').locator('.badge');
+  expect(await cellOf(page, 'PO-NEW', 'aging').innerText()).toBe('10');
+  expect(await badge('PO-NEW').getAttribute('class')).toContain('green');
+  expect(await cellOf(page, 'PO-NEAR', 'aging').innerText()).toBe('26');
+  expect(await badge('PO-NEAR').getAttribute('class'), 'เหลือ 2 วัน').toContain('amber');
+  expect(await cellOf(page, 'PO-LATE', 'aging').innerText()).toBe('40');
+  expect(await badge('PO-LATE').getAttribute('class'), 'เกินกำหนด').toContain('red');
 });
 
-test('จอแคบ ตารางต้องยังใช้พื้นที่เต็มเหมือนเดิม', async ({ page }) => {
+test('Aging บนหน้านี้ต้องตรงกับ Dashboard ทั้งตัวเลขและสี', async ({ page }) => {
+  // สองหน้าคิดคนละที่เมื่อไหร่ ใบเดียวกันจะขึ้นอายุงานไม่ตรงกัน แล้วคนจะเลิกเชื่อทั้งสองหน้า
+  const orders = [order('PO-A', 1000, 'TUE-U', daysAgo(26)), order('PO-B', 1000, 'TUE-U', daysAgo(40))];
+  await openEntry(page, orders);
+  const entry = {};
+  for (const po of ['PO-A', 'PO-B']) entry[po] = await cellOf(page, po, 'aging').innerHTML();
+  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.waitForTimeout(250);
+  for (const po of ['PO-A', 'PO-B']) {
+    const dash = await page.locator('#dashTable tbody tr', { hasText: po }).locator('td[data-aging]').innerHTML();
+    expect(entry[po], po).toBe(dash);
+  }
+});
+
+test('Aging ต้องนับถึงวันนี้ ไม่ใช่วันที่เลือกคีย์ย้อนหลัง', async ({ page }) => {
+  // คีย์ย้อนหลังเป็นเรื่องปกติ ถ้า Aging ขยับตามวันที่เลือก จะไม่ตรงกับ Dashboard
+  await openEntry(page, [order('PO-1', 1000, 'TUE-U', daysAgo(10))]);
+  await page.fill('#entryDate', daysAgo(5));
+  await page.waitForTimeout(250);
+  expect(await cellOf(page, 'PO-1', 'aging').innerText()).toBe('10');
+});
+
+test('ใบที่ไม่มีวันสั่ง — Aging ต้องขึ้นขีด ไม่ใช่ตัวเลขขยะ', async ({ page }) => {
+  await openEntry(page, [order('PO-1', 1000, 'TUE-U', '')]);
+  expect(await cellOf(page, 'PO-1', 'aging').innerText()).toBe('—');
+});
+
+// ── 3. ความกว้างของตาราง ───────────────────────────────────────────
+
+test('จอกว้าง ตารางต้องเต็มกรอบ ไม่ถูกคุมไว้ 900px อีกแล้ว', async ({ page }) => {
+  await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 1000)], 1400);
+  const { table, wrap } = await page.evaluate(() => ({
+    table: document.getElementById('entryTable').getBoundingClientRect().width,
+    wrap: document.querySelector('#view-entry .table-wrap').getBoundingClientRect().width
+  }));
+  expect(wrap, 'กรอบต้องกว้างกว่า 900 ไม่งั้นเทสนี้ไม่ได้พิสูจน์อะไร').toBeGreaterThan(1000);
+  expect(table, 'ตารางต้องเต็มกรอบ').toBeGreaterThanOrEqual(wrap - 1);
+});
+
+test('จอแคบ ตารางต้องยังใช้พื้นที่เต็ม', async ({ page }) => {
   await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 1000)], 780);
   const { table, wrap } = await page.evaluate(() => ({
     table: document.getElementById('entryTable').getBoundingClientRect().width,
     wrap: document.querySelector('#view-entry .table-wrap').getBoundingClientRect().width
   }));
-  expect(table, 'การคุมความกว้างต้องไม่ทำให้จอแคบเสียพื้นที่ไปเปล่า ๆ')
-    .toBeGreaterThanOrEqual(wrap - 1);
+  expect(table).toBeGreaterThanOrEqual(wrap - 1);
 });
 
-// ── 3. ตัวใหญ่อ่านง่าย ─────────────────────────────────────────────
+// ── 4. ตัวใหญ่อ่านง่าย ─────────────────────────────────────────────
 
 const fontOf = (page, sel) => page.locator(sel).first()
   .evaluate(el => parseFloat(getComputedStyle(el).fontSize));
 
-test('ตัวอักษรในตารางต้องใหญ่ขึ้นจากเดิม (13px)', async ({ page }) => {
+test('ตัวอักษรในตารางต้องใหญ่กว่าตารางปกติของแอป (13px)', async ({ page }) => {
   await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 1000)]);
   expect(await fontOf(page, '#entryTable td'), 'ตัวตาราง').toBeGreaterThanOrEqual(15);
   expect(await fontOf(page, '#entryTable .row-input'), 'ช่องกรอกยอด — ตัวที่คนจ้องมากที่สุด')
     .toBeGreaterThanOrEqual(18);
-  expect(await fontOf(page, '#entryTable .qty-main'), 'ยอดแผน').toBeGreaterThanOrEqual(17);
   expect(await fontOf(page, '#view-entry .field label'), 'ป้ายกำกับช่องกรอง')
     .toBeGreaterThanOrEqual(14);
 });
 
-test('บนมือถือ ตัวต้องยังใหญ่ แต่ต้องไม่ต้องเลื่อนไกลกว่าเดิม', async ({ page }) => {
-  /* ก่อนขยายตัวอักษร ตารางนี้กว้าง 574px บนจอ 390px · ขยายฟอนต์ดื้อ ๆ แล้วพุ่งเป็น 711px
-     คนที่ต้องใช้ตัวใหญ่คือคนกลุ่มเดียวกับที่ถือมือถือ — จะแลกความอ่านง่ายกับการเลื่อนไม่ได้
-     ทางออกคือบีบ "ระยะห่าง" คืนบนจอแคบ ไม่ใช่บีบตัวอักษร */
+test('บนมือถือ ตัวต้องยังใหญ่ และตารางเลื่อนในกรอบของตัวเอง ไม่ดันทั้งหน้าให้เลื่อน', async ({ page }) => {
+  // 9 คอลัมน์ตัวใหญ่ไม่พอดีจอ 390px อยู่แล้ว — ที่รับไม่ได้คือทั้งหน้าเลื่อนแนวนอนตาม
   await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 1000)], 390);
-  const w = await page.locator('#entryTable').evaluate(el => el.scrollWidth);
-  expect(w, 'ต้องไม่กว้างกว่าของเดิมอย่างมีนัย').toBeLessThanOrEqual(600);
-  expect(await fontOf(page, '#entryTable .row-input'), 'และช่องกรอกต้องยังตัวใหญ่เท่าเดิม')
+  expect(await fontOf(page, '#entryTable .row-input'), 'ช่องกรอกต้องยังตัวใหญ่')
     .toBeGreaterThanOrEqual(18);
+  const { page: pageW, view } = await page.evaluate(() => ({
+    page: document.documentElement.scrollWidth, view: window.innerWidth
+  }));
+  expect(pageW, 'ทั้งหน้าต้องไม่กว้างกว่าจอ').toBeLessThanOrEqual(view + 1);
 });
 
 test('ตัวใหญ่ต้องไม่รั่วไปหน้าอื่น', async ({ page }) => {
