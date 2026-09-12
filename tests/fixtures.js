@@ -160,26 +160,47 @@ async function callInWorkbook(rows, opts = {}) {
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-/** ฟอร์มใบส่งสินค้า FM-ST-07 — โครงเหมือนของจริงเท่าที่โค้ดอ้างถึง
- *  B7 หน่วย · U7 Date___D/M/YY__(WK nn) · แถว 9 หัวตาราง · แถว 10-95 ข้อมูล · แถว 96 ยอดรวม
- *  H, P, W เป็นสูตรประจำแถว และแถว 96 เป็น SUM — ทั้งหมดนี้แอปห้ามแตะ */
+/** ฟอร์มใบส่งสินค้า FM-ST-07 ฉบับที่เจ้าของแทรกคอลัมน์ "ยอดส่งงาน" (11 ก.ย. 2026)
+ *  โครงลอกจากฟอร์มจริงทีละช่อง · ตัวเลขทั้งหมดเป็นของสมมติ
+ *    แถว 7  B หน่วย · V Date___D/M/YY__(WK nn)
+ *    แถว 8  หัวกลุ่ม M8 "ยอดส่งงาน" ครอบ M-R — ต้องไม่ถูกเข้าใจผิดว่าเป็นหัวคอลัมน์
+ *    แถว 9  B Item · C P/N · D PO NO · E Order Date · F PO QTY · G Wip bal. · H Aging
+ *           L Remark (คอลัมน์ซ่อน) · M ยอดส่งงาน · N จำนวนต่อกล่อง · O จำนวนกล่อง · P จำนวนเศษ
+ *           Q จำนวน/PCS · R Bill No · V Remark · X Fail
+ *    สูตรประจำแถว H = TODAY()-E · Q = N*O+P · X = G-Q · แถวรวมเป็น SUM · ใต้แถวรวมเป็นช่องลงชื่อ
+ *
+ *  ⚠️ แต่ละชีตยาวไม่เท่ากัน — ของจริง TUE-U/TUE-T ข้อมูลแถว 10-95 รวมที่ 96
+ *     แต่ TUE-H ข้อมูลแถว 10-77 รวมที่ 78 · fixture เดิมทำทุกชีตยาวเท่ากัน
+ *     บั๊กที่ล้างแถวรวมกับช่องลงชื่อของ TUE-H จึงลอดเทสมาตั้งแต่ 30 ส.ค. 2026
+ *
+ *  opts.lastRow  { 'TUE-H': 77 } — แถวข้อมูลสุดท้ายของชีตนั้น (ค่าเริ่มต้น 95)
+ *  opts.legacy   ฟอร์มฉบับก่อนแทรกคอลัมน์ — ไม่มียอดส่งงาน · ทุกคอลัมน์ตั้งแต่ M ถอยกลับหนึ่งช่อง
+ *  opts.pcsUntil แถวสุดท้ายที่มีสูตรจำนวน/PCS — ฟอร์มจริงมีสูตรแค่บางแถว ไม่ครบทั้งตาราง */
 async function deliveryFormWorkbook(units = ['TUE-U', 'TUE-H'], opts = {}) {
   const wb = new ExcelJS.Workbook();
+  const C = opts.legacy
+    ? { perBox: 13, boxes: 14, rem: 15, pcs: 16, remark: 21, fail: 23 }
+    : { ship: 13, perBox: 14, boxes: 15, rem: 16, pcs: 17, remark: 22, fail: 24 };
+  const A = n => String.fromCharCode(64 + n);
   for (const unit of units) {
     const ws = wb.addWorksheet('ใบส่งงาน ' + unit);
+    const last = (opts.lastRow || {})[unit] || 95, total = last + 1;
     anchorTopLeft(ws);
     ws.getCell('F2').value = 'ใบส่งสินค้า';
     ws.getRow(7).getCell(2).value = unit;
-    ws.getRow(7).getCell(21).value = `Date___1/1/26__(WK ${opts.week || 34})`;
+    ws.getRow(7).getCell(C.remark).value = `Date___1/1/26__(WK ${opts.week || 34})`;
+    ws.getRow(8).getCell(13).value = 'ยอดส่งงาน';
     const head = ws.getRow(9);
     [[2,'Item'], [3,'P/N'], [4,'PO  NO'], [5,'Order Date'], [6,'PO QTY'], [7,'Wip bal.'], [8,'Aging'],
-     [13,'จำนวนต่อกล่อง'], [14,'จำนวนกล่อง'], [15,'จำนวนเศษ'], [16,'จำนวน/PCS'], [21,'Remark'], [23,'Fail']
-    ].forEach(([c, v]) => { head.getCell(c).value = v; });
+     [12,'Remark'], [C.ship,'ยอดส่งงาน'], [C.perBox,'จำนวนต่อกล่อง'], [C.boxes,'จำนวนกล่อง'], [C.rem,'จำนวนเศษ'],
+     [C.pcs,'จำนวน/PCS'], [C.remark,'Remark'], [C.fail,'Fail']
+    ].forEach(([c, v]) => { if (c) head.getCell(c).value = v; });
 
-    for (let n = 10; n <= 95; n++) {
+    const pcs = n => `${A(C.perBox)}${n}*${A(C.boxes)}${n}+${A(C.rem)}${n}`;
+    for (let n = 10; n <= last; n++) {
       const row = ws.getRow(n);
       row.getCell(2).value = n - 9;                              // Item มีอยู่แล้วในฟอร์ม
-      // ⚠️ ต้องใส่ result ให้ทุกสูตร เลียนแบบฟอร์มจริงที่เก็บ <f>M10*N10+O10</f><v>0</v>
+      // ⚠️ ต้องใส่ result ให้ทุกสูตร เลียนแบบฟอร์มจริงที่เก็บ <f>N10*O10+P10</f><v>0</v>
       //    เลข 0 ที่แคชไว้นี่แหละคือตัวที่ทำให้ใบส่งของโชว์จำนวนเป็น 0 (พนักงานเจอ 31 ส.ค. 2026)
       //    fixture เดิมไม่ใส่ result ExcelJS จึงไม่เขียน <v> เลย บั๊กนี้จึงลอดเทสทั้งชุดไปได้
       row.getCell(8).value  = { formula: `TODAY()-E${n}`, result: 0 };      // Aging
@@ -189,25 +210,41 @@ async function deliveryFormWorkbook(units = ['TUE-U', 'TUE-H'], opts = {}) {
         row.getCell(5).value = new Date('2020-01-01T00:00:00Z');   // ของสัปดาห์ก่อนที่ค้างอยู่
         row.getCell(5).numFmt = 'dd/mm/yyyy';
       }
-      row.getCell(16).value = { formula: `M${n}*N${n}+O${n}`, result: 0 };  // จำนวน/PCS
-      row.getCell(23).value = { formula: `G${n}-P${n}`, result: 0 };        // Fail
+      // ⚠️ ฟอร์มจริงเก็บสูตรนี้แบบ shared เป็นช่วงละ 32 แถว (ช่องแรกของช่วงอยู่แถว 10 · 42 · 74)
+      //    ช่องแรกถือสูตร ช่องที่เหลืออ้างกลับไปหา (ดู restoreQtyFormula)
+      const until = opts.pcsUntil ?? last;
+      const blockStart = 10 + Math.floor((n - 10) / 32) * 32;
+      if (n <= until) row.getCell(C.pcs).value = n === blockStart
+        ? { formula: pcs(n), result: 0, shareType: 'shared', ref: `${A(C.pcs)}${n}:${A(C.pcs)}${Math.min(n + 31, until)}` }
+        : { sharedFormula: `${A(C.pcs)}${blockStart}`, result: 0 };
+      row.getCell(C.fail).value = { formula: `G${n}-${A(C.pcs)}${n}`, result: 0 };
     }
-    const total = ws.getRow(96);
-    total.getCell(2).value = 'รวม';
-    total.getCell(6).value = { formula: 'SUM(F10:F95)', result: 0 };
-    total.getCell(16).value = { formula: 'SUM(P10:P95)', result: 0 };
+    const sum = c => ({ formula: `SUM(${A(c)}10:${A(c)}${last})`, result: 0 });
+    const tr = ws.getRow(total);
+    tr.getCell(2).value = 'รวม';
+    tr.getCell(6).value = sum(6);
+    tr.getCell(7).value = sum(7);
+    tr.getCell(C.pcs).value = sum(C.pcs);
+    tr.getCell(C.fail).value = sum(C.fail);
+    ws.mergeCells(`B${total}:E${total}`);
+    // ช่องลงชื่อใต้แถวรวม — ของจริงถูกล้างทิ้งบนชีต TUE-H เพราะโค้ดเดิมล้างถึงแถว 95 ทุกชีต
+    for (const n of [total + 2, total + 3]) {
+      ws.getRow(n).getCell(2).value = 'พนักงานขับรถ.........';
+      ws.getRow(n).getCell(6).value = 'ทะเบียนรถ.........';
+      ws.getRow(n).getCell(C.perBox).value = 'รถออก.........';
+      ws.getRow(n).getCell(C.pcs).value = 'รถถึง.........';
+    }
+    ws.getRow(total + 5).getCell(C.perBox).value = 'ผู้ตรวจสอบ :';
     // ของที่เหลือจากใบครั้งก่อน ต้องถูกล้างตอนออกใบใหม่
     if (opts.stale) {
       ws.getRow(10).getCell(3).value = 'ของเก่าที่ต้องหาย';
-      ws.getRow(10).getCell(13).value = 999;
+      ws.getRow(10).getCell(C.perBox).value = 999;
     }
-    /* จำลอง "ใบของสัปดาห์ก่อนที่โปรแกรมเราเคยออกให้"
-     * ตั้งแต่ 8 ก.ย. 2026 ช่องจำนวน/PCS ของแถวที่ออกใบเป็นตัวเลขนิ่ง ไม่ใช่สูตร
-     * พนักงานอัปไฟล์นั้นกลับเข้ามาทำใบใหม่ได้ · แถวที่รอบใหม่ไม่ได้ใช้
-     * ต้องถูกคืนสูตร ไม่งั้นยอดของสัปดาห์ก่อนจะค้างอยู่บนกระดาษใบใหม่ */
+    /* จำลอง "ใบที่โปรแกรมรุ่น 8-11 ก.ย. 2026 เคยออกให้" — ช่องจำนวน/PCS เป็นตัวเลขนิ่ง ไม่ใช่สูตร
+     * พนักงานอัปไฟล์นั้นกลับเข้ามาทำใบใหม่ได้ ตัวเลขที่ค้างต้องไม่ถูกบวกเข้ายอดรวมท้ายตาราง */
     if (opts.staleQty) {
       (opts.staleQty.rows || [40, 41]).forEach(n => {
-        ws.getRow(n).getCell(16).value = opts.staleQty.value || 777;   // P = ตัวเลขนิ่ง ไม่มีสูตร
+        ws.getRow(n).getCell(C.pcs).value = opts.staleQty.value || 777;
       });
     }
   }

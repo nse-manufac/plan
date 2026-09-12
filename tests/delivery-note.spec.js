@@ -191,7 +191,7 @@ test('ปุ่มคำนวณให้ ต้องพากลับออ�
 });
 
 test('ช่อง Remark ต้องกรอกได้ และลงไปในไฟล์', async ({ page }) => {
-  // ช่องนี้เคยมีในโครงข้อมูลและเขียนลงคอลัมน์ U ให้อยู่แล้ว แต่ไม่มีที่ให้กรอกบนจอเลย
+  // ช่องนี้เคยมีในโครงข้อมูลและเขียนลงช่อง Remark ท้ายตารางให้อยู่แล้ว แต่ไม่มีที่ให้กรอกบนจอเลย
   // เป็นทางออกของกรณีแพ็คไม่เต็มหลายกล่อง ซึ่งฟอร์มแสดงด้วยตัวเลขไม่ได้
   await open(page);
   await fillGroupB(page);
@@ -203,10 +203,13 @@ test('ช่อง Remark ต้องกรอกได้ และลงไ�
   const { out } = await exportForm(page);
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
   expect(xml, 'ต้องไปโผล่ในช่อง Remark ของใบ').toContain('แพ็ค 3 กล่องไม่เต็ม');
+  // ⚠️ ฟอร์มมีหัว Remark สองช่อง ช่องแรก (L) เป็นคอลัมน์ที่ซ่อนไว้ ลงตรงนั้นแล้วไม่ขึ้นบนกระดาษ
+  expect(xml, 'ต้องลงช่อง Remark ท้ายตาราง ไม่ใช่คอลัมน์ที่ซ่อนไว้')
+    .toMatch(/<c r="V10"[^>]*><is><t>แพ็ค 3 กล่องไม่เต็ม<\/t><\/is><\/c>/);
 });
 
 test('Wip bal. ต้องเป็นยอดค้างก่อนส่งรอบนี้ ไม่ใช่หลังส่ง', async ({ page }) => {
-  // ในฟอร์มมีสูตร W = G − P (ค้าง ลบ ที่ส่งรอบนี้) ถ้า G หักไปแล้วจะหักซ้ำสองรอบ
+  // ในฟอร์มมีสูตร Fail = Wip bal. − จำนวน/PCS (ค้าง ลบ ที่ส่งรอบนี้) ถ้า Wip bal. หักไปแล้วจะหักซ้ำสองรอบ
   await open(page);
   await alloc(page, 'PO-B001|' + PN_B, 5000);
   const row = await page.locator('#dnTable tbody tr').filter({ hasText: 'PO-B001' }).innerText();
@@ -1054,22 +1057,24 @@ test('ยอดบรรจุต้องลงแถวแรกของก�
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
   const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>[^<]*<v>([^<]*)</v>').exec(xml) || [])[1];
 
-  expect(at('M10'), 'ยอดบรรจุอยู่แถวแรกของกลุ่ม').toBe('50');
-  expect(at('N10')).toBe('30');
-  expect(at('M11'), 'แถวที่สองของกลุ่มต้องเว้นว่าง ไม่งั้นยอดรวมท้ายตารางจะนับซ้ำ').toBeUndefined();
+  expect(at('N10'), 'ยอดบรรจุอยู่แถวแรกของกลุ่ม').toBe('50');
+  expect(at('O10')).toBe('30');
+  expect(at('N11'), 'แถวที่สองของกลุ่มต้องเว้นว่าง ไม่งั้นยอดรวมท้ายตารางจะนับซ้ำ').toBeUndefined();
 
-  /* ⚠️ กล่อง/เศษ (M/N/O) merge ทั้งกลุ่ม · แต่ช่องจำนวน (P) ห้าม merge
-   *    Delta ขอเมื่อ 8 ก.ย. 2026 ให้เห็นยอดส่งแยกราย PO
-   *    เจ้าของยืนยันว่ากล่องกับเศษยังรวมทั้งกลุ่มเหมือนเดิม เพราะกล่องหนึ่งใบมีของคละ PO ได้ */
-  for (const c of ['M', 'N', 'O']) {
+  /* ⚠️ ต่อกล่อง · กล่อง · เศษ · จำนวน/PCS (N-Q) เป็นของทั้งกลุ่ม P/N จึง merge ทั้งกลุ่ม
+   *    ยอดราย PO ลงคอลัมน์ยอดส่งงาน (M) และห้าม merge — Delta ขอเมื่อ 8 ก.ย. 2026
+   *    #77 เคยเขียนยอดราย PO ลงช่องจำนวน/PCS พนักงานอ่านแล้วงง เจ้าของสั่งย้ายมาที่ยอดส่งงาน 11 ก.ย. 2026 */
+  for (const c of ['N', 'O', 'P', 'Q']) {
     expect(xml, 'ต้อง merge คอลัมน์ ' + c + ' ข้ามแถวของกลุ่ม')
       .toContain('<mergeCell ref="' + c + '10:' + c + '11"/>');
   }
-  expect(xml, 'ช่องจำนวนห้าม merge — ไม่งั้นยอดราย PO จะถูกกลืนเป็นก้อนเดียวเหมือนเดิม')
-    .not.toContain('<mergeCell ref="P10:P11"/>');
+  expect(xml, 'ยอดส่งงานห้าม merge — ไม่งั้นยอดราย PO จะถูกกลืนเป็นก้อนเดียว')
+    .not.toContain('<mergeCell ref="M10:M11"/>');
 
-  expect(at('P10'), 'ยอดของ PO แรก').toBe('1000');
-  expect(at('P11'), 'ยอดของ PO ที่สอง — ต้องเป็นของตัวเอง ไม่ใช่ยอดรวมกลุ่ม').toBe('500');
+  expect(at('M10'), 'ยอดส่งงานของ PO แรก').toBe('1000');
+  expect(at('M11'), 'ยอดส่งงานของ PO ที่สอง — ต้องเป็นของตัวเอง ไม่ใช่ยอดรวมกลุ่ม').toBe('500');
+  expect(xml, 'จำนวน/PCS แถวแรกต้องเป็นสูตรรวมทั้งกลุ่ม ไม่ใช่ยอดราย PO')
+    .toMatch(/<c r="Q10"[^>]*><f>N10\*O10\+P10<\/f><\/c>/);
 
   expect(xml, 'PO ของแต่ละแถวยังต่างกัน').toContain('PO-B001');
   expect(xml, 'PO ของแต่ละแถวยังต่างกัน').toContain('PO-B055');
@@ -1112,16 +1117,15 @@ test('กลุ่มที่รอบนี้ไม่ได้ส่งข�
                     || !new RegExp('<c r="' + ref + '"[^>]*>').test(xml);
 
   expect(xml, 'แถวที่ติ๊กไว้ต้องขึ้นบนกระดาษ').toContain('PO-B001');
-  expect(empty('M10'), 'ต่อกล่องต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
-  expect(empty('N10'), 'กล่องต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
-  expect(empty('O10'), 'เศษต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
+  expect(empty('N10'), 'ต่อกล่องต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
+  expect(empty('O10'), 'กล่องต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
+  expect(empty('P10'), 'เศษต้องเว้นว่าง ไม่ใช่ 0').toBe(true);
 
-  /* ⚠️ ช่องจำนวนต่างจากช่องบรรจุ — ตรงนี้ 0 คือความจริง ไม่ใช่การประกาศเท็จ
+  /* ⚠️ ช่องยอดส่งงานต่างจากช่องบรรจุ — ตรงนี้ 0 คือความจริง ไม่ใช่การประกาศเท็จ
    *    "รอบนี้ใบนี้ส่ง 0 ชิ้น" เป็นข้อมูลที่ Delta ขอ ส่วน "กล่องละ 0 · 0 กล่อง"
-   *    เป็นการประกาศเรื่องการแพ็คที่ไม่เคยเกิดขึ้น จึงยังต้องเว้นว่างเหมือนเดิม
-   *    (ของเดิมช่องนี้เป็นสูตรที่คิดได้ 0 อยู่แล้ว บนกระดาษจึงเห็น 0 เท่ากัน) */
-  expect(new RegExp('<c r="P10"[^>]*>[^<]*<v>0</v>').test(xml),
-    'ช่องจำนวนของแถวที่ติ๊กไว้แต่ไม่ได้ส่ง ต้องเป็น 0').toBe(true);
+   *    เป็นการประกาศเรื่องการแพ็คที่ไม่เคยเกิดขึ้น จึงยังต้องเว้นว่างเหมือนเดิม */
+  expect(new RegExp('<c r="M10"[^>]*>[^<]*<v>0</v>').test(xml),
+    'ยอดส่งงานของแถวที่ติ๊กไว้แต่ไม่ได้ส่ง ต้องเป็น 0').toBe(true);
 });
 
 test('กลุ่มที่เหลือใบเดียวหลังกรองแล้ว ต้องไม่ merge ช่องบรรจุ', async ({ page }) => {
@@ -1132,34 +1136,34 @@ test('กลุ่มที่เหลือใบเดียวหลัง�
   const { out } = await exportForm(page);
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
 
-  for (const c of ['M', 'N', 'O', 'P']) {
+  for (const c of ['M', 'N', 'O', 'P', 'Q']) {
     expect(xml, 'ไม่ควรมี merge ของคอลัมน์ ' + c + ' เพราะเหลือแถวเดียว')
       .not.toContain('<mergeCell ref="' + c + '10:' + c + '11"/>');
   }
-  expect(xml, 'ยอดบรรจุยังต้องลงแถวแรก').toMatch(/<c r="M10"[^>]*>[^<]*<v>50<\/v>/);
+  expect(xml, 'ยอดบรรจุยังต้องลงแถวแรก').toMatch(/<c r="N10"[^>]*>[^<]*<v>50<\/v>/);
 });
 
 test('ห้ามแตะสูตรของฟอร์ม — Aging · จำนวน/PCS · Fail · ยอดรวมท้ายตาราง ต้องรอดครบ', async ({ page }) => {
   await open(page);
   await fillGroupB(page);
-  const { out } = await exportForm(page);
+  const { src, out } = await exportForm(page);
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const before = await (await JSZip.loadAsync(src)).file('xl/worksheets/sheet1.xml').async('string');
 
   expect((xml.match(/<f>TODAY\(\)-E\d+<\/f>/g) || []).length, 'สูตร Aging ต้องอยู่ครบ 86 แถว').toBe(86);
-  expect((xml.match(/<f>G\d+-P\d+<\/f>/g) || []).length, 'สูตร Fail ต้องอยู่ครบ').toBe(86);
+  expect((xml.match(/<f>G\d+-Q\d+<\/f>/g) || []).length, 'สูตร Fail ต้องอยู่ครบ').toBe(86);
 
-  /* ⚠️ สูตรจำนวน/PCS เป็นข้อยกเว้นเดียวตั้งแต่ 8 ก.ย. 2026
+  /* จำนวน/PCS เป็นสูตรของฟอร์มทุกแถว รวมแถวที่ออกใบ — แถวแรกของกลุ่มคิดยอดรวมทั้งกลุ่ม
    *
-   *    Delta ขอให้เห็นยอดส่งแยกราย PO แต่กล่อง/เศษยังรวมทั้งกลุ่ม
-   *    สูตร M*N+O จึงคิดยอดรายแถวไม่ได้ (M/N/O ของแถวที่สองเป็นต้นไปว่าง)
-   *    เราจึงเขียนตัวเลขทับสูตร "เฉพาะแถวที่ออกใบจริง" เท่านั้น
-   *
-   *    แถวที่ไม่ได้ใช้ต้องยังมีสูตรครบ — ถ้าหลุด แปลว่าไปลบสูตรในฟอร์มของลูกค้าทิ้ง
-   *    fillGroupB ออกใบ 2 บรรทัด (แถว 10-11) จึงเหลือสูตร 84 แถว */
-  expect((xml.match(/<f>M\d+\*N\d+\+O\d+<\/f>/g) || []).length,
-    'สูตรจำนวน/PCS ต้องเหลือครบทุกแถวที่ไม่ได้ออกใบ').toBe(84);
-  expect(xml, 'และแถวที่ออกใบต้องไม่เหลือสูตรไว้ปนกับตัวเลข').not.toContain('<f>M10*N10+O10</f>');
-  expect(xml, 'ยอดรวมท้ายตารางต้องไม่ถูกแตะ').toContain('SUM(P10:P95)');
+   * ⚠️ ฟอร์มจริงเก็บสูตรคอลัมน์นี้แบบ shared ช่องแรกถือสูตร ช่องที่เหลืออ้างกลับไปหา
+   *    เราเขียนสูตรใหม่ทับช่องแรกทุกครั้ง ช่องที่เหลือจึงต้องได้สูตรคืนด้วย ไม่งั้นอ้างถึงสูตรที่ไม่มีอยู่ */
+  expect(before, 'fixture ต้องเก็บสูตรแบบ shared เหมือนของจริง ไม่งั้นข้อนี้ไม่ได้พิสูจน์อะไร').toContain('t="shared"');
+  expect(xml, 'ต้องไม่เหลือช่องจำนวน/PCS ที่อ้างสูตร shared ของช่องแรกซึ่งถูกเขียนทับไปแล้ว')
+    .not.toMatch(/<c r="Q\d+"[^>]*><f t="shared"/);
+  expect((xml.match(/<f>N\d+\*O\d+\+P\d+<\/f>/g) || []).length, 'สูตรจำนวน/PCS ต้องอยู่ครบทุกแถว').toBe(86);
+  expect(xml, 'สูตรที่คืนให้ต้องเป็นของแถวตัวเอง').toContain('<f>N95*O95+P95</f>');
+  expect(xml, 'ยอดรวมท้ายตารางต้องไม่ถูกแตะ').toContain('<f>SUM(Q10:Q95)</f>');
+  expect(xml, 'ยอดรวม PO QTY ต้องไม่ถูกแตะ').toContain('<f>SUM(F10:F95)</f>');
   expect(xml, 'หัวใบต้องบอกสัปดาห์ของใบนี้').toContain('(WK 34)');
 });
 
@@ -1184,42 +1188,90 @@ test('BUG — กรอกยอดครบแล้ว ยอดในไฟ�
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
   const cell = ref => (new RegExp('<c r="' + ref + '"[^>]*>.*?</c>').exec(xml) || [])[0] || '';
 
-  /* ⚠️ ตั้งแต่ 8 ก.ย. 2026 ช่องนี้เป็นตัวเลขจริงราย PO ไม่ใช่สูตรอีกแล้ว
-   *    บั๊กเดิม (Excel โชว์ค่า 0 ที่แคชไว้) จึงเป็นไปไม่ได้กับแถวที่ออกใบ
-   *    แต่ยังต้องคุมยอดรวมท้ายตารางซึ่งยังเป็นสูตรอยู่ */
-  expect(cell('P10'), 'ช่องจำนวนต้องเป็นยอดของ PO แรก ไม่ใช่ยอดรวมทั้งกลุ่ม 1,507')
-    .toMatch(/<v>1000<\/v>/);
-  expect(cell('P11'), 'และแถวที่สองต้องเป็นยอดของตัวเอง').toMatch(/<v>507<\/v>/);
-  expect(cell('P96'), 'ยอดรวมท้ายตารางก็ต้องไม่ค้างค่าเก่า').not.toMatch(/<v>[^<]*<\/v>/);
+  // จำนวน/PCS ต้องเป็นสูตรที่ไม่มีค่าแคชค้าง ไม่งั้น Excel โชว์ 0 ที่แคชไว้แทนผลที่คิดใหม่
+  expect(cell('Q10'), 'จำนวน/PCS ต้องเป็นสูตรรวมทั้งกลุ่ม').toContain('<f>N10*O10+P10</f>');
+  expect(cell('Q10'), 'และต้องไม่มีค่าที่แคชไว้ค้างอยู่').not.toMatch(/<v>/);
+  expect(cell('O10'), '1,507 ÷ 50 = 30 กล่อง').toMatch(/<v>30<\/v>/);
+  expect(cell('P10'), 'เหลือเศษ 7 ชิ้น').toMatch(/<v>7<\/v>/);
+  expect(cell('M10'), 'ยอดส่งงานของ PO แรก').toMatch(/<v>1000<\/v>/);
+  expect(cell('M11'), 'ยอดส่งงานของ PO ที่สอง').toMatch(/<v>507<\/v>/);
+  expect(cell('Q96'), 'ยอดรวมท้ายตารางก็ต้องไม่ค้างค่าเก่า').not.toMatch(/<v>[^<]*<\/v>/);
 });
 
-/* ── แถวที่รอบนี้ไม่ได้ใช้ ต้องได้สูตรจำนวน/PCS คืน ──────────────────
+/* ── ตัวเลขนิ่งที่ค้างในช่องจำนวน/PCS ต้องกลับเป็นสูตร ──────────────────
  *
- * ตั้งแต่ 8 ก.ย. 2026 ช่องจำนวนของแถวที่ออกใบเป็น "ตัวเลขนิ่ง" ไม่ใช่สูตร
- * พนักงานอัปใบของสัปดาห์ก่อน (ที่โปรแกรมเราออกให้) กลับเข้ามาทำใบใหม่ได้
- * ถ้าแถวที่รอบใหม่ไม่ได้ใช้ ไม่ถูกคืนสูตร ยอดของสัปดาห์ก่อนจะค้างบนกระดาษใบใหม่
- * โดยไม่มีอะไรฟ้อง — เป็นเลขที่ส่งถึงลูกค้า
+ * ใบที่โปรแกรมรุ่น 8-11 ก.ย. 2026 ออกให้ มีตัวเลขนิ่งแทนสูตรในช่องจำนวน/PCS
+ * พนักงานอัปใบนั้นกลับเข้ามาทำใบใหม่ได้ ถ้าตัวเลขค้างอยู่ มันจะถูกบวกเข้ายอดรวมท้ายตาราง
+ * บนใบใหม่โดยไม่มีอะไรฟ้อง — เป็นเลขที่ส่งถึงลูกค้า
  *
- * ⚠️ ผู้ตรวจทักไว้ใน #77 ว่า restoreQtyFormula() ไม่มีเทสข้อไหนแตะเลย
- *    ลบฟังก์ชันทิ้งทั้งก้อนแล้วเทสยังเขียวครบ — ข้อนี้จึงต้องแดงถ้าลบมันออก
- *    fixture เดิม (opts.stale) ทำสกปรกแค่แถว 10 ซึ่งเป็นแถวที่ "ใช้งาน" จึงไม่ครอบเคสนี้ */
-test('ยอดของสัปดาห์ก่อนที่ค้างในแถวที่ไม่ได้ใช้ ต้องถูกคืนเป็นสูตร ไม่ใช่ค้างเป็นตัวเลข', async ({ page }) => {
+ * ⚠️ ผู้ตรวจทักไว้ใน #77 ว่า restoreQtyFormula() ไม่มีเทสข้อไหนแตะเลย — ข้อนี้ต้องแดงถ้าลบมันออก
+ *    ครอบทั้งแถวที่ไม่ได้ใช้ (40-41) และแถวที่สองของกลุ่ม (11) ที่ถูก merge ทับจนมองไม่เห็นบนกระดาษ */
+test('ตัวเลขที่ค้างในช่องจำนวน/PCS ต้องถูกคืนเป็นสูตร ไม่ใช่ค้างไปบวกยอดรวมท้ายตาราง', async ({ page }) => {
   await open(page);
   await fillGroupB(page);                       // ออกใบ 2 บรรทัด (แถว 10-11)
 
-  const { out } = await exportForm(page, { staleQty: { rows: [40, 41], value: 777 } });
+  const { out } = await exportForm(page, { staleQty: { rows: [11, 40, 41], value: 777 } });
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
   const cell = ref => (new RegExp('<c r="' + ref + '"[^>]*>.*?</c>').exec(xml) || [])[0] || '';
 
-  for (const ref of ['P40', 'P41']) {
-    expect(cell(ref), ref + ' ต้องไม่เหลือยอดของสัปดาห์ก่อนค้างอยู่')
-      .not.toMatch(/<v>777<\/v>/);
-    expect(cell(ref), ref + ' ต้องกลับไปเป็นสูตรของฟอร์ม')
-      .toContain('<f>M' + ref.slice(1) + '*N' + ref.slice(1) + '+O' + ref.slice(1) + '</f>');
+  for (const ref of ['Q11', 'Q40', 'Q41']) {
+    const r = ref.slice(1);
+    expect(cell(ref), ref + ' ต้องไม่เหลือตัวเลขค้างอยู่').not.toMatch(/<v>777<\/v>/);
+    expect(cell(ref), ref + ' ต้องกลับไปเป็นสูตรของฟอร์ม').toContain('<f>N' + r + '*O' + r + '+P' + r + '</f>');
   }
+  expect(xml, 'ช่องที่อ้างสูตร shared ของช่องแรกต้องได้สูตรของแถวตัวเองคืน').toContain('<f>N42*O42+P42</f>');
+});
 
-  // และแถวที่ออกใบรอบนี้ต้องยังเป็นตัวเลขราย PO ตามปกติ
-  expect(cell('P10'), 'แถวที่ออกใบยังเป็นยอดของ PO ตัวเอง').toMatch(/<v>1000<\/v>/);
+/* ── ชีตที่สั้นกว่าชีตอื่น ──────────────────────────────────────────────
+ *
+ * พบในไฟล์จริง 11 ก.ย. 2026 — ชีต TUE-H มีข้อมูลแถว 10-77 และแถวรวมที่ 78 ส่วน TUE-U/TUE-T รวมที่ 96
+ * โค้ดเดิมล้างถึงแถว 95 ทุกชีต ใบของ TUE-H จึงเสียยอดรวม ช่อง "รวม" และช่องลงชื่อมาตั้งแต่ 30 ส.ค. 2026 */
+test('ชีตที่สั้นกว่า (TUE-H) — ยอดรวมท้ายตาราง ช่อง "รวม" และช่องลงชื่อ ต้องรอดครบ', async ({ page }) => {
+  await open(page, ORDERS, [], 'TUE-H');
+  await alloc(page, 'PO-H070|9000000070', 100);
+  await pack(page, '9000000070', 'perBox', 50);
+  const { out } = await exportForm(page, { lastRow: { 'TUE-H': 77 } });
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet2.xml').async('string');
+  // ป้ายเก็บเป็น shared string · ถ้าถูกล้าง ช่องนั้นจะไม่เหลือ t="s"
+  const label = ref => new RegExp('<c r="' + ref + '"[^>]*t="s"[^>]*>').test(xml);
+
+  expect(xml, 'ใบต้องลงชีตของ TUE-H').toContain('PO-H070');
+  for (const f of ['SUM(F10:F77)', 'SUM(G10:G77)', 'SUM(Q10:Q77)', 'SUM(X10:X77)']) {
+    expect(xml, 'ยอดรวมท้ายตารางต้องอยู่ครบ — ' + f).toContain('<f>' + f + '</f>');
+  }
+  expect(xml, 'merge ช่อง "รวม" ของแถวรวมต้องอยู่').toContain('<mergeCell ref="B78:E78"/>');
+  for (const ref of ['B78', 'B80', 'F80', 'N80', 'Q80', 'N83']) {
+    expect(label(ref), 'ป้ายที่ ' + ref + ' ต้องไม่ถูกล้าง').toBe(true);
+  }
+  expect(xml, 'ใต้แถวรวมต้องไม่มีสูตรจำนวน/PCS โผล่ขึ้นมา').not.toMatch(/<c r="Q(79|8\d)"[^>]*><f>/);
+});
+
+/** กดออกใบแล้วต้องไม่ได้ไฟล์ — คืนข้อความที่ขึ้นบนจอ */
+async function exportRefused(page, opts) {
+  const src = await deliveryFormWorkbook(['TUE-U', 'TUE-H'], opts);
+  await page.setInputFiles('#dnTemplateInput',
+    { name: 'FM-ST-07.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: src });
+  await expect(page.locator('#btnDnExport')).toBeEnabled();
+  let downloaded = false;
+  page.on('download', () => { downloaded = true; });
+  await page.click('#btnDnExport');
+  await page.waitForTimeout(600);
+  expect(downloaded, 'ต้องไม่ได้ไฟล์ออกมาเลย').toBe(false);
+  return page.locator('#toast').innerText();
+}
+
+test('ฟอร์มฉบับเก่าที่ยังไม่มีคอลัมน์ยอดส่งงาน ต้องออกใบไม่ได้ และบอกเหตุผล', async ({ page }) => {
+  // ฉบับเก่ามีคำว่า "ยอดส่งงาน" เป็นหัวกลุ่มแถว 8 ครอบต่อกล่องถึงจำนวน/PCS — ห้ามหลงหยิบอันนั้น
+  // ถ้าเดาแล้วเขียนตามตำแหน่ง ยอดจะลงผิดช่องทั้งใบบนกระดาษที่ส่งลูกค้า
+  await open(page);
+  await fillGroupB(page);
+  expect(await exportRefused(page, { legacy: true })).toContain('ยอดส่งงาน');
+});
+
+test('ชีตที่มีบรรทัดไม่พอ ต้องบอกให้แยกใบ ไม่ใช่เขียนเลยลงไปทับแถวรวม', async ({ page }) => {
+  await open(page);
+  await fillGroupB(page);                       // 2 บรรทัด
+  expect(await exportRefused(page, { lastRow: { 'TUE-U': 10 } })).toContain('มีที่ให้ 1 บรรทัด');
 });
 
 test('ไม่มีช่องสูตรไหนในชีตที่เราเขียนทับ ที่ยังค้างค่าเก่าไว้', async ({ page }) => {
