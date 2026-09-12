@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-12.1">
+<meta name="app-version" content="2026-09-12.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -141,6 +141,10 @@
     #entryTable th,#entryTable td{padding-left:5px;padding-right:5px;}
     #entryTable .row-input{width:92px;}
   }
+  .process-warn{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    background:var(--red-light);border:1px solid var(--red);color:var(--red);border-radius:10px;
+    padding:12px 16px;margin-bottom:16px;font-weight:700;}
+  .process-warn[hidden]{display:none;}
   input.warn{border-color:var(--amber);background:var(--amber-light);}
   input.bad{border-color:var(--red);background:var(--red-light);}
   .muted{color:var(--text-dim);}
@@ -221,6 +225,11 @@
   <button class="tab-btn" data-tab="data">🗂️ ข้อมูล &amp; แชร์</button>
 </nav>
 <main>
+<!-- ⚠️ ปิดไม่ได้โดยตั้งใจ — ขึ้นเมื่อมียอดของขั้นที่โปรแกรมรุ่นนี้ไม่รู้จัก (ดู renderProcessWarning) -->
+<div class="process-warn" id="unknownProcessWarn" role="alert" hidden>
+  <span class="msg"></span>
+  <button class="btn" id="btnProcessWarnReload" type="button">โหลดโปรแกรมรุ่นใหม่</button>
+</div>
 
 <!-- ================= TAB: IMPORT ================= -->
 <section id="view-import" class="view active">
@@ -4188,8 +4197,42 @@ async function weekFromTemplate(zip, map){
   return m ? m[1] : '';
 }
 
+/* ---------- ยอดของขั้นที่โปรแกรมรุ่นนี้ไม่รู้จัก ---------- */
+/* เจ้าของสั่งเมื่อ 12 ก.ย. 2026 ให้เพิ่มขั้นการผลิตได้จากในโปรแกรม และซิงค์ไปทุกเครื่อง
+ * เครื่องที่ยังเปิดโปรแกรมรุ่นก่อนหน้าค้างไว้จะดึงยอดของขั้นใหม่มาเก็บได้ แต่ไม่รู้จักขั้นนั้น
+ *
+ * ⚠️ buildCumMap · buildCumSplitMap · buildDailyTotals ข้ามยอดของขั้นที่ไม่รู้จักแบบเงียบ ๆ
+ *    การ์ด WIP ตาราง กราฟ บนเครื่องนั้นจึงต่ำกว่าเครื่องอื่นโดยไม่มีอะไรฟ้อง — ต้องเตือนให้เห็น
+ *    ห้ามแก้ด้วยการ throw ในตัวคิดยอด เพราะมันวิ่งทุกครั้งที่วาดจอ throw = หน้าขาวทั้งแอป */
+function unknownProcessCounts(records){
+  const known = new Set(PROCESSES);
+  const counts = {};
+  for(const r of records){
+    if(r.voided || known.has(r.process)) continue;
+    counts[r.process] = (counts[r.process] || 0) + 1;
+  }
+  return counts;
+}
+
+let processWarnShown = false;
+function renderProcessWarning(){
+  const counts = unknownProcessCounts(state.records);
+  const names = Object.keys(counts);
+  const el = document.getElementById('unknownProcessWarn');
+  el.hidden = names.length === 0;
+  if(!names.length){ processWarnShown = false; return; }
+  const total = names.reduce((s, k) => s + counts[k], 0);
+  // ชื่อขั้นมาจากข้อมูลที่ซิงค์มา ต้องใส่เป็นข้อความเท่านั้น ห้ามต่อเป็น HTML
+  el.querySelector('.msg').textContent =
+    `เครื่องนี้ใช้โปรแกรมรุ่นเก่า — มียอด ${numFmt(total)} รายการของขั้นที่รุ่นนี้ไม่รู้จัก (${names.join(', ')}) ` +
+    `· ยอดบนจอจึงต่ำกว่าเครื่องอื่น กดโหลดโปรแกรมรุ่นใหม่ก่อนใช้ตัวเลข`;
+  // เพิ่งเจอครั้งแรก — เช็กรุ่นใหม่ทันทีไม่ต้องรอรอบ 30 นาที (ห้ามยิงทุกครั้งที่วาดจอ ไฟล์เกือบ 1 MB)
+  if(!processWarnShown){ processWarnShown = true; lastUpdateCheck = 0; checkAppUpdate(); }
+}
+
 /* ---------- Orchestration ---------- */
 function renderAll(){
+  renderProcessWarning();
   renderDashFilterOptions();
   renderImportHistory();
   renderOrderVoidTable();
@@ -4754,6 +4797,9 @@ document.getElementById('appVersion').textContent = APP_VERSION || 'ไม่ท
 // ห้ามโหลดหน้าใหม่เอง — รอให้คนกดปุ่มเท่านั้น (ยอดที่คีย์ค้างในช่องถูกบันทึกตอนออกจากช่องอยู่แล้ว)
 // ใส่ query กันไว้ไม่ให้เบราว์เซอร์หยิบไฟล์เก่าใน cache กลับมาให้อีก
 document.getElementById('updateBadge').addEventListener('click', ()=>{
+  location.replace(location.pathname + '?_v=' + Date.now());
+});
+document.getElementById('btnProcessWarnReload').addEventListener('click', ()=>{
   location.replace(location.pathname + '?_v=' + Date.now());
 });
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkAppUpdate(); });
