@@ -1169,6 +1169,7 @@ test('เจ้าของสั่งเอา deadline รายขั้น�
   const cells = await page.locator('#dashTable tbody tr').first().locator('td').count();
   expect(cells, 'หัวตารางกับแถวข้อมูลต้องมีจำนวนคอลัมน์เท่ากัน').toBe(heads);
 
-  const src = fs.readFileSync(APP_FILE, 'utf8');
-  expect(src, 'ไฟล์ Excel ยังต้องมี deadline เหมือนเดิม เอาออกเฉพาะหน้าจอ').toContain("'Deadline Winding': dl.winding");
+  // ไฟล์ Excel ยังต้องมี deadline เหมือนเดิม เอาออกเฉพาะหน้าจอ — คุมด้วยการเปิดไฟล์ที่ออกจริง
+  // ใน excel.spec.js ("หัวคอลัมน์ต้องมี Deadline ครบ") · ของเดิมอ่านข้อความในซอร์สตรง ๆ
+  // ซึ่งพังทันทีที่ย้ายชื่อคอลัมน์ไปประกอบจากรายการขั้น ทั้งที่ไฟล์ที่ออกมาไม่ได้เปลี่ยน
 });

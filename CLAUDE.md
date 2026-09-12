@@ -12,7 +12,7 @@
 
 งานหลักที่ระบบทำ:
 - **นำเข้าแผนงาน** จากไฟล์ Excel ของลูกค้า
-- **คีย์ยอดรายวัน** ว่าแต่ละใบสั่งซื้อเดินไปถึงไหน — หน้านี้มีปุ่มครบทั้ง 5 ขั้น
+- **คีย์ยอดรายวัน** ว่าแต่ละใบสั่งซื้อเดินไปถึงไหน — หน้านี้มีปุ่มครบทุกขั้นใน `DEFAULT_PROCESSES`
 - **ใบส่งสินค้า** คีย์จำนวนที่ส่งราย PO และกรอกฟอร์ม FM-ST-07 ให้
 - **เทียบยอดกับไฟล์ Call In ของ Delta** อ่านอย่างเดียว ดูว่ายอดค้างส่งของเราตรงกับที่ Delta บันทึกไว้มั้ย
   และ**เก็บยอดของ Delta ไว้ใช้เป็นเลข Wip bal. บนใบส่งสินค้า**
@@ -110,7 +110,8 @@
 > เป็นทางสำรองระหว่างเปลี่ยนผ่าน · ทั้งสองทางทับกันได้ตาม A2 ระวังเวลาแก้ฝั่งใดฝั่งหนึ่ง
 > (การปิดทางคีย์มือเป็นงานที่เลื่อนไว้ ยังไม่ได้ทำ)
 
-**ขั้นตอนการผลิต 5 ขั้น:** `winding` → `assembly` → `support` → `inspection` → `shipping`
+**ขั้นตอนการผลิต** อยู่ใน `DEFAULT_PROCESSES` ที่เดียว (INVARIANTS A3) · ตอนนี้ `winding` → `assembly` → `support` → `inspection` → `shipping`
+เจ้าของสั่งเมื่อ 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม — `inspection` กับ `shipping` ล็อกอยู่ท้ายสุด
 
 ---
 
@@ -158,7 +159,7 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 | Section banner | มีอะไร |
 |---|---|
 | `Basic helpers` | `normalizeDateOnly` `fmtDateTH` `addDaysISO` `daysBetween` `escapeHtml` `uid` `toast` |
-| `Processes` | `PROCESSES` `PREV_PROCESS` `ORDER_DATE_FIELDS` `RECORD_DATE_FIELDS` |
+| `Processes` / `รายการขั้นการผลิต` | `DEFAULT_PROCESSES` (ที่เดียวของรายการขั้น) → `PROCESSES` `PREV_PROCESS` `ptext` `hasOrderAnomaly` · `ORDER_DATE_FIELDS` `RECORD_DATE_FIELDS` |
 | `State` | `STORAGE_KEY` `defaultState` `loadState` `saveState` `migrateCorruptedDates` |
 | `Google Sheets sync` | `gsApi` `cleanForPush` `doSync` และการ merge ตอน pull |
 | `แก้ไฟล์ Excel เฉพาะช่องที่ต้องแก้` | ตัวช่วยแก้ XML ในไฟล์ .xlsx ผ่าน JSZip |
@@ -172,7 +173,7 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 | `Excel parsing` | อ่านไฟล์แผนงานจากลูกค้า |
 | `Cumulative / deadline / status helpers` | `buildCumMap` `buildCumSplitMap` `computeDeadlines` `computeStatus` ← **หัวใจของ A1–A5** |
 | `Render: Import tab` | หน้านำเข้า |
-| `Render: Entry tab` | หน้าคีย์ยอดรายวัน (ปุ่มเลือกขั้นตอนครบ 5 ขั้น) |
+| `Render: Entry tab` | หน้าคีย์ยอดรายวัน · ปุ่มเลือกขั้นวาดจากรายการขั้นใน `renderProcessControls` |
 | `Record editor` | แก้ไข/ยกเลิกรายการที่บันทึกแล้ว · `saveEntryValue` อยู่ในบล็อกนี้ |
 | `Render: Dashboard tab` | ตารางหลัก + กราฟ |
 | `Render: Data tab` / `Merge logic` | หน้าข้อมูล · `computeMergePlan` `showMergeModal` `applyMerge` |
@@ -276,7 +277,7 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 ## 7. หยุดแล้วถามเจ้าของก่อน เมื่อเจอกรณีเหล่านี้
 
 - ต้องเปลี่ยนโครงสร้าง `state` หรือ key ของ localStorage (INVARIANTS E1/E2)
-- ต้องเพิ่ม / ลบ / สลับขั้นตอนการผลิต (INVARIANTS A3)
+- ต้องเพิ่ม / ลบ / สลับขั้นตอนการผลิต (INVARIANTS A3) — รวมถึงแก้ `DEFAULT_PROCESSES` หรือเปลี่ยน `id` ของขั้น
 - ต้องเปลี่ยนกุญแจ `orderId|process|date` (INVARIANTS A2)
 - ต้องเปลี่ยนวิธี sync หรือ contract กับ Apps Script
   (ผู้ใช้ต้องไป re-deploy Apps Script เอง = ต้องแจ้งล่วงหน้า)
@@ -350,7 +351,7 @@ npm install && npx playwright install chromium && npm test
 | assembly | ประกอบ |
 | support | ขั้นย่อยระหว่างประกอบกับตรวจสอบ (ยังไม่มีชื่อไทย) |
 | inspection | ตรวจสอบ |
-| shipping | ส่งของ — นับเป็นขั้นที่ 4 เพราะทยอยส่งได้ |
+| shipping | ส่งของ — ขั้นสุดท้าย ทยอยส่งได้ · ยอดมาจากหน้าใบส่งสินค้า |
 | `deadlineOffsets` | จำนวนวันนับจาก `orderDate` ที่แต่ละขั้นต้องเสร็จ |
 | ยอดสะสม (cum) | ยอดรวมทุกวันของขั้นนั้นในใบสั่งซื้อนั้น |
 | ทันกำหนด / เกินกำหนด | แยกยอดสะสมตามว่าคีย์ก่อนหรือหลัง deadline ของขั้นนั้น |
