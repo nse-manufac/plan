@@ -113,9 +113,12 @@ test('สถานะล่าช้า — รู้จักขั้นที
 });
 
 test('ขั้นที่เพิ่มยังไม่มีวันกำหนดส่ง — ต้องไม่ถูกตัดสินว่าล่าช้า (A4)', async ({ page }) => {
+  // ⚠️ เช็กว่าไม่มี "ล่าช้า" เลย ไม่ใช่แค่ "ล่าช้า Coating"
+  //    ถ้าค่าที่ยังไม่กำหนดกลายเป็นวันสั่ง Support (ยังไม่กำหนดเหมือนกัน) จะขึ้นก่อนเพราะอยู่ปลายน้ำกว่า
+  //    เช็กแคบ ๆ จะเขียวทั้งที่ตัดสินผิด — ย้อนโค้ดแล้วเจอมาแล้ว
   await open(page);
   await tab(page, 'dashboard');
-  await expect(page.locator('#dashTable tbody')).not.toContainText('ล่าช้า Coating');
+  await expect(page.locator('#dashTable tbody')).not.toContainText('ล่าช้า');
 });
 
 test('หน้าตั้งค่า — มีช่องวันของขั้นที่เพิ่ม และกดบันทึกแล้ว key อื่นไม่หาย', async ({ page }) => {
