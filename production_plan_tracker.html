@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-12.2">
+<meta name="app-version" content="2026-09-12.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -203,7 +203,7 @@
   <div class="topbar-row">
     <div>
       <h1>ระบบติดตามแผนงาน Production &amp; WIP Dashboard</h1>
-      <div class="sub">Thai Union Electronics — Winding/Trimming → Assembly → Support → Inspection</div>
+      <div class="sub" id="processFlow">Thai Union Electronics</div>
       <div class="sub">รุ่น <span id="appVersion">—</span></div>
     </div>
     <button class="sync-badge update-badge" id="updateBadge" hidden title="กดเพื่อโหลดโปรแกรมรุ่นใหม่">
@@ -314,13 +314,7 @@
       </div>
       <div class="field">
         <label>Process</label>
-        <div class="flexgap">
-          <button class="btn primary" id="procBtn-winding" data-proc="winding">🌀 Winding/Trimming</button>
-          <button class="btn" id="procBtn-assembly" data-proc="assembly">🔧 Assembly</button>
-          <button class="btn" id="procBtn-support" data-proc="support">🧩 Support</button>
-          <button class="btn" id="procBtn-inspection" data-proc="inspection">🔍 Inspection</button>
-          <button class="btn" id="procBtn-shipping" data-proc="shipping">🚚 ส่งของ (Shipping)</button>
-        </div>
+        <div class="flexgap" id="procButtons"><!-- วาดจากรายการขั้น (renderProcessControls) --></div>
       </div>
       <div class="field">
         <label>ค้นหา PO / P/N</label>
@@ -570,14 +564,7 @@
       </div>
       <div class="field">
         <label>ค้างอยู่ที่ขั้น</label>
-        <select id="dashWipFilter">
-          <option value="">ทั้งหมด</option>
-          <option value="notStarted">ยังไม่เริ่มผลิต</option>
-          <option value="assembly">ค้างหน้า Assembly</option>
-          <option value="support">ค้างหน้า Support</option>
-          <option value="inspection">ค้างหน้า Inspection</option>
-          <option value="shipping">รอส่งของ</option>
-        </select>
+        <select id="dashWipFilter"><!-- วาดจากรายการขั้น (renderProcessControls) --></select>
       </div>
       <div class="field">
         <label>ค้นหา PO/P/N</label>
@@ -605,11 +592,7 @@
         <label>ชื่อเครื่อง/ผู้บันทึก</label>
         <input type="text" id="deviceName" placeholder="เช่น เครื่อง Line 1 / ชื่อผู้ใช้">
       </div>
-      <div class="field"><label>Winding/Trimming (+วัน)</label><input type="number" id="offW" min="0" style="width:90px"></div>
-      <div class="field"><label>Assembly (+วัน)</label><input type="number" id="offA" min="0" style="width:90px"></div>
-      <div class="field"><label>Support (+วัน)</label><input type="number" id="offSup" min="0" style="width:90px" placeholder="ยังไม่กำหนด"></div>
-      <div class="field"><label>Inspection (+วัน)</label><input type="number" id="offI" min="0" style="width:90px"></div>
-      <div class="field"><label>กำหนดส่งของ (+วัน)</label><input type="number" id="offS" min="0" style="width:90px"></div>
+      <div id="offsetFields" style="display:contents"><!-- ช่องวันของแต่ละขั้น วาดจากรายการขั้น (renderProcessControls) --></div>
       <div class="field"><button class="btn primary" id="btnSaveSettings">บันทึกการตั้งค่า</button></div>
     </div>
   </div>
@@ -954,14 +937,65 @@ function downloadBlob(content, filename, type){
 const SOURCE_SHIP_IMPORT = 'นำเข้าจากใบส่งงาน';
 const SOURCE_DELIVERY = 'จากใบส่งสินค้า';
 
-const PROCESSES = ['winding','assembly','support','inspection','shipping'];
-const PROCESS_LABELS = {winding:'Winding/Trimming', assembly:'Assembly', support:'Support', inspection:'Inspection', shipping:'ส่งของ (Shipping)'};
-/** สีของแต่ละขั้น — ที่เดียวสำหรับทั้งแท่งกราฟและคำอธิบายสีเหนือกราฟ
- *  ⚠️ เดิมสีถูกเขียนไว้สองที่ (HTML ของคำอธิบาย กับ array ใน renderChart)
- *     แก้ที่เดียวแล้วอีกที่ค้างไว้ = คำอธิบายชี้ผิดแท่ง โดยไม่มีอะไรฟ้อง */
-const PROCESS_COLORS = {winding:'#2563eb', assembly:'#d97706', support:'#0891b2', inspection:'#16a34a', shipping:'#7c3aed'};
-const PREV_PROCESS = {winding:null, assembly:'winding', support:'assembly', inspection:'support', shipping:'inspection'};
-function emptyCum(){ return {winding:0, assembly:0, support:0, inspection:0, shipping:0}; }
+/* ---------- รายการขั้นการผลิต — มีที่เดียวคือ DEFAULT_PROCESSES (INVARIANTS A3) ----------
+ * เจ้าของสั่ง 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม · ใบนี้ย้ายทุกจุดมาอ่านจากรายการเดียว
+ * หน้าจัดการขั้นกับการซิงค์รายการมาในใบถัดไป — ตอนนี้เพิ่มขั้น = เพิ่มหนึ่งแถวข้างล่าง แล้วทุกหน้าตามเอง
+ *
+ *   id             ค่าที่เก็บใน record.process · ห้ามเปลี่ยนเด็ดขาด (A2) — ยอดเก่าจะหลุดจากขั้นนั้นทั้งหมด
+ *   label          ชื่อเต็ม · ปุ่มเลือกขั้น หัวคอลัมน์สะสม กราฟ
+ *   short          ชื่อสั้น · หัวตาราง Dashboard สถานะล่าช้า การ์ด WIP รายงาน Excel
+ *   defaultOffset  วันกำหนดส่งตั้งต้นนับจากวันสั่ง · null = ยังไม่กำหนด ไม่ตัดสินล่าช้า (A4)
+ *   offsetInputId  id ของช่องกรอกวันในหน้าตั้งค่า — ห้าขั้นเดิมคง id เดิมไว้ ขั้นใหม่ได้ off-<id>
+ *   headHtml/text  คำเฉพาะของขั้นนั้น (มีแค่ขั้นส่งของ) · ขั้นอื่นประกอบจากชื่อสั้นใน ptext()
+ *
+ * ⚠️ inspection กับ shipping ต้องอยู่ท้ายสุดเสมอ และห้ามเปลี่ยน id
+ *    หน้า FG (inspection − shipping) ใบส่งของ แผงเทียบ Call In สถานะส่งครบ ผูกกับสอง id นี้ตรง ๆ
+ *
+ * ⚠️ สีของแต่ละขั้นอยู่ที่นี่ที่เดียว ทั้งแท่งกราฟและคำอธิบายสีเหนือกราฟ
+ *    เดิมสีถูกเขียนไว้สองที่ แก้ที่เดียวแล้วอีกที่ค้างไว้ = คำอธิบายชี้ผิดแท่ง โดยไม่มีอะไรฟ้อง */
+const DEFAULT_PROCESSES = [
+  {id:'winding',    label:'Winding/Trimming',  short:'Winding',    icon:'🌀', color:'#2563eb', defaultOffset:10,   offsetInputId:'offW'},
+  {id:'assembly',   label:'Assembly',          short:'Assembly',   icon:'🔧', color:'#d97706', defaultOffset:17,   offsetInputId:'offA'},
+  {id:'support',    label:'Support',           short:'Support',    icon:'🧩', color:'#0891b2', defaultOffset:null, offsetInputId:'offSup'},
+  {id:'inspection', label:'Inspection',        short:'Inspection', icon:'🔍', color:'#16a34a', defaultOffset:24,   offsetInputId:'offI'},
+  {id:'shipping',   label:'ส่งของ (Shipping)', short:'Shipping',   icon:'🚚', color:'#7c3aed', defaultOffset:28,   offsetInputId:'offS',
+    headHtml:'ส่งของ<br>(Shipping)',
+    text:{late:'เกินกำหนดส่งของ', wait:'รอส่งของ', waitCard:'WIP รอส่งของ (เสร็จ Inspection แต่ยังไม่ส่ง)',
+          waitExport:'WIP รอส่งของ', deadlineExport:'กำหนดส่งของ', offset:'กำหนดส่งของ (+วัน)'}}
+];
+const PROCESSES = DEFAULT_PROCESSES.map(p=>p.id);
+const PROCESS_BY_ID = Object.fromEntries(DEFAULT_PROCESSES.map(p=>[p.id, p]));
+const PROCESS_LABELS = Object.fromEntries(DEFAULT_PROCESSES.map(p=>[p.id, p.label]));
+const PROCESS_COLORS = Object.fromEntries(DEFAULT_PROCESSES.map(p=>[p.id, p.color]));
+const PREV_PROCESS = Object.fromEntries(PROCESSES.map((p, i)=>[p, i ? PROCESSES[i-1] : null]));
+function emptyCum(){ return Object.fromEntries(PROCESSES.map(p=>[p, 0])); }
+const offsetInputId = d => d.offsetInputId || ('off-' + d.id);
+
+/** ข้อความของขั้นในแต่ละที่ — คืนเป็นข้อความล้วน ผู้เรียกต้อง escapeHtml เองก่อนต่อเป็น HTML
+ *  ⚠️ ชื่อขั้นจะมาจากหน้าจัดการขั้นในใบถัดไป ใครพิมพ์อะไรไว้ต้องไม่กลายเป็นโค้ดบนจอ */
+function ptext(id, kind){
+  const d = PROCESS_BY_ID[id] || {id, label:id, short:id};
+  if(d.text && d.text[kind]) return d.text[kind];
+  switch(kind){
+    case 'late': return 'ล่าช้า ' + d.short;
+    case 'wait': return 'ค้างหน้า ' + d.short;
+    case 'waitCard': return 'WIP ค้างหน้า ' + d.short;
+    case 'waitExport': return 'WIP หน้า ' + d.short;
+    case 'deadlineExport': return 'Deadline ' + d.short;
+    case 'cumExport': return 'สะสม ' + d.short;
+    case 'offset': return d.label + ' (+วัน)';
+    default: return d.label;
+  }
+}
+/** หัวคอลัมน์ขั้นในตาราง Dashboard เป็น HTML — ขั้นส่งของใช้สองบรรทัดตามเดิม */
+function processHeadHtml(id){
+  const d = PROCESS_BY_ID[id];
+  return (d && d.headHtml) || escapeHtml(d ? d.short : id);
+}
+/** ยอดสะสมของขั้นถัดไปมากกว่าขั้นก่อนหน้า = คีย์ข้ามขั้นหรือคีย์ผิด */
+function hasOrderAnomaly(c){
+  return PROCESSES.some((p, i)=> i > 0 && (c[p]||0) > (c[PROCESSES[i-1]]||0));
+}
 
 // ฟิลด์ที่เก็บ "วันปฏิทินล้วน" (YYYY-MM-DD) — ต้อง normalize ทุกครั้งที่รับค่าจากภายนอก
 // (อย่าใส่ importedAt/createdAt/updatedAt ที่นี่ — พวกนั้นต้องคง timestamp ISO เต็มไว้)
@@ -1030,9 +1064,8 @@ function defaultState(){
   return {
     version:1,
     deviceName:'',
-    // support:null = "ยังไม่กำหนด" — เจ้าของจะไปใส่เองที่หน้าตั้งค่า (issue #17)
-    // ค่า null ทำให้ deadline ของขั้นนี้เป็น null → ไม่มีการตัดสินว่าล่าช้า จนกว่าจะตั้งค่า
-    deadlineOffsets:{ winding:10, assembly:17, support:null, inspection:24, shipping:28 },
+    // ค่าตั้งต้นมาจาก DEFAULT_PROCESSES · null = "ยังไม่กำหนด" → deadline ของขั้นนั้นเป็น null ไม่ตัดสินล่าช้า (A4)
+    deadlineOffsets: Object.fromEntries(DEFAULT_PROCESSES.map(p=>[p.id, p.defaultOffset])),
     chartPref:{ mode:'14', from:'', to:'', hidden:[] }, // เครื่องนี้เท่านั้น ไม่ส่งขึ้น Google Sheets
     orders:[],
     records:[],
@@ -1096,7 +1129,7 @@ state.deltaWip.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
 let workbookGlobal = null;
 let pendingImportItems = null;
 let pendingMerge = null;
-let currentProcess = 'winding';
+let currentProcess = PROCESSES[0];
 let lastRenderedOrderIds = [];
 let pendingFocusOrderId = null;
 
@@ -2314,10 +2347,7 @@ function buildCumSplitMap(records, orderById){
     if(r.voided) continue;
     const order = orderById[r.orderId];
     if(!order) continue;
-    if(!map[r.orderId]) map[r.orderId] = {
-      winding:{onTime:0,late:0}, assembly:{onTime:0,late:0}, support:{onTime:0,late:0},
-      inspection:{onTime:0,late:0}, shipping:{onTime:0,late:0}
-    };
+    if(!map[r.orderId]) map[r.orderId] = Object.fromEntries(PROCESSES.map(p=>[p, {onTime:0, late:0}]));
     const bucket = map[r.orderId][r.process];
     if(!bucket) continue;
     if(!dlCache[r.orderId]) dlCache[r.orderId] = computeDeadlines(order);
@@ -2329,24 +2359,19 @@ function buildCumSplitMap(records, orderById){
 }
 function computeDeadlines(order){
   const off = state.deadlineOffsets;
-  return {
-    winding: addDaysISO(order.orderDate, off.winding),
-    assembly: addDaysISO(order.orderDate, off.assembly),
-    // off.support ยังไม่ถูกตั้งค่า (null) = ยังไม่มีกำหนดวันของขั้นนี้ ต้องไม่กลายเป็น orderDate+0
-    support: off.support==null ? null : addDaysISO(order.orderDate, off.support),
-    inspection: addDaysISO(order.orderDate, off.inspection),
-    shipping: addDaysISO(order.orderDate, off.shipping)
-  };
+  // ยังไม่ตั้งค่า (null) หรือขั้นที่เพิ่งเพิ่มและยังไม่มีค่า (undefined) = ยังไม่มีกำหนดวัน
+  // ⚠️ ต้องไม่กลายเป็น orderDate+0 ไม่งั้นทุกใบจะขึ้นล่าช้าขั้นนั้นทันที (A4)
+  return Object.fromEntries(PROCESSES.map(p=>[p, off[p]==null ? null : addDaysISO(order.orderDate, off[p])]));
 }
 function computeStatus(order, cum, dl, refISO){
   const done = cum.shipping >= order.orderQty;
   if(done) return {code:'done', label:'ส่งของครบแล้ว', color:'green'};
   if(!order.orderDate) return {code:'ok', label:'ไม่มีวันที่สั่งซื้อ', color:'gray'};
-  if(dl.shipping && refISO > dl.shipping && cum.shipping < order.orderQty) return {code:'late', label:'เกินกำหนดส่งของ', color:'red'};
-  if(dl.inspection && refISO > dl.inspection && cum.inspection < order.orderQty) return {code:'late', label:'ล่าช้า Inspection', color:'red'};
-  if(dl.support && refISO > dl.support && cum.support < order.orderQty) return {code:'late', label:'ล่าช้า Support', color:'red'};
-  if(dl.assembly && refISO > dl.assembly && cum.assembly < order.orderQty) return {code:'late', label:'ล่าช้า Assembly', color:'red'};
-  if(dl.winding && refISO > dl.winding && cum.winding < order.orderQty) return {code:'late', label:'ล่าช้า Winding', color:'red'};
+  // ⚠️ A5 — รายงานขั้นปลายน้ำก่อนเสมอ จึงไล่จากขั้นท้ายสุดย้อนขึ้นไป ห้ามไล่จากต้นน้ำ
+  for(let i = PROCESSES.length - 1; i >= 0; i--){
+    const p = PROCESSES[i];
+    if(dl[p] && refISO > dl[p] && (cum[p]||0) < order.orderQty) return {code:'late', label:ptext(p, 'late'), color:'red'};
+  }
   if(dl.shipping){
     const daysLeft = daysBetween(refISO, dl.shipping);
     if(daysLeft!=null && daysLeft<=3) return {code:'soon', label:`ใกล้ครบกำหนด (เหลือ ${daysLeft} วัน)`, color:'amber'};
@@ -2908,34 +2933,25 @@ function renderWipCards(){
   const subF = dashSubName();
   const note = document.getElementById('wipScopeNote');
   if(note) note.textContent = subF ? 'นับเฉพาะ Sub-Name: ' + subF : 'นับรวมทุก Sub-Name';
-  let totalQty=0, sumW=0, sumA=0, sumSup=0, sumI=0, sumS=0, anomalyCount=0;
+  let totalQty=0, anomalyCount=0;
+  const sum = emptyCum();
   dashScopedOrders().forEach(o=>{
     totalQty += o.orderQty;
     const c = allCum[o.id] || emptyCum();
-    if(c.assembly > c.winding || c.support > c.assembly || c.inspection > c.support || c.shipping > c.inspection) anomalyCount++;
-    sumW += Math.min(c.winding, o.orderQty);
-    sumA += Math.min(c.assembly, o.orderQty);
-    sumSup += Math.min(c.support, o.orderQty);
-    sumI += Math.min(c.inspection, o.orderQty);
-    sumS += Math.min(c.shipping, o.orderQty);
+    if(hasOrderAnomaly(c)) anomalyCount++;
+    PROCESSES.forEach(p=>{ sum[p] += Math.min(c[p]||0, o.orderQty); });
   });
-  const notStarted = Math.max(0, totalQty - sumW);
-  const wipAssembly = Math.max(0, sumW - sumA);
-  const wipSupport = Math.max(0, sumA - sumSup);
-  const wipInspection = Math.max(0, sumSup - sumI);
-  const wipShipping = Math.max(0, sumI - sumS);
-  const shipped = sumS;
+  const shipped = sum.shipping;
 
+  // การ์ดค้างหน้าขั้น = ยอดขั้นก่อนหน้า − ยอดขั้นนั้น · ขั้นแรกไม่มีการ์ดค้างหน้า (อยู่ในยังไม่เริ่มผลิต)
   const cards = [
     {label:'ยอดแผนรวม (Order Qty)', value:numFmt(totalQty), unit:'pcs', accent:'blue'},
-    {label:'ยังไม่เริ่มผลิต', value:numFmt(notStarted), unit:'pcs', accent:'blue'},
-    {label:'WIP ค้างหน้า Assembly', value:numFmt(wipAssembly), unit:'pcs', accent:'amber'},
-    {label:'WIP ค้างหน้า Support', value:numFmt(wipSupport), unit:'pcs', accent:'amber'},
-    {label:'WIP ค้างหน้า Inspection', value:numFmt(wipInspection), unit:'pcs', accent:'amber'},
-    {label:'WIP รอส่งของ (เสร็จ Inspection แต่ยังไม่ส่ง)', value:numFmt(wipShipping), unit:'pcs', accent:'amber'},
+    {label:'ยังไม่เริ่มผลิต', value:numFmt(Math.max(0, totalQty - sum[PROCESSES[0]])), unit:'pcs', accent:'blue'},
+    ...PROCESSES.slice(1).map((p, i)=>({label:ptext(p, 'waitCard'),
+      value:numFmt(Math.max(0, sum[PROCESSES[i]] - sum[p])), unit:'pcs', accent:'amber'})),
     {label:'ส่งของแล้ว (Shipped)', value:numFmt(shipped), unit:`pcs (${totalQty? Math.round(shipped/totalQty*100):0}%)`, accent:'green'}
   ];
-  let html = cards.map(c=>`<div class="card accent-${c.accent}"><div class="label">${c.label}</div><div class="value">${c.value}<span class="unit">${c.unit}</span></div></div>`).join('');
+  let html = cards.map(c=>`<div class="card accent-${c.accent}"><div class="label">${escapeHtml(c.label)}</div><div class="value">${c.value}<span class="unit">${c.unit}</span></div></div>`).join('');
   if(anomalyCount>0){
     html += `<div class="card accent-red"><div class="label">ข้อมูลย้อนแย้ง</div><div class="value" style="color:var(--red)">${anomalyCount}<span class="unit">รายการ (สะสมขั้นถัดไป &gt; ขั้นก่อนหน้า)</span></div></div>`;
   }
@@ -2945,10 +2961,10 @@ function renderWipCards(){
 /** ยอดที่ค้างอยู่หน้าขั้น stage ของใบสั่งซื้อใบเดียว — ใช้สูตรเดียวกับการ์ด WIP ด้านบน
  *  (renderWipCards) แต่คิดทีละใบ เพื่อให้ตัวเลขบนการ์ดกับรายการที่กรองออกมาตรงกันเสมอ
  *  ต้องครอบ Math.min(สะสม, orderQty) เหมือนการ์ด ไม่งั้นใบที่คีย์เกิน Order Qty จะเพี้ยน
- *  stage 'notStarted' = ยังไม่เข้า winding */
+ *  stage 'notStarted' = ยังไม่เข้าขั้นแรก */
 function wipQtyAtStage(order, cum, stage){
   const capped = p => Math.min(cum[p]||0, order.orderQty);
-  if(stage === 'notStarted') return Math.max(0, order.orderQty - capped('winding'));
+  if(stage === 'notStarted') return Math.max(0, order.orderQty - capped(PROCESSES[0]));
   const prev = PREV_PROCESS[stage];
   if(!prev) return 0;
   return Math.max(0, capped(prev) - capped(stage));
@@ -2987,7 +3003,7 @@ function buildDailyTotals(startISO, endISO, subName){
     state.orders.forEach(o=>{ subOf[o.id] = o.subName; });
   }
   const dayCount = daysBetween(startISO, endISO)+1;
-  const labels = []; const data={winding:[],assembly:[],support:[],inspection:[],shipping:[]};
+  const labels = []; const data = Object.fromEntries(PROCESSES.map(p=>[p, []]));
   for(let i=0;i<dayCount;i++){
     labels.push(addDaysISO(startISO, i));
     PROCESSES.forEach(p=>data[p].push(0));
@@ -3234,7 +3250,7 @@ function renderDashTable(){
    *       และเลข No. ในไฟล์แผนของลูกค้าก็ไม่ใช่ตัวนี้ (ของเขาเริ่มนับใหม่ทุกสัปดาห์
    *       และมีเลขซ้ำกับช่องว่างปนอยู่) โปรแกรมไม่ได้เก็บเลขนั้นไว้ */
   const bodyHtml = rows.map(({o,c,st,split}, idx)=>{
-    const anomaly = c.assembly>c.winding || c.support>c.assembly || c.inspection>c.support || c.shipping>c.inspection;
+    const anomaly = hasOrderAnomaly(c);
     // อายุงาน = จำนวนวันนับจากวันสั่งถึงวันนี้ นิยามเดียวกับคอลัมน์ Aging ในใบส่งสินค้า FM-ST-07
     // ใช้ ref ตัวเดียวกับที่ computeStatus ใช้ตัดสินล่าช้า ตัวเลขบนจอจึงมาจากวันเดียวกันเสมอ
     const aging = daysBetween(o.orderDate, ref);
@@ -3247,11 +3263,7 @@ function renderDashTable(){
       <td>${numFmt(o.orderQty)}</td>
       <td>${fmtDateTH(o.orderDate)}</td>
       <td data-aging>${agingCell(aging, st.code)}</td>
-      <td>${progressCell(c.winding, split.winding, o.orderQty)}</td>
-      <td>${progressCell(c.assembly, split.assembly, o.orderQty)}</td>
-      <td>${progressCell(c.support, split.support, o.orderQty)}</td>
-      <td>${progressCell(c.inspection, split.inspection, o.orderQty)}</td>
-      <td>${progressCell(c.shipping, split.shipping, o.orderQty)}</td>
+      ${PROCESSES.map(p=>`<td>${progressCell(c[p]||0, split[p], o.orderQty)}</td>`).join('')}
       <td><span class="badge ${st.color}">${escapeHtml(st.label)}</span>${anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
     </tr>`;
   }).join('');
@@ -3259,19 +3271,18 @@ function renderDashTable(){
   document.getElementById('dashTable').innerHTML = `<thead><tr>
       <th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ ไว้ชี้กันตอนคุยหรือตอนดูกระดาษที่พิมพ์ออกมา — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>
       <th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th><th>Order Date</th><th>Aging<br>(วัน)</th>
-      <th>Winding</th><th>Assembly</th><th>Support</th><th>Inspection</th><th>ส่งของ<br>(Shipping)</th><th>สถานะ</th>
-    </tr></thead><tbody>${bodyHtml || emptyRow(14)}</tbody>`;
+      ${PROCESSES.map(p=>`<th>${processHeadHtml(p)}</th>`).join('')}<th>สถานะ</th>
+    </tr></thead><tbody>${bodyHtml || emptyRow(9 + PROCESSES.length)}</tbody>`;
 }
 
 /* ---------- Render: Data tab ---------- */
 function loadSettingsIntoForm(){
   document.getElementById('deviceName').value = state.deviceName || '';
-  document.getElementById('offW').value = state.deadlineOffsets.winding;
-  document.getElementById('offA').value = state.deadlineOffsets.assembly;
   // ยังไม่ตั้งค่า (null) ต้องโชว์เป็นช่องว่าง ไม่ใช่ 0 — 0 จะทำให้ deadline เท่ากับวันสั่งซื้อ
-  document.getElementById('offSup').value = state.deadlineOffsets.support==null ? '' : state.deadlineOffsets.support;
-  document.getElementById('offI').value = state.deadlineOffsets.inspection;
-  document.getElementById('offS').value = state.deadlineOffsets.shipping;
+  DEFAULT_PROCESSES.forEach(d=>{
+    const v = state.deadlineOffsets[d.id];
+    document.getElementById(offsetInputId(d)).value = v==null ? '' : v;
+  });
   document.getElementById('chartRange').value = state.chartPref.mode || '14';
   document.getElementById('chartFrom').value = state.chartPref.from || '';
   document.getElementById('chartTo').value = state.chartPref.to || '';
@@ -3359,14 +3370,10 @@ async function exportExcelReport(){
     return {
       'สัปดาห์': o.week, 'PO No.': o.poNo, 'P/N': o.pn, 'Sub-Name': o.subName,
       'Order Qty': o.orderQty, 'Order Date': o.orderDate,
-      'สะสม Winding': c.winding, 'สะสม Assembly': c.assembly, 'สะสม Support': c.support,
-      'สะสม Inspection': c.inspection, 'สะสม Shipping': c.shipping,
-      'WIP หน้า Assembly': Math.max(0, c.winding-c.assembly),
-      'WIP หน้า Support': Math.max(0, c.assembly-c.support),
-      'WIP หน้า Inspection': Math.max(0, c.support-c.inspection),
-      'WIP รอส่งของ': Math.max(0, c.inspection-c.shipping),
-      'Deadline Winding': dl.winding, 'Deadline Assembly': dl.assembly, 'Deadline Support': dl.support,
-      'Deadline Inspection': dl.inspection, 'กำหนดส่งของ': dl.shipping
+      // ⚠️ ลำดับคอลัมน์ต้องคงที่ — สะสมครบทุกขั้น แล้ว WIP แล้ว Deadline (ไฟล์ถูกส่งต่อไปใช้ข้างนอก)
+      ...Object.fromEntries(PROCESSES.map(p=>[ptext(p, 'cumExport'), c[p]||0])),
+      ...Object.fromEntries(PROCESSES.slice(1).map((p, i)=>[ptext(p, 'waitExport'), Math.max(0, (c[PROCESSES[i]]||0) - (c[p]||0))])),
+      ...Object.fromEntries(PROCESSES.map(p=>[ptext(p, 'deadlineExport'), dl[p]]))
     };
   });
   const recordRows = state.records.filter(r=>!r.voided).sort((a,b)=>(a.date||'').localeCompare(b.date)).map(r=>{
@@ -4392,15 +4399,45 @@ document.getElementById('btnRecalcSubName').addEventListener('click', ()=>{
   toast(`เปลี่ยน Sub-Name แล้ว ${numFmt(changes.length)} ใบ`);
 });
 
-PROCESSES.forEach(p=>{
-  document.getElementById('procBtn-'+p).addEventListener('click', ()=>{
-    currentProcess = p;
-    PROCESSES.forEach(x=>{
-      document.getElementById('procBtn-'+x).classList.toggle('primary', x===p);
-    });
+/** ส่วนของหน้าจอที่มีหนึ่งช่องต่อหนึ่งขั้น — วาดจาก PROCESSES ทั้งหมด ไม่มี HTML ตายตัวของขั้นไหนเหลือ
+ *  หัวจอ · ปุ่มเลือกขั้นหน้าคีย์ยอด · ตัวกรองค้างอยู่ที่ขั้น · ตัวกรองขั้นในตารางแก้ไข · ช่องวันกำหนดส่ง
+ *
+ *  ⚠️ เดิมปุ่มเป็น HTML ตายตัวแต่ผูกด้วย PROCESSES.forEach — เพิ่มขั้นโดยลืมเพิ่มปุ่ม
+ *     getElementById คืน null แล้ว throw ตอนโหลด โค้ดส่วน Init ไม่ถูกรัน แอปพังทั้งหน้า
+ *  ⚠️ ต้องถูกเรียกก่อน loadSettingsIntoForm เพราะช่องวันกำหนดส่งถูกสร้างที่นี่ */
+function renderProcessControls(){
+  document.getElementById('processFlow').textContent = 'Thai Union Electronics — '
+    + PROCESSES.filter(p=>p!=='shipping').map(p=>PROCESS_LABELS[p]).join(' → ');
+
+  const btns = document.getElementById('procButtons');
+  btns.innerHTML = PROCESSES.map(p=>{
+    const d = PROCESS_BY_ID[p];
+    return `<button class="btn${p===currentProcess?' primary':''}" id="procBtn-${p}" data-proc="${p}">${escapeHtml(d.icon + ' ' + d.label)}</button>`;
+  }).join('');
+  btns.querySelectorAll('button').forEach(b=> b.addEventListener('click', ()=>{
+    currentProcess = b.dataset.proc;
+    btns.querySelectorAll('button').forEach(x=> x.classList.toggle('primary', x===b));
     renderEntryTable();
-  });
-});
+  }));
+
+  const refill = (id, html) => {
+    const sel = document.getElementById(id);
+    const keep = sel.value;
+    sel.innerHTML = html;
+    sel.value = keep;
+    if(sel.value !== keep) sel.value = '';
+  };
+  refill('dashWipFilter', '<option value="">ทั้งหมด</option><option value="notStarted">ยังไม่เริ่มผลิต</option>'
+    + PROCESSES.slice(1).map(p=>`<option value="${p}">${escapeHtml(ptext(p, 'wait'))}</option>`).join(''));
+  refill('recFilterProcess', '<option value="">ทั้งหมด</option>'
+    + PROCESSES.map(p=>`<option value="${p}">${escapeHtml(PROCESS_LABELS[p])}</option>`).join(''));
+
+  document.getElementById('offsetFields').innerHTML = PROCESSES.map(p=>{
+    const d = PROCESS_BY_ID[p];
+    return `<div class="field"><label>${escapeHtml(ptext(p, 'offset'))}</label>`
+      + `<input type="number" id="${offsetInputId(d)}" min="0" style="width:90px"${d.defaultOffset===null ? ' placeholder="ยังไม่กำหนด"' : ''}></div>`;
+  }).join('');
+}
 document.getElementById('entryDate').addEventListener('change', renderEntryTable);
 document.getElementById('entrySearch').addEventListener('input', renderEntryTable);
 document.getElementById('entryWeekFilter').addEventListener('change', renderEntryTable);
@@ -4531,13 +4568,17 @@ window.addEventListener('resize', ()=>{
 
 document.getElementById('btnSaveSettings').addEventListener('click', ()=>{
   state.deviceName = document.getElementById('deviceName').value.trim();
-  state.deadlineOffsets = {
-    winding: Number(document.getElementById('offW').value)||0,
-    assembly: Number(document.getElementById('offA').value)||0,
-    support: document.getElementById('offSup').value.trim()==='' ? null : Number(document.getElementById('offSup').value)||0,
-    inspection: Number(document.getElementById('offI').value)||0,
-    shipping: Number(document.getElementById('offS').value)||0
-  };
+  /* ⚠️ เริ่มจากค่าเดิมทั้งก้อน ไม่ใช่สร้างใหม่จากช่องบนจอ
+   *    ค่าวันของขั้นที่เครื่องนี้ไม่มีช่องกรอก (เช่นขั้นที่เครื่องอื่นเพิ่มไว้) ต้องไม่หายตอนกดบันทึก
+   *    เดิมสร้างใหม่จากห้าช่อง key อื่นจึงหายแล้วถูกดันขึ้นเซิร์ฟเวอร์ทับของทุกเครื่อง
+   * ช่องว่าง: ขั้นที่ตั้งต้นว่า "ยังไม่กำหนด" เก็บเป็น null · ขั้นอื่นเก็บเป็น 0 ตามพฤติกรรมเดิม */
+  const offsets = Object.assign({}, state.deadlineOffsets);
+  PROCESSES.forEach(p=>{
+    const d = PROCESS_BY_ID[p];
+    const raw = document.getElementById(offsetInputId(d)).value.trim();
+    offsets[p] = raw==='' && d.defaultOffset===null ? null : (Number(raw)||0);
+  });
+  state.deadlineOffsets = offsets;
   saveState();
   toast('บันทึกการตั้งค่าแล้ว');
   renderWipCards();
@@ -4809,8 +4850,7 @@ checkAppUpdate();
 /* ---------- Init ---------- */
 document.getElementById('entryDate').value = todayISO();
 document.getElementById('dnDate').value = todayISO();
-document.getElementById('recFilterProcess').innerHTML =
-  '<option value="">ทั้งหมด</option>' + PROCESSES.map(p=>`<option value="${p}">${escapeHtml(PROCESS_LABELS[p])}</option>`).join('');
+renderProcessControls();
 loadSettingsIntoForm();
 renderAll();
 
