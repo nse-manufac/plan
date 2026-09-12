@@ -210,11 +210,13 @@ async function deliveryFormWorkbook(units = ['TUE-U', 'TUE-H'], opts = {}) {
         row.getCell(5).value = new Date('2020-01-01T00:00:00Z');   // ของสัปดาห์ก่อนที่ค้างอยู่
         row.getCell(5).numFmt = 'dd/mm/yyyy';
       }
-      // ⚠️ ฟอร์มจริงเก็บสูตรนี้แบบ shared — ช่องแรกถือสูตร ช่องที่เหลืออ้างกลับไปหา (ดู restoreQtyFormula)
+      // ⚠️ ฟอร์มจริงเก็บสูตรนี้แบบ shared เป็นช่วงละ 32 แถว (ช่องแรกของช่วงอยู่แถว 10 · 42 · 74)
+      //    ช่องแรกถือสูตร ช่องที่เหลืออ้างกลับไปหา (ดู restoreQtyFormula)
       const until = opts.pcsUntil ?? last;
-      if (n <= until) row.getCell(C.pcs).value = n === 10
-        ? { formula: pcs(10), result: 0, shareType: 'shared', ref: `${A(C.pcs)}10:${A(C.pcs)}${until}` }
-        : { sharedFormula: `${A(C.pcs)}10`, result: 0 };
+      const blockStart = 10 + Math.floor((n - 10) / 32) * 32;
+      if (n <= until) row.getCell(C.pcs).value = n === blockStart
+        ? { formula: pcs(n), result: 0, shareType: 'shared', ref: `${A(C.pcs)}${n}:${A(C.pcs)}${Math.min(n + 31, until)}` }
+        : { sharedFormula: `${A(C.pcs)}${blockStart}`, result: 0 };
       row.getCell(C.fail).value = { formula: `G${n}-${A(C.pcs)}${n}`, result: 0 };
     }
     const sum = c => ({ formula: `SUM(${A(c)}10:${A(c)}${last})`, result: 0 });

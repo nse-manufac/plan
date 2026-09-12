@@ -3694,12 +3694,14 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
     if(!rowEl) continue;
     ['pn','po','orderDate','orderQty','wip','shipQty','perBox','boxes','remainder','remark']
       .forEach(k => clearCell(doc, rowEl, col[k]));
-    // ช่องจำนวนต้องกลับเป็นสูตร ถ้าเป็นตัวเลขนิ่งที่ค้างมา หรือเป็นช่องที่อ้างสูตร shared <f t="shared" si="1"/>
-    // ซึ่งช่องแรกของช่วงอาจถูกเราเขียนทับไปแล้วข้างบน (ดู restoreQtyFormula)
+    // ช่องจำนวนต้องกลับเป็นสูตรธรรมดา ถ้าเป็นตัวเลขนิ่งที่ค้างมา หรือยังเป็นสูตร shared (ดู restoreQtyFormula)
+    // ⚠️ รวมช่องแรกของช่วง shared ที่เรายังไม่ได้แตะด้วย — ช่วง (ref) ของมันครอบช่องถัดไปที่ถูกแปลงเป็นสูตรธรรมดาแล้ว
+    //    ปล่อยไว้ไฟล์จะมีช่วง shared ที่ไม่ตรงกับของจริง ซึ่ง Excel อาจฟ้องว่าไฟล์เสีย
     // ช่องที่ฟอร์มไม่มีสูตรมาแต่แรกปล่อยว่าง — เติมให้ทุกแถวไม่ได้ กระดาษจะขึ้น 0 เต็มคอลัมน์
     const pc = Array.from(rowEl.children).find(x => x.getAttribute('r') === col.pcs + n);
     const pf = pc && pc.getElementsByTagNameNS(XL_NS, 'f')[0];
-    if(pc && pc.firstChild && !(pf && pf.textContent)) restoreQtyFormula(doc, rowEl, col, null);
+    const keep = pf && pf.textContent && pf.getAttribute('t') !== 'shared';
+    if(pc && pc.firstChild && !keep) restoreQtyFormula(doc, rowEl, col, null);
   }
 
   setDataMerges(doc, merges, L.first, L.last);
