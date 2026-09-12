@@ -156,6 +156,32 @@ test('กราฟ — คำอธิบายสีมีขั้นที่
   await expect(page.locator('#chartLegend [data-proc="coating"]')).toContainText('Coating ทดสอบ');
 });
 
+// ── ขั้นก่อนหน้า กับ ขั้นแรก ต้องไม่ถูกใช้แทนกัน ─────────────────────
+//
+// ตอนมีห้าขั้นตายตัว สองอย่างนี้เขียนเป็นคู่ชื่อขั้นตรง ๆ · พอเปลี่ยนเป็นวนรายการ
+// สับสนระหว่าง "ขั้นก่อนหน้า" (PROCESSES[i-1]) กับ "ขั้นแรก" (PROCESSES[0]) ได้ง่ายที่สุด
+// และเทสเดิมไม่มีข้อมูลที่ทำให้สองอย่างนี้ให้ผลต่างกัน
+
+test('ผิดลำดับ — ต้องเทียบกับขั้นก่อนหน้า ไม่ใช่ขั้นแรก', async ({ page }) => {
+  // Winding 1,000 · Assembly 600 · Support 800 → Support เกิน Assembly ทั้งที่ยังไม่เกิน Winding
+  await open(page, { extra: false, records: [rec('r1', 'winding', 1000), rec('r2', 'assembly', 600), rec('r3', 'support', 800)] });
+  await tab(page, 'dashboard');
+  await expect(page.locator('#dashTable tbody tr').first(), 'ป้ายในแถว').toContainText('ผิดลำดับ');
+  await expect(page.locator('#wipCards'), 'การ์ดสรุป').toContainText('ข้อมูลย้อนแย้ง');
+});
+
+test('ตัวกรองยังไม่เริ่มผลิต — ต้องดูจากขั้นแรก ไม่ใช่ขั้นที่สอง', async ({ page }) => {
+  // Winding ครบ 1,000 แล้ว แต่ Assembly ยังไม่เริ่ม → ใบนี้เริ่มผลิตแล้ว ต้องไม่อยู่ในกลุ่มยังไม่เริ่ม
+  await open(page, { extra: false, records: [rec('r1', 'winding', 1000)] });
+  await tab(page, 'dashboard');
+  await page.selectOption('#dashWipFilter', 'notStarted');
+  await page.waitForTimeout(200);
+  await expect(page.locator('#dashTable tbody')).not.toContainText('PO-1');
+  await page.selectOption('#dashWipFilter', 'assembly');
+  await page.waitForTimeout(200);
+  await expect(page.locator('#dashTable tbody'), 'ต้องไปอยู่ที่ค้างหน้า Assembly แทน').toContainText('PO-1');
+});
+
 // ── ห้าขั้นเดิม — หน้าตาต้องเหมือนเดิมทุกตัวอักษร ─────────────────────
 
 test('ห้าขั้นเดิม — ปุ่ม ตัวกรอง ช่องตั้งค่า หัวจอ ข้อความเดิมทั้งหมด', async ({ page }) => {
