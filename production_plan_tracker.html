@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-12.3">
+<meta name="app-version" content="2026-09-13.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -145,6 +145,8 @@
     background:var(--red-light);border:1px solid var(--red);color:var(--red);border-radius:10px;
     padding:12px 16px;margin-bottom:16px;font-weight:700;}
   .process-warn[hidden]{display:none;}
+  /* .row กับ .btn ตั้ง display เอง ทำให้ attribute hidden ไม่มีผล — ต้องบังคับในแผงนี้ */
+  #processAdminPanel [hidden]{display:none !important;}
   input.warn{border-color:var(--amber);background:var(--amber-light);}
   input.bad{border-color:var(--red);background:var(--red-light);}
   .muted{color:var(--text-dim);}
@@ -597,6 +599,29 @@
     </div>
   </div>
 
+  <div class="panel" id="processAdminPanel">
+    <h2>ขั้นตอนการผลิต</h2>
+    <div class="desc">เพิ่ม · เปลี่ยนชื่อ · ซ่อนขั้นตอนได้จากที่นี่ แล้วทุกเครื่องเปลี่ยนตามหลังซิงค์ — ต้องเชื่อมต่อ Google Sheets และใส่รหัสหัวหน้า
+      · Inspection กับ ส่งของ ล็อกไว้ท้ายสุด · ลบขั้นไม่ได้ ซ่อนได้อย่างเดียว · ขั้นที่ซ่อนไม่ถูกนับยอด แต่ยอดที่คีย์ไว้ยังอยู่ครบ</div>
+    <div class="table-wrap"><table id="processTable"></table></div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn primary" id="btnProcessUnlock">🔒 แก้ไขรายการขั้น</button>
+      <button class="btn" id="btnProcessChangePin" hidden>เปลี่ยนรหัสหัวหน้า</button>
+      <button class="btn" id="btnProcessLock" hidden>🔒 ล็อก</button>
+    </div>
+    <div class="row" id="processPinRow" style="margin-top:10px;" hidden>
+      <div class="field"><label id="processPinLabel">รหัสหัวหน้า</label><input type="password" id="processPin" autocomplete="off" style="width:160px"></div>
+      <div class="field" id="processPin2Field" hidden><label>ใส่รหัสอีกครั้ง</label><input type="password" id="processPin2" autocomplete="off" style="width:160px"></div>
+      <div class="field"><label>&nbsp;</label><button class="btn primary" id="btnProcessPinOk">ตกลง</button></div>
+    </div>
+    <div class="row" id="processAddRow" style="margin-top:10px;" hidden>
+      <div class="field"><label>ชื่อขั้นใหม่</label><input type="text" id="newProcLabel" maxlength="40" placeholder="ขึ้นบนปุ่มเลือกขั้น"></div>
+      <div class="field"><label>ชื่อสั้น</label><input type="text" id="newProcShort" maxlength="20" placeholder="หัวตาราง · ว่างไว้ใช้ชื่อขั้น"></div>
+      <div class="field"><label>ตำแหน่ง</label><select id="newProcAfter"></select></div>
+      <div class="field"><label>&nbsp;</label><button class="btn success" id="btnProcessAdd">เพิ่มขั้น</button></div>
+    </div>
+  </div>
+
   <div class="panel">
     <h2>เชื่อมต่อ Google Sheets (ใช้ร่วมกันหลายเครื่องแบบไม่ต้องส่งไฟล์)</h2>
     <div class="desc">พนักงานกรอกยอดที่เครื่องหน้างาน แล้วเปิดดู Dashboard จากเครื่องไหนก็เห็นข้อมูลตรงกัน — ซิงค์อัตโนมัติทุก 20 วินาที เน็ตหลุดก็ยังกรอกต่อได้ ระบบส่งขึ้นให้เองเมื่อเน็ตกลับมา (วิธีตั้งค่าดู <span class="linklike" id="btnGsGuide">คู่มือติดตั้ง</span>)</div>
@@ -938,8 +963,9 @@ const SOURCE_SHIP_IMPORT = 'นำเข้าจากใบส่งงาน'
 const SOURCE_DELIVERY = 'จากใบส่งสินค้า';
 
 /* ---------- รายการขั้นการผลิต — มีที่เดียวคือ DEFAULT_PROCESSES (INVARIANTS A3) ----------
- * เจ้าของสั่ง 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม · ใบนี้ย้ายทุกจุดมาอ่านจากรายการเดียว
- * หน้าจัดการขั้นกับการซิงค์รายการมาในใบถัดไป — ตอนนี้เพิ่มขั้น = เพิ่มหนึ่งแถวข้างล่าง แล้วทุกหน้าตามเอง
+ * เจ้าของสั่ง 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม
+ * ข้างล่างคือห้าขั้นตั้งต้น · ขั้นที่เพิ่ม/เปลี่ยนชื่อ/ซ่อนจากหน้าจัดการขั้น ซิงค์มาเก็บใน state.processes
+ * แล้วรวมกับห้าขั้นนี้ใน composeProcesses() — ทุกจุดในโปรแกรมอ่านผลรวมนั้น ไม่ได้อ่านรายการนี้ตรง ๆ
  *
  *   id             ค่าที่เก็บใน record.process · ห้ามเปลี่ยนเด็ดขาด (A2) — ยอดเก่าจะหลุดจากขั้นนั้นทั้งหมด
  *   label          ชื่อเต็ม · ปุ่มเลือกขั้น หัวคอลัมน์สะสม กราฟ
@@ -963,11 +989,69 @@ const DEFAULT_PROCESSES = [
     text:{late:'เกินกำหนดส่งของ', wait:'รอส่งของ', waitCard:'WIP รอส่งของ (เสร็จ Inspection แต่ยังไม่ส่ง)',
           waitExport:'WIP รอส่งของ', deadlineExport:'กำหนดส่งของ', offset:'กำหนดส่งของ (+วัน)'}}
 ];
-const PROCESSES = DEFAULT_PROCESSES.map(p=>p.id);
-const PROCESS_BY_ID = Object.fromEntries(DEFAULT_PROCESSES.map(p=>[p.id, p]));
-const PROCESS_LABELS = Object.fromEntries(DEFAULT_PROCESSES.map(p=>[p.id, p.label]));
-const PROCESS_COLORS = Object.fromEntries(DEFAULT_PROCESSES.map(p=>[p.id, p.color]));
-const PREV_PROCESS = Object.fromEntries(PROCESSES.map((p, i)=>[p, i ? PROCESSES[i-1] : null]));
+/* ⚠️ อ็อบเจกต์ข้างล่างเป็นตัวเดิมตลอดอายุหน้า — applyProcessList() ล้างแล้วเติมค่าลงตัวเดิม
+ *    ห้ามเปลี่ยนเป็น let แล้วสร้างใหม่ ฟังก์ชันทั้งแอปอ้างตัวแปรพวกนี้ไว้ตรง ๆ
+ *
+ *   PROCESS_LIST   ทุกขั้นเรียงตามสายการผลิต รวมขั้นที่ซ่อน — หน้าจัดการขั้นใช้
+ *   PROCESSES      id ของขั้นที่แสดงอยู่ — ตัวคิดยอด ตาราง การ์ด ปุ่ม ใช้ตัวนี้ ขั้นที่ซ่อนจึงไม่ถูกนับ
+ *   PROCESS_BY_ID  ทุกขั้นที่รู้จักรวมขั้นที่ซ่อน — ตัวเตือนขั้นแปลกหน้าใช้ตัวนี้ ขั้นที่ซ่อนจึงไม่ถูกเตือน */
+const PROCESS_LIST = [];
+const PROCESSES = [];
+const PROCESS_BY_ID = {};
+const PROCESS_LABELS = {};
+const PROCESS_COLORS = {};
+const PREV_PROCESS = {};
+const LOCKED_PROCESS_IDS = ['inspection', 'shipping'];
+const DEFAULT_BY_ID = Object.fromEntries(DEFAULT_PROCESSES.map(p=>[p.id, p]));
+/* สีของขั้นที่เพิ่มจากหน้าจัดการขั้น — ไม่ซ้ำสีของห้าขั้นตั้งต้น */
+const PROCESS_PALETTE = ['#be185d', '#0d9488', '#9333ea', '#ca8a04', '#4f46e5', '#dc2626', '#059669', '#ea580c'];
+const PROCESS_AUDIT_KEYS = ['addedBy', 'addedAt', 'updatedBy', 'updatedAt'];
+
+/** รูปของรายการขั้นที่รับได้ — กฎเดียวกับ processListError ใน google-apps-script.gs
+ *  (ยกเว้นห้ามลบขั้น ซึ่งต้องเทียบกับของเดิมบนเซิร์ฟเวอร์ ฝั่งนั้นตรวจให้) */
+function validProcessList(list){
+  if(!Array.isArray(list) || !list.length) return false;
+  const ids = list.map(p=>p && p.id);
+  if(new Set(ids).size !== ids.length) return false;
+  const ok = list.every(p=> p && typeof p.id === 'string' && /^[a-z][a-z0-9_]{1,23}$/.test(p.id)
+    && typeof p.label === 'string' && p.label.trim() && p.label.length <= 40);
+  return ok && ids.slice(-LOCKED_PROCESS_IDS.length).join(',') === LOCKED_PROCESS_IDS.join(',');
+}
+
+/** รวมรายการขั้นที่ซิงค์มา (null = ยังไม่เคยมีใครแก้) เข้ากับห้าขั้นตั้งต้น — คืนรายการเต็มรวมขั้นที่ซ่อน
+ *  ⚠️ ขั้นตั้งต้นเอาคำเฉพาะ (headHtml · text · offsetInputId · ไอคอน · สี) จากโค้ดเสมอ ที่ซิงค์มาเปลี่ยนได้แค่ชื่อกับซ่อน
+ *  ⚠️ inspection กับ shipping ล็อก — เปลี่ยนชื่อหรือซ่อนไม่ได้ แม้ข้อมูลที่ซิงค์มาจะบอกให้ทำ */
+function composeProcesses(stored){
+  if(!validProcessList(stored)) return DEFAULT_PROCESSES.map(d=>Object.assign({}, d, {hidden:false}));
+  const audit = s => Object.fromEntries(PROCESS_AUDIT_KEYS.filter(k=>s[k]).map(k=>[k, s[k]]));
+  const out = stored.map((s, i)=>{
+    const base = DEFAULT_BY_ID[s.id];
+    if(base && LOCKED_PROCESS_IDS.includes(s.id)) return Object.assign({}, base, {hidden:false});
+    if(base) return Object.assign({}, base, {label:s.label, short:s.short || base.short, hidden:!!s.hidden}, audit(s));
+    return Object.assign({id:s.id, label:s.label, short:s.short || s.label, icon:s.icon || '🔹',
+      color:s.color || PROCESS_PALETTE[i % PROCESS_PALETTE.length], defaultOffset:null, hidden:!!s.hidden}, audit(s));
+  });
+  // ขั้นตั้งต้นที่หายจากรายการ (เซิร์ฟเวอร์ห้ามลบ จึงไม่ควรเกิด) ใส่คืนก่อน inspection — กันยอดของขั้นนั้นหลุด
+  DEFAULT_PROCESSES.forEach(d=>{
+    if(!out.some(p=>p.id===d.id)) out.splice(out.findIndex(p=>p.id==='inspection'), 0, Object.assign({}, d, {hidden:false}));
+  });
+  return out;
+}
+
+function applyProcessList(list){
+  PROCESS_LIST.length = 0;
+  PROCESSES.length = 0;
+  [PROCESS_BY_ID, PROCESS_LABELS, PROCESS_COLORS, PREV_PROCESS].forEach(o=>Object.keys(o).forEach(k=>{ delete o[k]; }));
+  list.forEach(p=>{
+    PROCESS_LIST.push(p);
+    PROCESS_BY_ID[p.id] = p;
+    PROCESS_LABELS[p.id] = p.label;
+    PROCESS_COLORS[p.id] = p.color;
+    if(!p.hidden) PROCESSES.push(p.id);
+  });
+  PROCESSES.forEach((p, i)=>{ PREV_PROCESS[p] = i ? PROCESSES[i-1] : null; });
+}
+applyProcessList(composeProcesses(null));
 function emptyCum(){ return Object.fromEntries(PROCESSES.map(p=>[p, 0])); }
 const offsetInputId = d => d.offsetInputId || ('off-' + d.id);
 
@@ -1066,6 +1150,8 @@ function defaultState(){
     deviceName:'',
     // ค่าตั้งต้นมาจาก DEFAULT_PROCESSES · null = "ยังไม่กำหนด" → deadline ของขั้นนั้นเป็น null ไม่ตัดสินล่าช้า (A4)
     deadlineOffsets: Object.fromEntries(DEFAULT_PROCESSES.map(p=>[p.id, p.defaultOffset])),
+    // รายการขั้นที่ซิงค์มาจากหน้าจัดการขั้นครั้งล่าสุด · null = ใช้ห้าขั้นตั้งต้น (ดู composeProcesses)
+    processes: null,
     chartPref:{ mode:'14', from:'', to:'', hidden:[] }, // เครื่องนี้เท่านั้น ไม่ส่งขึ้น Google Sheets
     orders:[],
     records:[],
@@ -1082,6 +1168,7 @@ function loadState(){
     const base = defaultState();
     return Object.assign(base, parsed, {
       deadlineOffsets: Object.assign({}, base.deadlineOffsets, parsed.deadlineOffsets||{}),
+      processes: validProcessList(parsed.processes) ? parsed.processes : null,
       chartPref: Object.assign({}, base.chartPref, parsed.chartPref||{}),
       orders: Array.isArray(parsed.orders)? parsed.orders : [],
       records: Array.isArray(parsed.records)? parsed.records : [],
@@ -1107,6 +1194,8 @@ function saveState(){
 }
 
 let state = loadState();
+// รายการขั้นที่ได้มาครั้งล่าสุดต้องใช้ตั้งแต่ก่อนวาดจอครั้งแรก — เปิดแบบออฟไลน์ก็ยังได้ขั้นที่เพิ่มไว้
+applyProcessList(composeProcesses(state.processes));
 // Orders/records saved before this sync feature existed (or never successfully pushed) have
 // no _dirty flag at all — treat that as "needs push" so connecting Sheets for the first time
 // uploads everything already sitting on this machine. Items that synced successfully carry an
@@ -1330,16 +1419,20 @@ async function doSync(silent = true){
     const rr = mergeRowsInto(state.records, pulledRecords.rows||[], RECORD_DATE_FIELDS);
     syncCfg.lastPullRecords = pulledRecords.serverTime;
 
+    let processesChanged = false;
     try{
       const ds = await gsApi('pullSettings', {});
       if(ds.deadlineOffsets) state.deadlineOffsets = Object.assign({}, state.deadlineOffsets, ds.deadlineOffsets);
+      // รายการขั้นที่เครื่องอื่นแก้ไว้ — ปุ่มกับคอลัมน์ต้องเปลี่ยนตามทันที ไม่ต้องรอโหลดหน้าใหม่
+      processAdminInfo = ds.processAdmin || null;
+      processesChanged = adoptProcessList(ds.processes);
     }catch(e){ /* เซิร์ฟเวอร์เวอร์ชันเก่ายังไม่มีคำสั่งนี้ — ไม่ใช่ปัญหาใหญ่ ข้ามไป */ }
 
     saveState(); saveSyncCfg();
     syncCfg.state = 'ok'; syncCfg.lastOkAt = new Date().toISOString();
     renderSyncBadge();
     const pulledCount = ro.added+ro.updated+rr.added+rr.updated+rd.added+rd.updated+rw.added+rw.updated;
-    if(pulledCount > 0) renderAll();
+    if(pulledCount > 0 || processesChanged) renderAll();
     if(!silent) toast(`ซิงค์แล้ว · รับมา ${pulledCount}`);
   }catch(e){
     syncCfg.state = 'error'; syncCfg.error = e.message;
@@ -3158,7 +3251,7 @@ function renderChart(){
       const barH = (val/maxVal)*plotH;
       const x = gx + offsetIdx*(barW+gap) - barW/2;
       const y = padT+plotH-barH;
-      bars += `<rect data-proc="${key}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${color}" rx="1.5"><title>${when} ${PROCESS_LABELS[key]}: ${numFmt(val)}</title></rect>`;
+      bars += `<rect data-proc="${key}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${color}" rx="1.5"><title>${when} ${escapeHtml(PROCESS_LABELS[key])}: ${numFmt(val)}</title></rect>`;
     });
     if(i % labelStep === 0){
       bars += `<text x="${gx.toFixed(1)}" y="${h-8}" font-size="10" text-anchor="middle" fill="#6b7280">${lab.slice(5)}</text>`;
@@ -3278,11 +3371,7 @@ function renderDashTable(){
 /* ---------- Render: Data tab ---------- */
 function loadSettingsIntoForm(){
   document.getElementById('deviceName').value = state.deviceName || '';
-  // ยังไม่ตั้งค่า (null) ต้องโชว์เป็นช่องว่าง ไม่ใช่ 0 — 0 จะทำให้ deadline เท่ากับวันสั่งซื้อ
-  DEFAULT_PROCESSES.forEach(d=>{
-    const v = state.deadlineOffsets[d.id];
-    document.getElementById(offsetInputId(d)).value = v==null ? '' : v;
-  });
+  fillOffsetInputs();
   document.getElementById('chartRange').value = state.chartPref.mode || '14';
   document.getElementById('chartFrom').value = state.chartPref.from || '';
   document.getElementById('chartTo').value = state.chartPref.to || '';
@@ -4212,7 +4301,8 @@ async function weekFromTemplate(zip, map){
  *    การ์ด WIP ตาราง กราฟ บนเครื่องนั้นจึงต่ำกว่าเครื่องอื่นโดยไม่มีอะไรฟ้อง — ต้องเตือนให้เห็น
  *    ห้ามแก้ด้วยการ throw ในตัวคิดยอด เพราะมันวิ่งทุกครั้งที่วาดจอ throw = หน้าขาวทั้งแอป */
 function unknownProcessCounts(records){
-  const known = new Set(PROCESSES);
+  // ขั้นที่ซ่อนก็นับว่ารู้จัก — ยอดของมันไม่ถูกนับโดยตั้งใจ ไม่ใช่ขั้นแปลกหน้า
+  const known = new Set(Object.keys(PROCESS_BY_ID));
   const counts = {};
   for(const r of records){
     if(r.voided || known.has(r.process)) continue;
@@ -4240,6 +4330,7 @@ function renderProcessWarning(){
 /* ---------- Orchestration ---------- */
 function renderAll(){
   renderProcessWarning();
+  renderProcessAdmin();
   renderDashFilterOptions();
   renderImportHistory();
   renderOrderVoidTable();
@@ -4406,6 +4497,8 @@ document.getElementById('btnRecalcSubName').addEventListener('click', ()=>{
  *     getElementById คืน null แล้ว throw ตอนโหลด โค้ดส่วน Init ไม่ถูกรัน แอปพังทั้งหน้า
  *  ⚠️ ต้องถูกเรียกก่อน loadSettingsIntoForm เพราะช่องวันกำหนดส่งถูกสร้างที่นี่ */
 function renderProcessControls(){
+  // ขั้นที่กำลังคีย์อยู่ถูกซ่อนจากเครื่องอื่น — กลับไปขั้นแรก ไม่งั้นหน้าคีย์ยอดไม่มีปุ่มไหนถูกเลือก
+  if(!PROCESSES.includes(currentProcess)) currentProcess = PROCESSES[0];
   document.getElementById('processFlow').textContent = 'Thai Union Electronics — '
     + PROCESSES.filter(p=>p!=='shipping').map(p=>PROCESS_LABELS[p]).join(' → ');
 
@@ -4438,6 +4531,227 @@ function renderProcessControls(){
       + `<input type="number" id="${offsetInputId(d)}" min="0" style="width:90px"${d.defaultOffset===null ? ' placeholder="ยังไม่กำหนด"' : ''}></div>`;
   }).join('');
 }
+/** ค่าในช่องวันกำหนดส่ง — ยังไม่ตั้งค่า (null) ต้องโชว์เป็นช่องว่าง ไม่ใช่ 0 (0 = deadline เท่ากับวันสั่งซื้อ) */
+function fillOffsetInputs(){
+  PROCESSES.forEach(p=>{
+    const el = document.getElementById(offsetInputId(PROCESS_BY_ID[p]));
+    const v = state.deadlineOffsets[p];
+    if(el) el.value = v==null ? '' : v;
+  });
+}
+
+/* ---------- จัดการขั้นการผลิต (หน้าข้อมูล & แชร์) ---------- */
+/* เจ้าของสั่ง 12 ก.ย. 2026 · ข้อตกลง: เพิ่ม · เปลี่ยนชื่อ · ซ่อน เท่านั้น · Inspection กับ ส่งของ ล็อก
+ * ลบขั้นไม่ได้ · ต้องต่อ Google Sheets · ต้องใส่รหัสหัวหน้า
+ *
+ * ⚠️ บันทึกขึ้นเซิร์ฟเวอร์ก่อน สำเร็จแล้วค่อยเปลี่ยนในเครื่อง — ห้ามกลับลำดับ
+ *    ถ้าเปลี่ยนในเครื่องก่อนแล้วส่งไม่ผ่าน (เน็ตหลุด หรือเซิร์ฟเวอร์ปฏิเสธเพราะเครื่องอื่นเพิ่มขั้นไปก่อน)
+ *    เครื่องนี้จะคีย์ยอดลงขั้นที่เครื่องอื่นไม่รู้จัก แล้วยอดนั้นหายจากทุกผลรวมของเครื่องอื่น
+ * ⚠️ รหัสหัวหน้าเป็นรั้วกันกดพลาด ไม่ใช่ความปลอดภัยจริง — ค่าที่เข้ารหัสกับ salt อยู่ในข้อมูลที่ทุกเครื่องดึงได้
+ *    ไม่เก็บรหัสจริงไว้ที่ไหนเลย ทั้งในเครื่องและบนเซิร์ฟเวอร์ */
+const PROCESS_UNLOCK_MS = 10 * 60 * 1000;
+let processAdminInfo = null;       // {hash, salt, setBy, setAt} จากเซิร์ฟเวอร์ · null = ยังไม่เคยตั้งรหัส
+let processUnlockedUntil = 0;
+let processPinMode = '';           // set · verify · change
+let processPinVerified = false;    // ใส่รหัสเดิมผ่านแล้ว จึงตั้งรหัสใหม่ทับได้
+const processUnlocked = () => Date.now() < processUnlockedUntil;
+
+function randomHex(bytes){
+  const a = new Uint8Array(bytes);
+  crypto.getRandomValues(a);
+  return Array.from(a, b=>b.toString(16).padStart(2, '0')).join('');
+}
+/** ⚠️ crypto.subtle มีเฉพาะหน้าที่เปิดผ่าน https หรือ localhost — เปิดไฟล์จากเครื่องตรง ๆ ต้องบอกคนใช้ ไม่ใช่เงียบ */
+async function sha256Hex(text){
+  if(!(window.crypto && crypto.subtle)) throw new Error('เบราว์เซอร์ตรวจรหัสไม่ได้ — เปิดโปรแกรมผ่านลิงก์เว็บ (https) แทนการเปิดไฟล์ในเครื่อง');
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf), b=>b.toString(16).padStart(2, '0')).join('');
+}
+
+/** รับรายการขั้นใหม่มาใช้ — คืน true ถ้าเปลี่ยนจริง · รูปผิดไม่รับ คงรายการเดิมไว้ */
+function adoptProcessList(list){
+  if(!validProcessList(list)) return false;
+  if(JSON.stringify(list) === JSON.stringify(state.processes)) return false;
+  state.processes = list;
+  applyProcessList(composeProcesses(list));
+  renderProcessControls();
+  fillOffsetInputs();
+  return true;
+}
+
+/** รายการเต็มในเครื่อง → รูปที่เก็บบนเซิร์ฟเวอร์ · ขั้นตั้งต้นไม่ต้องพกไอคอนกับสี เพราะอยู่ในโค้ดแล้ว */
+function storedProcessList(list){
+  return list.map(p=>{
+    const o = {id:p.id, label:p.label, short:p.short, hidden:!!p.hidden};
+    if(!DEFAULT_BY_ID[p.id]){ o.icon = p.icon; o.color = p.color; }
+    PROCESS_AUDIT_KEYS.forEach(k=>{ if(p[k]) o[k] = p[k]; });
+    return o;
+  });
+}
+
+/** ดึงรายการขั้นกับข้อมูลรหัสล่าสุดจากเซิร์ฟเวอร์ — ใช้ก่อนแก้ทุกครั้ง ห้ามเชื่อของที่ค้างในเครื่อง */
+async function refreshProcessSettings(){
+  const ds = await gsApi('pullSettings', {});
+  processAdminInfo = ds.processAdmin || null;
+  if(adoptProcessList(ds.processes)){ saveState(); renderAll(); }
+}
+
+async function saveProcessList(list, doneMsg){
+  if(!processUnlocked()){ toast('หมดเวลาแก้ไข — ใส่รหัสหัวหน้าใหม่'); renderProcessAdmin(); return false; }
+  const next = storedProcessList(list);
+  if(!validProcessList(next)){ toast('รายการขั้นไม่ถูกต้อง — ไม่ได้บันทึก'); return false; }
+  try{
+    await gsApi('pushSettings', {processes: next});
+  }catch(e){
+    // ส่วนใหญ่คือเครื่องอื่นเพิ่มขั้นไปก่อน — ดึงของจริงบนเซิร์ฟเวอร์กลับมาให้เห็นก่อนลองใหม่
+    toast('บันทึกรายการขั้นไม่สำเร็จ: ' + e.message);
+    try{ await refreshProcessSettings(); }catch(_){ /* เน็ตหลุด — คงรายการเดิมไว้ */ }
+    renderProcessAdmin();
+    return false;
+  }
+  adoptProcessList(next);
+  saveState();
+  renderAll();
+  toast(doneMsg);
+  return true;
+}
+
+function renderProcessAdmin(){
+  const table = document.getElementById('processTable');
+  if(!table) return;
+  const unlocked = processUnlocked();
+  const counts = {};
+  state.records.forEach(r=>{ if(!r.voided) counts[r.process] = (counts[r.process] || 0) + 1; });
+  table.innerHTML = '<thead><tr><th>#</th><th>ชื่อขั้น</th><th>ชื่อสั้น</th><th>สถานะ</th><th>ยอดที่คีย์ไว้ (รายการ)</th><th></th></tr></thead><tbody>'
+    + PROCESS_LIST.map((p, i)=>{
+      const locked = LOCKED_PROCESS_IDS.includes(p.id);
+      const status = locked ? '<span class="badge gray">ล็อก</span>'
+        : p.hidden ? '<span class="badge amber">ซ่อนอยู่</span>' : '<span class="badge green">แสดง</span>';
+      const who = p.updatedBy || p.addedBy;
+      const audit = who ? `<div class="hint">${escapeHtml((p.updatedBy ? 'แก้ล่าสุดโดย ' : 'เพิ่มโดย ') + who)}</div>` : '';
+      const actions = unlocked && !locked
+        ? `<button class="btn-mini" data-proc-rename="${p.id}">เปลี่ยนชื่อ</button> `
+          + `<button class="btn-mini" data-proc-toggle="${p.id}">${p.hidden ? 'เลิกซ่อน' : 'ซ่อน'}</button>` : '';
+      return `<tr data-proc-row="${p.id}"><td>${i + 1}</td><td class="left">${escapeHtml(p.icon + ' ' + p.label)}${audit}</td>`
+        + `<td class="left">${escapeHtml(p.short)}</td><td>${status}</td><td>${numFmt(counts[p.id] || 0)}</td><td>${actions}</td></tr>`;
+    }).join('') + '</tbody>';
+
+  document.getElementById('btnProcessUnlock').hidden = unlocked;
+  document.getElementById('btnProcessLock').hidden = !unlocked;
+  document.getElementById('btnProcessChangePin').hidden = !unlocked;
+  document.getElementById('processAddRow').hidden = !unlocked;
+  if(unlocked){
+    // ตำแหน่งแทรกได้แค่ก่อน Inspection — ตัวเลือกจึงมีแต่ขั้นที่ไม่ล็อก
+    const sel = document.getElementById('newProcAfter');
+    const keep = sel.value;
+    const open = PROCESS_LIST.filter(p=>!LOCKED_PROCESS_IDS.includes(p.id));
+    sel.innerHTML = '<option value="__first__">เป็นขั้นแรก</option>'
+      + open.map(p=>`<option value="${p.id}">ต่อจาก ${escapeHtml(p.label)}</option>`).join('');
+    sel.value = keep==='__first__' || open.some(p=>p.id===keep) ? keep : (open.length ? open[open.length - 1].id : '__first__');
+  }
+}
+
+function showProcessPin(mode){
+  processPinMode = mode;
+  document.getElementById('processPinLabel').textContent =
+    {set:'ตั้งรหัสหัวหน้าใหม่ (อย่างน้อย 4 ตัว)', verify:'รหัสหัวหน้า', change:'รหัสหัวหน้าเดิม'}[mode];
+  document.getElementById('processPin2Field').hidden = mode !== 'set';
+  document.getElementById('processPin').value = '';
+  document.getElementById('processPin2').value = '';
+  document.getElementById('processPinRow').hidden = false;
+  document.getElementById('processPin').focus();
+}
+
+async function submitProcessPin(){
+  const pin = document.getElementById('processPin').value;
+  try{
+    if(processPinMode === 'set'){
+      // ตั้งรหัสทับได้เฉพาะตอนยังไม่เคยมีรหัส หรือเพิ่งใส่รหัสเดิมผ่าน
+      if(processAdminInfo && !processPinVerified){ toast('ต้องใส่รหัสหัวหน้าเดิมก่อน'); return; }
+      if(pin.length < 4){ toast('รหัสหัวหน้าต้องยาวอย่างน้อย 4 ตัว'); return; }
+      if(pin !== document.getElementById('processPin2').value){ toast('รหัสสองช่องไม่ตรงกัน'); return; }
+      const salt = randomHex(16);
+      const admin = {hash: await sha256Hex(salt + ':' + pin), salt, setBy: state.deviceName || '', setAt: new Date().toISOString()};
+      await gsApi('pushSettings', {processAdmin: admin});
+      processAdminInfo = admin;
+      toast('ตั้งรหัสหัวหน้าแล้ว');
+    }else{
+      const ok = processAdminInfo && await sha256Hex(processAdminInfo.salt + ':' + pin) === processAdminInfo.hash;
+      if(!ok){ toast('รหัสหัวหน้าไม่ถูกต้อง'); return; }
+      if(processPinMode === 'change'){ processPinVerified = true; showProcessPin('set'); return; }
+    }
+    processPinVerified = false;
+    processUnlockedUntil = Date.now() + PROCESS_UNLOCK_MS;
+    setTimeout(renderProcessAdmin, PROCESS_UNLOCK_MS + 500);   // หมดเวลาแล้วล็อกกลับเอง
+    document.getElementById('processPinRow').hidden = true;
+    renderProcessAdmin();
+  }catch(e){ toast('ทำรายการไม่สำเร็จ: ' + e.message); }
+}
+
+document.getElementById('btnProcessUnlock').addEventListener('click', async ()=>{
+  if(!syncCfg.url){ toast('ต้องเชื่อมต่อ Google Sheets ก่อน — รายการขั้นต้องเหมือนกันทุกเครื่อง'); return; }
+  try{ await refreshProcessSettings(); }
+  catch(e){ toast('ดึงรายการขั้นจากเซิร์ฟเวอร์ไม่สำเร็จ: ' + e.message); return; }
+  processPinVerified = false;
+  showProcessPin(processAdminInfo ? 'verify' : 'set');
+});
+document.getElementById('btnProcessPinOk').addEventListener('click', submitProcessPin);
+['processPin', 'processPin2'].forEach(id=> document.getElementById(id).addEventListener('keydown', e=>{
+  if(e.key === 'Enter'){ e.preventDefault(); submitProcessPin(); }
+}));
+document.getElementById('btnProcessLock').addEventListener('click', ()=>{ processUnlockedUntil = 0; renderProcessAdmin(); });
+document.getElementById('btnProcessChangePin').addEventListener('click', ()=>{ processPinVerified = false; showProcessPin('change'); });
+
+document.getElementById('btnProcessAdd').addEventListener('click', ()=>{
+  const label = document.getElementById('newProcLabel').value.trim();
+  const short = document.getElementById('newProcShort').value.trim() || label;
+  if(!label){ toast('ใส่ชื่อขั้นก่อน'); return; }
+  if(label.length > 40 || short.length > 20){ toast('ชื่อขั้นยาวไม่เกิน 40 ตัว · ชื่อสั้นไม่เกิน 20 ตัว'); return; }
+  if(PROCESS_LIST.some(p=>p.label === label || p.short === short)){ toast('มีขั้นชื่อนี้อยู่แล้ว'); return; }
+  const after = document.getElementById('newProcAfter').value;
+  const list = PROCESS_LIST.slice();
+  const at = after === '__first__' ? 0 : list.findIndex(p=>p.id === after) + 1;
+  if(after !== '__first__' && at <= 0){ toast('เลือกตำแหน่งของขั้นก่อน'); return; }
+  const where = after === '__first__' ? 'เป็นขั้นแรก' : 'ต่อจาก ' + PROCESS_LABELS[after];
+  if(!confirm(`เพิ่มขั้น "${label}" ${where}? — ทุกเครื่องจะเห็นขั้นนี้หลังซิงค์ · ลบทีหลังไม่ได้ ซ่อนได้อย่างเดียว`)) return;
+  list.splice(at, 0, {id: 'p' + Date.now().toString(36), label, short, icon: '🔹',
+    color: PROCESS_PALETTE.find(c=>!list.some(p=>p.color === c)) || PROCESS_PALETTE[0],
+    hidden: false, addedBy: state.deviceName || '', addedAt: new Date().toISOString()});
+  saveProcessList(list, `เพิ่มขั้น ${label} แล้ว`).then(ok=>{
+    if(ok){ document.getElementById('newProcLabel').value = ''; document.getElementById('newProcShort').value = ''; }
+  });
+});
+
+document.getElementById('processTable').addEventListener('click', e=>{
+  const renameId = e.target.dataset.procRename, toggleId = e.target.dataset.procToggle;
+  const id = renameId || toggleId;
+  const p = id && PROCESS_BY_ID[id];
+  if(!p || LOCKED_PROCESS_IDS.includes(id)) return;
+  const by = state.deviceName || '', now = new Date().toISOString();
+  if(renameId){
+    const l = prompt('ชื่อขั้น — ขึ้นบนปุ่มเลือกขั้นและหัวคอลัมน์สะสม (ไม่เกิน 40 ตัว)', p.label);
+    if(l === null || !l.trim()) return;
+    const s = prompt('ชื่อสั้น — หัวตาราง Dashboard สถานะล่าช้า รายงาน (ไม่เกิน 20 ตัว)', p.short);
+    if(s === null) return;
+    const label = l.trim(), short = s.trim() || label;
+    if(label.length > 40 || short.length > 20){ toast('ชื่อขั้นยาวไม่เกิน 40 ตัว · ชื่อสั้นไม่เกิน 20 ตัว'); return; }
+    if(PROCESS_LIST.some(x=>x.id !== id && (x.label === label || x.short === short))){ toast('มีขั้นชื่อนี้อยู่แล้ว'); return; }
+    saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {label, short, updatedBy: by, updatedAt: now}) : x),
+      `เปลี่ยนชื่อเป็น ${label} แล้ว`);
+    return;
+  }
+  if(!p.hidden && PROCESS_LIST.filter(x=>!x.hidden && !LOCKED_PROCESS_IDS.includes(x.id)).length <= 1){
+    toast('ต้องเหลือขั้นผลิตที่แสดงอยู่อย่างน้อยหนึ่งขั้น'); return;
+  }
+  const n = state.records.filter(r=>!r.voided && r.process === id).length;
+  const msg = p.hidden ? `เลิกซ่อนขั้น "${p.label}"? ปุ่มและคอลัมน์จะกลับมาทุกเครื่อง`
+    : `ซ่อนขั้น "${p.label}"? ปุ่ม คอลัมน์ การ์ด จะหายไปจากทุกเครื่อง`
+      + (n ? ` · ยอดที่คีย์ไว้ ${numFmt(n)} รายการยังอยู่ แต่จะไม่ถูกนับจนกว่าจะเลิกซ่อน` : '');
+  if(!confirm(msg)) return;
+  saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {hidden: !p.hidden, updatedBy: by, updatedAt: now}) : x),
+    p.hidden ? `เลิกซ่อน ${p.label} แล้ว` : `ซ่อน ${p.label} แล้ว`);
+});
+
 document.getElementById('entryDate').addEventListener('change', renderEntryTable);
 document.getElementById('entrySearch').addEventListener('input', renderEntryTable);
 document.getElementById('entryWeekFilter').addEventListener('change', renderEntryTable);

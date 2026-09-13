@@ -110,8 +110,10 @@
 > เป็นทางสำรองระหว่างเปลี่ยนผ่าน · ทั้งสองทางทับกันได้ตาม A2 ระวังเวลาแก้ฝั่งใดฝั่งหนึ่ง
 > (การปิดทางคีย์มือเป็นงานที่เลื่อนไว้ ยังไม่ได้ทำ)
 
-**ขั้นตอนการผลิต** อยู่ใน `DEFAULT_PROCESSES` ที่เดียว (INVARIANTS A3) · ตอนนี้ `winding` → `assembly` → `support` → `inspection` → `shipping`
-เจ้าของสั่งเมื่อ 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม — `inspection` กับ `shipping` ล็อกอยู่ท้ายสุด
+**ขั้นตอนการผลิต** ห้าขั้นตั้งต้นอยู่ใน `DEFAULT_PROCESSES` (INVARIANTS A3) · `winding` → `assembly` → `support` → `inspection` → `shipping`
+เจ้าของสั่งเมื่อ 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม — แผง "ขั้นตอนการผลิต" ในหน้าข้อมูล & แชร์
+เพิ่ม · เปลี่ยนชื่อ · ซ่อน ได้เมื่อต่อ Google Sheets และใส่รหัสหัวหน้า · `inspection` กับ `shipping` ล็อกอยู่ท้ายสุด · ลบขั้นไม่ได้
+รหัสหัวหน้าเก็บเป็น SHA-256 + salt ใน Meta `processAdmin` — **เป็นรั้วกันกดพลาด ไม่ใช่ความปลอดภัยจริง** (ใครดึงค่าตั้งได้ก็เห็น hash)
 
 ---
 
@@ -238,6 +240,7 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
   version: 1,
   deviceName: '',
   deadlineOffsets: { winding:10, assembly:17, support:null, inspection:24, shipping:28 },  // ซิงค์ข้ามเครื่อง (null = ยังไม่กำหนด)
+  processes: null,   // รายการขั้นที่ซิงค์มาครั้งล่าสุด [{id,label,short,hidden,...}] · null = ห้าขั้นตั้งต้น (ดู composeProcesses)
   chartPref:  { mode:'14', from:'', to:'' },                                 // เครื่องนี้เท่านั้น ห้ามซิงค์
   orders: [], records: [], deliveryNotes: [], deltaWip: [], importHistory: []
 }
