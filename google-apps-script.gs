@@ -229,10 +229,11 @@ function doPullRows(table, since) {
       delete r._row;
       fixDateOnlyCols(r, DATE_ONLY_COLS[table] || []);
       if (table === 'Orders') r.orderQty = Number(r.orderQty) || 0;
-      if (table === 'Records') {
-        r.qty = Number(r.qty) || 0;
-        r.voided = String(r.voided).toUpperCase() === 'TRUE';
-      }
+      if (table === 'Records') r.qty = Number(r.qty) || 0;
+      // ⚠️ ทุกตารางที่มีคอลัมน์ voided ต้องส่งกลับเป็น boolean — เดิมทำเฉพาะ Records
+      //    ถ้าเซลล์กลายเป็นข้อความ 'FALSE' (คนแก้ชีตมือ หรือ format เพี้ยน) ฝั่งแอปจะอ่านเป็น truthy
+      //    แล้วทุกแถวของตารางนั้นกลายเป็นยกเลิกในทุกเครื่องหลังซิงค์ = จอว่าง (CTO เจอตอนประเมิน 7 ก.ย. 2026)
+      if (cols.indexOf('voided') >= 0) r.voided = String(r.voided).toUpperCase() === 'TRUE';
       out.push(r);
     }
   }
@@ -305,19 +306,73 @@ function doClearTable(table, confirm) {
   }
 }
 
-/** ตั้งค่ากลาง (ตอนนี้มีแค่ deadlineOffsets) ที่ต้องเหมือนกันทุกเครื่อง */
+// ═══════════ ตั้งค่ากลางที่ต้องเหมือนกันทุกเครื่อง ═══════════
+/* deadlineOffsets  วันกำหนดส่งของแต่ละขั้น
+ * processes        รายการขั้นการผลิต — เจ้าของสั่ง 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม
+ * processAdmin     ข้อมูลรหัสหัวหน้าของหน้าจัดการขั้น · เซิร์ฟเวอร์เก็บอย่างเดียว ด่านตรวจรหัสอยู่ฝั่งหน้าจอ
+ *
+ * ⚠️ เครื่องรุ่นเก่าอ่านแค่ deadlineOffsets กับ setupVersion — ห้ามเปลี่ยนชื่อหรือรูปของสอง key นั้น */
+
+/* ห้าขั้นที่มีมาตั้งแต่แรก — ยอดที่คีย์ไว้ทั้งหมดผูกกับ id พวกนี้อยู่แล้ว ต้องอยู่ในรายการเสมอ */
+var BASE_PROCESS_IDS = ['winding', 'assembly', 'support', 'inspection', 'shipping'];
+/* สองขั้นท้ายสุดล็อกไว้ — หน้า FG (inspection − shipping) ใบส่งของ Call In ในแอปผูกกับ id นี้ตรง ๆ */
+var LOCKED_TAIL_IDS = ['inspection', 'shipping'];
+
+/** ตรวจรายการขั้นก่อนเก็บ — คืนข้อความผิดพลาดภาษาไทย หรือ '' ถ้าผ่าน
+ *
+ *  ⚠️ ด่านนี้ต้องอยู่ฝั่งเซิร์ฟเวอร์ ไม่ใช่แค่ในหน้าจัดการขั้น
+ *     เครื่องที่เปิดหน้าค้างไว้ก่อนมีคนเพิ่มขั้น จะส่งรายการเก่าที่ไม่มีขั้นใหม่ขึ้นมาทับได้
+ *     ถ้าไม่กันที่นี่ ขั้นใหม่จะหายจากทุกเครื่อง แล้วยอดของขั้นนั้นไม่ถูกนับอีกเลยโดยไม่มีใครรู้
+ *  ⚠️ ลบขั้นไม่ได้ทุกกรณี ให้ซ่อนแทน · ขั้นที่ลบแล้วยอดเก่าจะหลุดจากทุกผลรวมเงียบ ๆ */
+function processListError(list, stored) {
+  if (!Array.isArray(list) || !list.length) return 'รายการขั้นต้องเป็นรายการที่ไม่ว่าง';
+  var seen = {};
+  for (var i = 0; i < list.length; i++) {
+    var p = list[i];
+    if (!p || typeof p.id !== 'string' || !/^[a-z][a-z0-9_]{1,23}$/.test(p.id)) {
+      return 'รหัสขั้นไม่ถูกต้อง (ใช้ a-z ตัวเลข _ ยาว 2-24 ตัว): ' + (p && p.id);
+    }
+    if (seen[p.id]) return 'รหัสขั้นซ้ำ: ' + p.id;
+    seen[p.id] = true;
+    if (typeof p.label !== 'string' || !p.label.trim() || p.label.length > 40) {
+      return 'ชื่อขั้นต้องไม่ว่างและยาวไม่เกิน 40 ตัวอักษร: ' + p.id;
+    }
+  }
+  var ids = list.map(function (p) { return p.id; });
+  if (ids.slice(-LOCKED_TAIL_IDS.length).join(',') !== LOCKED_TAIL_IDS.join(',')) {
+    return 'Inspection กับ ส่งของ ต้องอยู่ท้ายสุดตามลำดับนี้เสมอ';
+  }
+  var must = BASE_PROCESS_IDS.concat((Array.isArray(stored) ? stored : []).map(function (p) { return p && p.id; }));
+  for (var j = 0; j < must.length; j++) {
+    if (must[j] && ids.indexOf(must[j]) < 0) return 'ลบขั้นไม่ได้ ซ่อนได้อย่างเดียว: ' + must[j];
+  }
+  return '';
+}
+
+/** ค่าใน Meta ที่เก็บเป็น JSON — อ่านไม่ออกถือว่ายังไม่มี ไม่ throw */
+function metaJson(key) {
+  var raw = meta(key);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (e) { return null; }
+}
+
 function doPullSettings() {
-  var raw = meta('deadlineOffsets');
-  var deadlineOffsets = null;
-  if (raw) { try { deadlineOffsets = JSON.parse(raw); } catch (e) {} }
-  return { ok: true, setupVersion: meta('setupVersion'), deadlineOffsets: deadlineOffsets };
+  return { ok: true, setupVersion: meta('setupVersion'), deadlineOffsets: metaJson('deadlineOffsets'),
+           processes: metaJson('processes'), processAdmin: metaJson('processAdmin') };
 }
 
 function doPushSettings(body) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(25000)) return { ok: false, error: 'ระบบกำลังถูกใช้งาน ลองใหม่อีกครั้ง' };
   try {
+    // ⚠️ ตรวจให้ครบก่อนเขียนอะไรลงชีต — ผิดข้อเดียวต้องไม่มีค่าไหนถูกเก็บเลย
+    if (body.processes !== undefined) {
+      var err = processListError(body.processes, metaJson('processes'));
+      if (err) return { ok: false, error: err };
+    }
     if (body.deadlineOffsets) meta('deadlineOffsets', JSON.stringify(body.deadlineOffsets));
+    if (body.processes !== undefined) meta('processes', JSON.stringify(body.processes));
+    if (body.processAdmin) meta('processAdmin', JSON.stringify(body.processAdmin));
     var v = nowIso();
     meta('setupVersion', v);
     SpreadsheetApp.flush();

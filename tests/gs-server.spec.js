@@ -33,6 +33,7 @@ class FakeSheet {
   getLastColumn() { return this.rows.reduce((m, r) => Math.max(m, r ? r.length : 0), 0); }
   getMaxRows() { return Math.max(1000, this.rows.length); }
   setFrozenRows() { return this; }
+  appendRow(arr) { this.rows[this.getLastRow()] = arr.slice(); return this; }
   getRange(r, c, nr = 1, nc = 1) {
     const s = this;
     return {
@@ -59,6 +60,11 @@ class FakeSheet {
               (!isText && typeof v === 'string' && v !== '' && isFinite(Number(v))) ? Number(v) : v;
           });
         });
+        return this;
+      },
+      setValue(v) {
+        if (!s.rows[r - 1]) s.rows[r - 1] = [];
+        s.rows[r - 1][c - 1] = v;
         return this;
       },
       setFontWeight() { return this; },
@@ -89,7 +95,8 @@ function loadGs(opts = {}) {
   const Utilities = { formatDate: (d) => d.toISOString().slice(0, 10) };
 
   const fn = new Function('SpreadsheetApp', 'LockService', 'ContentService', 'Utilities', 'Date',
-    GS_SRC + '\n;return { doPullRows: doPullRows, doPushRows: doPushRows };');
+    GS_SRC + '\n;return { doPullRows: doPullRows, doPushRows: doPushRows,' +
+    ' doPullSettings: doPullSettings, doPushSettings: doPushSettings };');
   const api = fn(SpreadsheetApp, LockService, ContentService, Utilities, opts.Date || Date);
   return { api, book, locks };
 }
@@ -215,4 +222,130 @@ test('ห้ามล้างนาฬิกาซิงค์ที่อื�
   expect(assigns.length,
     'มีการล้างนาฬิกาแบบเขียนชื่อเองอยู่ — ย้ายไปใช้ resetPullClocks() ' +
     'ไม่งั้นวันหนึ่งจะเติมไม่ครบอีก (เกิดมาแล้วสองที่)').toBe(0);
+});
+
+/* ── ช่อง voided ต้องกลับมาเป็น boolean ทุกตาราง ─────────────────────────
+ *
+ * เดิมแปลงเฉพาะ Records · ตารางอื่นส่งค่าในเซลล์ออกไปตรง ๆ
+ * ถ้าคอลัมน์กลายเป็นข้อความ (คนแก้ชีตมือ หรือ format เพี้ยน) สตริง 'FALSE' เป็น truthy ฝั่งแอป
+ * → ทุกแถวของตารางนั้นกลายเป็นยกเลิกในทุกเครื่องหลังซิงค์ = จอว่างทั้งระบบ
+ * (CTO เจอตอนประเมิน 7 ก.ย. 2026 · เจ้าของให้รวบไว้กับการ redeploy รอบถัดไป) */
+for (const table of ['Orders', 'Records', 'DeliveryNotes', 'DeltaWip']) {
+  test(`${table} — voided ที่เป็นข้อความในชีต ต้องกลับมาเป็น boolean`, async () => {
+    const { api, book } = loadGs();
+    api.doPushRows(table, [{ id: 'X1', voided: false }], 'A');
+    const sheet = book.getSheetByName(table);
+    const col = sheet.rows[0].indexOf('voided');
+    expect(col, 'ต้องมีคอลัมน์ voided').toBeGreaterThan(-1);
+    for (const [cell, want] of [['FALSE', false], ['TRUE', true], ['', false], [false, false], [true, true]]) {
+      sheet.rows[1][col] = cell;          // เหมือนคนพิมพ์ทับ หรือ format ของคอลัมน์เพี้ยน
+      expect(api.doPullRows(table, '').rows[0].voided, `เซลล์ ${JSON.stringify(cell)}`).toBe(want);
+    }
+  });
+
+  test(`${table} — push แล้ว pull ต้องได้ voided ตรงกับที่ส่ง`, async () => {
+    const { api } = loadGs();
+    api.doPushRows(table, [{ id: 'X1', voided: true }, { id: 'X2', voided: false }], 'A');
+    const rows = api.doPullRows(table, '').rows;
+    expect(rows.find(r => r.id === 'X1').voided).toBe(true);
+    expect(rows.find(r => r.id === 'X2').voided).toBe(false);
+  });
+}
+
+/* ── ตั้งค่ากลาง: รายการขั้นการผลิต ─────────────────────────────────────
+ *
+ * เจ้าของสั่ง 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม และซิงค์ไปทุกเครื่อง
+ * ด่านที่สำคัญที่สุดคือ "ห้ามลบขั้น" — เครื่องที่เปิดหน้าค้างไว้ก่อนมีคนเพิ่มขั้น
+ * จะส่งรายการเก่าที่ไม่มีขั้นใหม่ขึ้นมา ถ้าเซิร์ฟเวอร์รับ ขั้นใหม่จะหายจากทุกเครื่อง
+ * แล้วยอดของขั้นนั้นไม่ถูกนับอีกเลยโดยไม่มีอะไรฟ้อง */
+const P = (id, label = id) => ({ id, label });
+const BASE5 = ['winding', 'assembly', 'support', 'inspection', 'shipping'].map(id => P(id));
+const WITH_COATING = [P('winding'), P('coating', 'Coating'), P('assembly'), P('support'), P('inspection'), P('shipping')];
+
+test('ตั้งค่ากลาง — เก็บรายการขั้นแล้วดึงกลับมาได้ครบ', async () => {
+  const { api } = loadGs();
+  const r = api.doPushSettings({ processes: WITH_COATING });
+  expect(r.ok, r.error).toBe(true);
+  const got = api.doPullSettings();
+  expect(got.processes).toEqual(WITH_COATING);
+  expect(got.setupVersion, 'ต้องบอกเวลาที่ตั้งค่าล่าสุด').toBeTruthy();
+});
+
+test('ตั้งค่ากลาง — เครื่องรุ่นเก่าที่ส่งแค่วันกำหนดส่ง ต้องไม่ทำรายการขั้นหาย', async () => {
+  const { api } = loadGs();
+  api.doPushSettings({ processes: WITH_COATING });
+  expect(api.doPushSettings({ deadlineOffsets: { winding: 12 } }).ok).toBe(true);
+  const got = api.doPullSettings();
+  expect(got.processes, 'รายการขั้นยังอยู่').toEqual(WITH_COATING);
+  expect(got.deadlineOffsets).toEqual({ winding: 12 });
+});
+
+test('ตั้งค่ากลาง — ยังไม่เคยเก็บอะไร ต้องคืน null ไม่ใช่ error', async () => {
+  const { api } = loadGs();
+  const got = api.doPullSettings();
+  expect(got.ok).toBe(true);
+  expect(got.processes).toBeNull();
+  expect(got.deadlineOffsets).toBeNull();
+});
+
+test('ห้ามลบขั้น — รายการเก่าที่ไม่มีขั้นที่เพิ่มไปแล้ว ต้องถูกปฏิเสธ และของเดิมไม่เปลี่ยน', async () => {
+  const { api } = loadGs();
+  api.doPushSettings({ processes: WITH_COATING });
+  const r = api.doPushSettings({ processes: BASE5 });
+  expect(r.ok, 'เครื่องที่ค้างรุ่นก่อนต้องทับขั้นใหม่ไม่ได้').toBe(false);
+  expect(r.error).toContain('coating');
+  expect(api.doPullSettings().processes).toEqual(WITH_COATING);
+});
+
+test('ห้ามลบห้าขั้นเดิม — แม้ยังไม่เคยเก็บรายการขั้นลงชีตก็ตาม', async () => {
+  const { api } = loadGs();
+  const r = api.doPushSettings({ processes: BASE5.filter(p => p.id !== 'support') });
+  expect(r.ok).toBe(false);
+  expect(r.error).toContain('support');
+  expect(api.doPullSettings().processes).toBeNull();
+});
+
+test('Inspection กับ ส่งของ ต้องอยู่ท้ายสุดตามลำดับ', async () => {
+  const { api } = loadGs();
+  const swapped = [P('winding'), P('assembly'), P('support'), P('shipping'), P('inspection')];
+  expect(api.doPushSettings({ processes: swapped }).ok, 'สลับสองขั้นท้าย').toBe(false);
+  const afterShip = [...BASE5, P('coating')];
+  expect(api.doPushSettings({ processes: afterShip }).ok, 'เพิ่มขั้นต่อท้ายส่งของ').toBe(false);
+  expect(api.doPushSettings({ processes: WITH_COATING }).ok, 'แทรกก่อน Inspection ได้').toBe(true);
+});
+
+test('รหัสขั้นต้องถูกรูปแบบและไม่ซ้ำ ชื่อต้องไม่ว่าง', async () => {
+  const { api } = loadGs();
+  const bad = [
+    [[P('winding'), P('Coat ing'), ...BASE5.slice(1)], 'รหัสมีช่องว่างหรือตัวใหญ่'],
+    [[P('winding'), P('<b>'), ...BASE5.slice(1)], 'รหัสมีอักขระพิเศษ'],
+    [[P('winding'), P('coating'), P('coating'), ...BASE5.slice(1)], 'รหัสซ้ำ'],
+    [[P('winding'), P('coating', '   '), ...BASE5.slice(1)], 'ชื่อว่าง'],
+    [[P('winding'), P('coating', 'ก'.repeat(41)), ...BASE5.slice(1)], 'ชื่อยาวเกิน'],
+    [[], 'รายการว่าง'],
+    ['not-a-list', 'ไม่ใช่รายการ']
+  ];
+  for (const [processes, why] of bad) {
+    expect(api.doPushSettings({ processes }).ok, why).toBe(false);
+  }
+  expect(api.doPullSettings().processes, 'ต้องไม่มีอะไรถูกเก็บ').toBeNull();
+});
+
+test('ผิดข้อเดียวต้องไม่มีอะไรถูกเขียน — วันกำหนดส่งที่ส่งมาพร้อมกันต้องไม่ถูกเก็บ', async () => {
+  const { api } = loadGs();
+  const r = api.doPushSettings({ deadlineOffsets: { winding: 99 }, processes: BASE5.slice(1) });
+  expect(r.ok).toBe(false);
+  expect(api.doPullSettings().deadlineOffsets, 'ครึ่งเดียวผ่านไม่ได้').toBeNull();
+});
+
+test('ข้อมูลรหัสหัวหน้า — เก็บแล้วดึงกลับมาได้ตามที่ส่ง', async () => {
+  const { api } = loadGs();
+  const admin = { hash: 'abc123', salt: 's1', setBy: 'เครื่องหัวหน้า', setAt: '2026-09-13T00:00:00.000Z' };
+  expect(api.doPushSettings({ processAdmin: admin }).ok).toBe(true);
+  expect(api.doPullSettings().processAdmin).toEqual(admin);
+});
+
+test('ตั้งค่ากลาง — ล็อกไม่ว่างต้องไม่เขียนอะไรเลย', async () => {
+  const busy = loadGs({ lockFree: false });
+  expect(busy.api.doPushSettings({ processes: WITH_COATING }).ok).toBe(false);
 });
