@@ -265,9 +265,10 @@ function doPushRows(table, rows, device) {
       var r = rows[k];
       if (!r.id) continue;
       r.updatedAt = stamp;
-      if (table === 'Records' && !r.deviceName) r.deviceName = device || '';
-      // เขียนเป็นข้อความเดียวกันทุกตาราง ฝั่ง doPullRows แปลงกลับเป็น boolean ให้ครบทุกตาราง
-      if (cols.indexOf('voided') >= 0) r.voided = r.voided ? 'TRUE' : 'FALSE';
+      if (table === 'Records') {
+        if (!r.deviceName) r.deviceName = device || '';
+        r.voided = r.voided ? 'TRUE' : 'FALSE';
+      }
       var at = index[String(r.id)];
       if (at) sheet.getRange(at, 1, 1, cols.length).setValues([toRow(r, cols)]);
       else appends.push(toRow(r, cols));
