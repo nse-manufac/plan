@@ -944,6 +944,55 @@ test('ใบที่ไม่อยู่ในไฟล์งวดล่า�
   expect(g10, 'ช่อง Wip bal. ต้องเว้นว่าง ไม่ใช่ยอดของงวดเก่า').not.toMatch(/<v>[^<]+<\/v>/);
 });
 
+/* ── หักยอดที่เราส่งไปแล้วออกจาก Wip bal. ของ Delta (เจ้าของสั่ง 14 ก.ย. 2026) ──────────────
+ *
+ * ไฟล์ Call In มาสัปดาห์ละครั้ง ระหว่างสัปดาห์เราส่งของไปแล้วแต่ Wip bal. ในไฟล์ไม่ขยับ
+ * เกณฑ์ที่เจ้าของเลือก: หักยอดที่ "วันที่ส่ง" ตั้งแต่วันที่นำเข้าไฟล์ · บนกระดาษเป็นยอดก่อนส่งใบนี้
+ *
+ * ⚠️ วันส่งในเทสห่างจากวันนำเข้าอย่างน้อยสองวัน — เวลานำเข้าเก็บเป็น UTC แล้วแปลงเป็นวันท้องถิ่น
+ *    ถ้าวางชิดกัน เครื่องที่รันเทสคนละโซนเวลาจะได้วันคนละวัน แล้วเทสแกว่ง */
+const shipRec = (id, orderId, date, qty) => ({
+  id, date, orderId, process: 'shipping', qty, note: '', deviceName: 't',
+  createdAt: date + 'T05:00:00.000Z', updatedAt: date + 'T05:00:00.000Z', voided: false, _dirty: false
+});
+const IMPORTED = '2026-09-01T05:00:00.000Z';
+
+test('Wip bal. ของ Delta หักยอดที่ส่งหลังวันนำเข้าไฟล์ — ไม่หักยอดก่อนนำเข้า และไม่หักใบนี้เอง', async ({ page }) => {
+  const ID = 'PO-B001|' + PN_B;
+  await openWithDelta(page, [deltaRow(ID, 35, 5000, IMPORTED)], ORDERS, [
+    shipRec('s1', ID, '2026-08-28', 700),     // ก่อนนำเข้า — Delta นับไปแล้วในไฟล์ ห้ามหักซ้ำ
+    shipRec('s2', ID, '2026-09-03', 1200)     // หลังนำเข้า — ต้องหัก
+  ]);
+  await page.fill('#dnDate', '2026-09-05');
+  await page.waitForTimeout(200);
+  await alloc(page, ID, 1000);                // ใบนี้เอง — ไม่หัก
+
+  const cell = await page.locator(`#dnTable td[data-deltawip="${ID}"]`).innerText();
+  expect(cell, 'บนจอต้องเป็น 5,000 − 1,200').toContain('3,800');
+  expect(cell, 'และบอกยอดดิบจากไฟล์กับยอดที่หักไป').toContain('ไฟล์ 5,000');
+
+  await pack(page, PN_B, 'perBox', 50);
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>[^<]*<v>([^<]*)</v>').exec(xml) || [])[1];
+  expect(at('G10'), 'กระดาษ = ยอดก่อนส่งใบนี้ 5,000 − 1,200 (ไม่หัก 700 ก่อนนำเข้า ไม่หัก 1,000 ของใบนี้)')
+    .toBe('3800');
+});
+
+test('ส่งครบตามที่ Delta ค้างหลังนำเข้าไฟล์แล้ว ใบนั้นต้องไม่ค้างบนจอเพราะยอดของ Delta', async ({ page }) => {
+  const ID = 'PO-B001|' + PN_B;
+  await openWithDelta(page, [deltaRow(ID, 35, 500, IMPORTED)], ORDERS, [
+    shipRec('s1', ID, '2026-08-20', 11500),   // ก่อนนำเข้า — ไฟล์ของ Delta นับแล้ว เหลือค้าง 500
+    shipRec('s2', ID, '2026-09-03', 500)      // ส่งส่วนที่ค้างหลังนำเข้าไฟล์
+  ]);
+  await page.fill('#dnDate', '2026-09-05');
+  await page.uncheck('#dnHideNoDelta');
+  await page.waitForTimeout(200);
+
+  expect(await page.locator(`#dnTable input.dn-alloc[data-order="${ID}"]`).count(),
+    'บัญชีเราส่งครบ และ Delta หักแล้วไม่เหลือค้าง ต้องไม่ขึ้น').toBe(0);
+});
+
 // ── ค้นหา ─────────────────────────────────────
 //
 // พนักงานแจ้ง 31 ส.ค. 2026 ว่าไล่หา PO กับ P/N ในรายการยาว ๆ ลำบาก

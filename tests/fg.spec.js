@@ -228,6 +228,23 @@ test('ยอดค้างของ Delta นับเฉพาะงวดล�
   expect(cmp, 'การ์ดต้องไม่อ้างยอดของงวดเก่า').not.toContain('wk34');
 });
 
+test('ยอดค้างของ Delta หักยอดที่เราส่งหลังวันนำเข้าไฟล์ — เจ้าของสั่ง 14 ก.ย. 2026', async ({ page }) => {
+  // ⚠️ วันส่งห่างจากวันนำเข้าสองวันขึ้นไป — เวลานำเข้าเป็น UTC แปลงเป็นวันท้องถิ่น (ดู delivery-note.spec.js)
+  await open(page, [order('PO-A1', PN_A, 5000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'shipping', 2000, '2026-08-28'),   // ก่อนนำเข้า — อยู่ในไฟล์ของ Delta แล้ว
+    rec('r2', 'PO-A1|' + PN_A, 'shipping', 1000, '2026-09-03')    // หลังนำเข้า — ต้องหัก
+  ], [deltaRow('PO-A1|' + PN_A, 35, 3000, '2026-09-01T05:00:00.000Z')]);
+
+  expect(await cellOf(page, PN_A, 'TUE-U', 5), 'ค้างส่ง (เรา) 5,000 − 3,000').toBe('2,000');
+  expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) 3,000 − 1,000 ไม่หัก 2,000 ที่ส่งก่อนนำเข้า')
+    .toBe('2,000');
+  expect(await rowOf(page, PN_A, 'TUE-U'), 'หักแล้วตรงกันพอดี').toContain('ตรงกันทุกใบ');
+
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  expect(cmp, 'การ์ดบอกยอดดิบจากไฟล์กับยอดที่หักไป').toContain('ไฟล์ 3,000');
+});
+
 /** อ่านค่าในช่องหนึ่งของแถว — เจาะจงกว่าการดูข้อความทั้งแถว
  *  (เทสรอบแรกใช้ toContain('0') ซึ่งจริงเกือบตลอด เพราะ '5,000' ก็มี '0') */
 const cellOf = (page, pn, unit, i) =>
