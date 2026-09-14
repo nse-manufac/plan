@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-13.1">
+<meta name="app-version" content="2026-09-14.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1711,14 +1711,22 @@ function deltaWipNewer(row, than){
  *  ⚠️ "มีแถว" กับ "มียอด" ไม่ใช่เรื่องเดียวกันตั้งแต่ 5 ก.ย. 2026
  *     มีแถว = Delta เอ่ยถึงใบนี้ในไฟล์ที่นำเข้า
  *     มียอด = เขากรอกตัวเลขมาด้วย -> เอาไปพิมพ์ลงกระดาษได้
- *     แถวที่ wip ว่าง คือ "อยู่ในไฟล์แต่เขาไม่ได้ระบุยอด" คนละเรื่องกับ "ค้างศูนย์" */
-function deltaWipOf(orderId){
+ *     แถวที่ wip ว่าง คือ "อยู่ในไฟล์แต่เขาไม่ได้ระบุยอด" คนละเรื่องกับ "ค้างศูนย์"
+ *
+ *  ⚠️ คืนเฉพาะแถวของงวดล่าสุด (currentDeltaWeek) — แถวของงวดเก่าไม่ใช่ยอดค้างของตอนนี้
+ *     Delta ไม่ใส่ 0 ให้ใบที่ส่งครบแล้ว แต่ตัดใบนั้นออกจากไฟล์งวดใหม่ไปเลย
+ *     saveDeltaWip ล้างเฉพาะใบที่อยู่ในไฟล์ แถวของงวดก่อนจึงค้างอยู่เป็นประวัติ (ตั้งใจ — เทส #62)
+ *     ถ้าหยิบแถวล่าสุดของใบโดยไม่ดูงวด ยอดของงวดเก่าจะค้างไปตลอด (เจ้าของเจอ 14 ก.ย. 2026):
+ *     หน้า FG นับยอดค้างของ Delta เกิน · ใบที่ส่งครบแล้วโผล่ในหน้าใบส่งสินค้า · กระดาษพิมพ์ยอดเก่า
+ *
+ *  week ให้ผู้เรียกคิดครั้งเดียวแล้วส่งมา — เรียก currentDeltaWeek() ต่อใบจะวนทั้งตารางซ้ำทุกใบ */
+function deltaWipOf(orderId, week = currentDeltaWeek()){
   let best = null;
   state.deltaWip.forEach(d=>{
     if(d.voided || d.orderId !== orderId) return;
     if(!best || deltaWipNewer(d, best)) best = d;
   });
-  return best;
+  return best && String(best.week) === String(week) ? best : null;
 }
 
 /** ยอดตัวเลขของแถว deltaWip — คืน null ถ้าไฟล์ปล่อยช่องนั้นว่างไว้
@@ -1840,6 +1848,8 @@ function saveDeltaWip(items, week, fileName){
 function fgRows(){
   const cum = buildCumMap(state.records);
   const byKey = new Map();
+  // งวดเดียวกับที่หน้าใบส่งสินค้ายึด — ใบที่ Delta ตัดออกจากไฟล์งวดล่าสุดไม่นับเป็นยอดค้างของ Delta (ดู deltaWipOf)
+  const curWeek = currentDeltaWeek();
 
   activeOrders().forEach(o=>{
     const pn = String(o.pn == null ? '' : o.pn);
@@ -1861,7 +1871,7 @@ function fgRows(){
 
     // ⚠️ นับเฉพาะใบที่ Delta กรอกตัวเลขมาจริง · ใบที่อยู่ในไฟล์แต่เว้นช่องไว้
     //    ไม่มียอดให้เทียบ ถ้านับเป็น 0 ช่อง "ต่าง" จะฟ้องว่ายอดไม่ตรงทั้งที่ไม่มีข้อมูล
-    const dw = deltaWipOf(o.id);
+    const dw = deltaWipOf(o.id, curWeek);
     const dwNum = deltaWipNum(dw);
     if(dwNum != null){ g.deltaWip += dwNum; g.deltaHave++; }
     g.orders.push({o, inQty, outQty, ourWip: wipBalance(o, c), delta: dwNum == null ? null : dw});
@@ -1983,7 +1993,7 @@ function deliveryGroups(date, unit){
     const shippedBefore = ((cum[o.id] && cum[o.id].shipping) || 0) - alloc;
     const wipBefore = (Number(o.orderQty) || 0) - shippedBefore;
     const wip = Math.max(0, wipBefore);
-    const dw = deltaWipOf(o.id);
+    const dw = deltaWipOf(o.id, curWeek);
     /* ⚠️ อ่านยอดผ่าน deltaWipNum() เสมอ ห้ามหยิบ dw.wip ดิบ ๆ
      *    เครื่องที่รับข้อมูลมาจากการซิงค์ได้ '' แทน null (ดูคอมเมนต์ของ deltaWipNum)
      *    ซึ่ง Number('')||0 ได้ 0 และ '' == null เป็นเท็จ สองทางนี้พา 0 ลงกระดาษได้ทั้งคู่ */

@@ -209,6 +209,25 @@ test('การ์ดต้องเทียบราย PO และบอก�
   expect(cmp, 'ใบที่ Delta ไม่มีข้อมูล ต้องบอกตรง ๆ ว่าไม่มี ไม่ใช่โชว์ 0').toContain('ไม่มี');
 });
 
+test('ยอดค้างของ Delta นับเฉพาะงวดล่าสุด — ใบที่ส่งครบแล้ว Delta ตัดออกจากไฟล์ ต้องไม่ค้างยอดของงวดเก่า', async ({ page }) => {
+  // เจ้าของเจอ 14 ก.ย. 2026 — Delta ไม่ใส่ 0 ให้ใบที่ส่งครบ แต่ตัดออกจากไฟล์งวดใหม่ไปเลย
+  // แถวของงวดก่อนค้างอยู่เป็นประวัติ ถ้าหยิบโดยไม่ดูงวด ยอดค้างของ Delta จะเกินไปตลอด (ดู deltaWipOf)
+  await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 5000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'shipping', 5000, '2026-08-22')
+  ], [
+    deltaRow('PO-A1|' + PN_A, 34, 800),       // งวดเก่า — ตอนนั้นยังค้าง
+    deltaRow('PO-A2|' + PN_A, 35, 5000)       // งวดล่าสุด — ไม่มี PO-A1 แล้ว
+  ]);
+
+  expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) ต้องเป็นของงวดล่าสุดเท่านั้น ไม่ใช่ 5,800')
+    .toBe('5,000');
+  expect(await rowOf(page, PN_A, 'TUE-U'), 'เทียบได้แค่ใบที่อยู่ในไฟล์งวดล่าสุด').toContain('1/2');
+
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  expect(cmp, 'การ์ดต้องไม่อ้างยอดของงวดเก่า').not.toContain('wk34');
+});
+
 /** อ่านค่าในช่องหนึ่งของแถว — เจาะจงกว่าการดูข้อความทั้งแถว
  *  (เทสรอบแรกใช้ toContain('0') ซึ่งจริงเกือบตลอด เพราะ '5,000' ก็มี '0') */
 const cellOf = (page, pn, unit, i) =>
