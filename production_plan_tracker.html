@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-13.1">
+<meta name="app-version" content="2026-09-14.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1711,14 +1711,22 @@ function deltaWipNewer(row, than){
  *  ⚠️ "มีแถว" กับ "มียอด" ไม่ใช่เรื่องเดียวกันตั้งแต่ 5 ก.ย. 2026
  *     มีแถว = Delta เอ่ยถึงใบนี้ในไฟล์ที่นำเข้า
  *     มียอด = เขากรอกตัวเลขมาด้วย -> เอาไปพิมพ์ลงกระดาษได้
- *     แถวที่ wip ว่าง คือ "อยู่ในไฟล์แต่เขาไม่ได้ระบุยอด" คนละเรื่องกับ "ค้างศูนย์" */
-function deltaWipOf(orderId){
+ *     แถวที่ wip ว่าง คือ "อยู่ในไฟล์แต่เขาไม่ได้ระบุยอด" คนละเรื่องกับ "ค้างศูนย์"
+ *
+ *  ⚠️ คืนเฉพาะแถวของงวดล่าสุด (currentDeltaWeek) — แถวของงวดเก่าไม่ใช่ยอดค้างของตอนนี้
+ *     Delta ไม่ใส่ 0 ให้ใบที่ส่งครบแล้ว แต่ตัดใบนั้นออกจากไฟล์งวดใหม่ไปเลย
+ *     saveDeltaWip ล้างเฉพาะใบที่อยู่ในไฟล์ แถวของงวดก่อนจึงค้างอยู่เป็นประวัติ (ตั้งใจ — เทส #62)
+ *     ถ้าหยิบแถวล่าสุดของใบโดยไม่ดูงวด ยอดของงวดเก่าจะค้างไปตลอด (เจ้าของเจอ 14 ก.ย. 2026):
+ *     หน้า FG นับยอดค้างของ Delta เกิน · ใบที่ส่งครบแล้วโผล่ในหน้าใบส่งสินค้า · กระดาษพิมพ์ยอดเก่า
+ *
+ *  week ให้ผู้เรียกคิดครั้งเดียวแล้วส่งมา — เรียก currentDeltaWeek() ต่อใบจะวนทั้งตารางซ้ำทุกใบ */
+function deltaWipOf(orderId, week = currentDeltaWeek()){
   let best = null;
   state.deltaWip.forEach(d=>{
     if(d.voided || d.orderId !== orderId) return;
     if(!best || deltaWipNewer(d, best)) best = d;
   });
-  return best;
+  return best && String(best.week) === String(week) ? best : null;
 }
 
 /** ยอดตัวเลขของแถว deltaWip — คืน null ถ้าไฟล์ปล่อยช่องนั้นว่างไว้
@@ -1735,6 +1743,46 @@ function deltaWipNum(d){
   if(txt === '') return null;
   const n = Number(txt);
   return isFinite(n) ? n : null;
+}
+
+/** ยอดส่งราย PO — Map<orderId, [{date, qty}]> · คิดครั้งเดียวต่อการวาด ห้ามวน records ซ้ำต่อใบ */
+function shippingByOrder(){
+  const m = new Map();
+  state.records.forEach(r=>{
+    if(r.voided || r.process !== 'shipping') return;
+    if(!m.has(r.orderId)) m.set(r.orderId, []);
+    m.get(r.orderId).push({date: String(r.date || ''), qty: Number(r.qty) || 0});
+  });
+  return m;
+}
+
+/** ยอดค้างของ Delta หลังหักยอดที่เราส่งไปหลังนำเข้าไฟล์ — ใช้เฉพาะหน้ายอดคงคลัง FG
+ *
+ *  ไฟล์ Call In มาสัปดาห์ละครั้ง ระหว่างสัปดาห์เราส่งของไปเรื่อย ๆ แต่ Wip bal. ในไฟล์ไม่ขยับ
+ *  เจ้าของให้หักยอดส่งของเราออก "เฉพาะยอดที่โชว์ในหน้ายอดคงคลัง FG" (14 ก.ย. 2026)
+ *
+ *  ⚠️ ห้ามเอาไปใช้กับหน้าใบส่งสินค้าหรือกระดาษ — ช่อง Wip bal. บนใบต้องเป็นยอดของ Delta ตรง ๆ
+ *     (เจ้าของสั่ง 1 ก.ย. 2026 · วันที่ 14 ก.ย. 2026 ลองให้หักทุกที่แล้วเจ้าของเปลี่ยนเป็นเฉพาะหน้า FG)
+ *  ⚠️ นับยอดส่งที่ "วันที่ส่ง" ตั้งแต่วันที่นำเข้าไฟล์ (วันตามเวลาท้องถิ่นของเวลาสร้างแถวนั้น)
+ *     ไฟล์ Call In ไม่ได้บอกวันตัดยอดของ Delta · เจ้าของเลือกเกณฑ์นี้เอง
+ *     ยอดที่ส่งก่อนวันนำเข้าถือว่า Delta นับไปแล้วในไฟล์ · นำเข้าช้าหลายวัน ยอดจะออกสูงไว้ก่อน
+ *  ⚠️ ครอบที่ 0 — ส่งมากกว่าที่ Delta บอกว่าค้าง ไม่ได้แปลว่า Delta ติดเรา
+ *
+ *  คืน null ถ้า Delta ไม่ได้ให้ตัวเลข (ไม่อยู่ในไฟล์งวดล่าสุด หรือเว้นช่องว่าง) — ไม่มีอะไรให้หัก ห้ามเดา */
+function deltaWipLeft(dw, ships){
+  const raw = deltaWipNum(dw);
+  if(raw == null) return null;
+  const t = Date.parse(dw.createdAt);
+  // ไม่รู้ว่านำเข้าเมื่อไหร่ = ไม่รู้ว่ายอดส่งไหน Delta นับไปแล้ว · ไม่หักดีกว่าหักซ้ำ
+  const from = isFinite(t) ? isoLocal(new Date(t)) : '';
+  let shipped = 0;
+  if(from){
+    (ships || []).forEach(s=>{
+      if(s.date < from) return;
+      shipped += s.qty;
+    });
+  }
+  return {raw, shipped, left: Math.max(0, raw - shipped), from, week: dw.week};
 }
 
 /** งวดของไฟล์ Call In ที่นำเข้าล่าสุด — ตัวตัดสินว่าใบไหนนับว่า "อยู่ในรอบนี้"
@@ -1840,6 +1888,9 @@ function saveDeltaWip(items, week, fileName){
 function fgRows(){
   const cum = buildCumMap(state.records);
   const byKey = new Map();
+  // งวดเดียวกับที่หน้าใบส่งสินค้ายึด — ใบที่ Delta ตัดออกจากไฟล์งวดล่าสุดไม่นับเป็นยอดค้างของ Delta (ดู deltaWipOf)
+  const curWeek = currentDeltaWeek();
+  const ships = shippingByOrder();
 
   activeOrders().forEach(o=>{
     const pn = String(o.pn == null ? '' : o.pn);
@@ -1861,10 +1912,12 @@ function fgRows(){
 
     // ⚠️ นับเฉพาะใบที่ Delta กรอกตัวเลขมาจริง · ใบที่อยู่ในไฟล์แต่เว้นช่องไว้
     //    ไม่มียอดให้เทียบ ถ้านับเป็น 0 ช่อง "ต่าง" จะฟ้องว่ายอดไม่ตรงทั้งที่ไม่มีข้อมูล
-    const dw = deltaWipOf(o.id);
-    const dwNum = deltaWipNum(dw);
+    const dw = deltaWipOf(o.id, curWeek);
+    // หักยอดที่เราส่งไปหลังนำเข้าไฟล์ — เจ้าของเลือก 14 ก.ย. 2026 ให้หักเฉพาะหน้านี้ (ดู deltaWipLeft)
+    const dl = deltaWipLeft(dw, ships.get(o.id));
+    const dwNum = dl ? dl.left : null;
     if(dwNum != null){ g.deltaWip += dwNum; g.deltaHave++; }
-    g.orders.push({o, inQty, outQty, ourWip: wipBalance(o, c), delta: dwNum == null ? null : dw});
+    g.orders.push({o, inQty, outQty, ourWip: wipBalance(o, c), delta: dl});
   });
 
   const rows = [];
@@ -1983,10 +2036,12 @@ function deliveryGroups(date, unit){
     const shippedBefore = ((cum[o.id] && cum[o.id].shipping) || 0) - alloc;
     const wipBefore = (Number(o.orderQty) || 0) - shippedBefore;
     const wip = Math.max(0, wipBefore);
-    const dw = deltaWipOf(o.id);
+    const dw = deltaWipOf(o.id, curWeek);
     /* ⚠️ อ่านยอดผ่าน deltaWipNum() เสมอ ห้ามหยิบ dw.wip ดิบ ๆ
      *    เครื่องที่รับข้อมูลมาจากการซิงค์ได้ '' แทน null (ดูคอมเมนต์ของ deltaWipNum)
      *    ซึ่ง Number('')||0 ได้ 0 และ '' == null เป็นเท็จ สองทางนี้พา 0 ลงกระดาษได้ทั้งคู่ */
+    /* ⚠️ หน้านี้และกระดาษใช้ยอดดิบของ Delta — ห้ามหักยอดที่เราส่งไปหลังนำเข้าไฟล์ (deltaWipLeft)
+     *    เจ้าของเลือก 14 ก.ย. 2026 ให้หักเฉพาะยอดที่โชว์ในหน้ายอดคงคลัง FG */
     const dwNum = deltaWipNum(dw);
     const deltaLeft = dwNum == null ? 0 : dwNum;
 
@@ -2986,12 +3041,14 @@ function renderFgCard(pn, unit){
       <th style="width:110px">ค้างส่ง (Delta)</th><th style="width:90px">งวด</th>
       <th style="width:100px">ต่าง</th></tr></thead><tbody>` +
     g.orders.map(({o, ourWip, delta})=>{
-      const d = delta ? Number(delta.wip)||0 : null;
+      const d = delta ? delta.left : null;
       const diff = d == null ? null : ourWip - d;
+      const cut = delta && delta.shipped > 0
+        ? `<div class="hint">ไฟล์ ${numFmt(delta.raw)} − ส่งแล้ว ${numFmt(delta.shipped)}</div>` : '';
       return `<tr>
         <td class="left">${escapeHtml(o.poNo)}</td>
         <td>${numFmt(ourWip)}</td>
-        <td>${d == null ? '<span class="hint">ไม่มี</span>' : numFmt(d)}</td>
+        <td>${d == null ? '<span class="hint">ไม่มี</span>' : numFmt(d) + cut}</td>
         <td>${delta && delta.week ? 'wk'+escapeHtml(delta.week) : '—'}</td>
         <td>${diff == null ? '—'
              : diff === 0 ? '<span class="badge green">ตรง</span>'
@@ -3702,6 +3759,7 @@ async function fillDeliveryForm(zip, path, unit, date, groups, week){
         // ⚠️ ช่องนี้ต้องเป็นยอดของ Delta ไม่ใช่ยอดที่เราคิดเอง (เจ้าของสั่ง 1 ก.ย. 2026)
         //    เพราะเลขบนใบต้องตรงกับที่ลูกค้าถืออยู่ ไม่ใช่ตรงกับบัญชีเรา
         //    ใบที่ Delta ไม่มีข้อมูล เว้นว่างไว้ ห้ามเดาด้วยยอดของเรา
+        //    ห้ามหักยอดที่เราส่งไปหลังนำเข้าไฟล์ด้วย — เจ้าของเลือก 14 ก.ย. 2026 ให้หักเฉพาะหน้า FG (deltaWipLeft)
         if(deltaWip == null) clearCell(doc, rowEl, col.wip);
         else setNumberCell(doc, rowEl, col.wip, deltaWip, styleOf[col.wip]);
 

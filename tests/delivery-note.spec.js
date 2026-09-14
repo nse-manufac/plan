@@ -896,6 +896,87 @@ test('ยอดที่ยกเลิกแล้วต้องไม่ถ�
   expect(at('G10'), 'ต้องข้ามงวดที่ยกเลิกไปใช้งวด 34').toBe('7500');
 });
 
+/* ── ใบที่ Delta ตัดออกจากไฟล์งวดใหม่ ต้องไม่เหลือยอดของงวดเก่าค้างไว้ ──────────────
+ *
+ * เจ้าของเจอ 14 ก.ย. 2026 — ส่งของครบแล้ว Delta ไม่ได้ใส่ยอด 0 ของ PO นั้นมาในไฟล์งวดใหม่
+ * แต่ตัดใบนั้นออกไปเลย แถวของงวดก่อนจึงค้างอยู่เป็นประวัติ (ตั้งใจ — callin.spec #62)
+ * deltaWipOf() เคยหยิบแถวล่าสุดของใบโดยไม่ดูงวด ยอดของงวดเก่าจึงค้างไปตลอด
+ *
+ * ⚠️ ปลดช่องติ๊กก่อนทุกข้อ — ตัวกรองบนจอซ่อนใบที่ไม่อยู่ในไฟล์ไว้อยู่แล้ว
+ *    ถ้าไม่ปลด เทสจะเขียวเพราะตัวกรอง ทั้งที่ชั้นข้อมูลยังพายอดเก่าไปใช้ */
+test('ใบที่ส่งครบแล้ว และ Delta ตัดออกจากไฟล์งวดใหม่ ต้องไม่โผล่กลับมาเพราะยอดของงวดเก่า', async ({ page }) => {
+  const shippedOut = [{
+    id: 'S-full', date: '2026-08-20', orderId: 'PO-B001|' + PN_B, process: 'shipping',
+    qty: 12000, note: '', deviceName: 't',
+    createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z',
+    voided: false, _dirty: false
+  }];
+  await openWithDelta(page, [
+    deltaRow('PO-B001|' + PN_B, 34, 500),     // งวดเก่า — ตอนนั้น Delta ยังค้าง
+    deltaRow('PO-B055|' + PN_B, 35, 4000)     // งวดล่าสุด — ไม่มี PO-B001 แล้ว
+  ], ORDERS, shippedOut);
+  await page.uncheck('#dnHideNoDelta');
+  await page.waitForTimeout(150);
+
+  expect(await page.locator('#dnTable input.dn-alloc[data-order="PO-B001|' + PN_B + '"]').count(),
+    'บัญชีเราส่งครบ และงวดล่าสุด Delta ไม่ได้เรียกใบนี้แล้ว ต้องไม่ขึ้น').toBe(0);
+  await expect(page.locator('#dnTable'), 'ต้องไม่มีป้ายว่า Delta ยังค้าง').not.toContainText('Delta ยังค้าง');
+});
+
+test('ใบที่ไม่อยู่ในไฟล์งวดล่าสุดแต่ยังส่งของ — Wip bal. ต้องเว้นว่าง ห้ามพิมพ์ยอดของงวดเก่า', async ({ page }) => {
+  const ID = 'PO-B001|' + PN_B;
+  await openWithDelta(page, [
+    deltaRow(ID, 34, 9000),                   // งวดเก่า
+    deltaRow('PO-B055|' + PN_B, 35, 4000)     // งวดล่าสุด — ไม่มี PO-B001
+  ]);
+  await page.uncheck('#dnHideNoDelta');
+  await page.waitForTimeout(150);
+  await alloc(page, ID, 1000);
+
+  const cell = await page.locator(`#dnTable td[data-deltawip="${ID}"]`).innerText();
+  expect(cell, 'บนจอต้องบอกว่าไม่อยู่ในไฟล์').toContain('ไม่อยู่ในไฟล์');
+  expect(cell, 'ห้ามโชว์ยอด 9,000 ของงวดเก่า').not.toContain('9,000');
+
+  await pack(page, PN_B, 'perBox', 50);
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const g10 = (new RegExp('<c r="G10"[^>]*>.*?</c>').exec(xml) || [])[0] || '';
+  expect(g10, 'ช่อง Wip bal. ต้องเว้นว่าง ไม่ใช่ยอดของงวดเก่า').not.toMatch(/<v>[^<]+<\/v>/);
+});
+
+/* ── ยอดที่หักยอดส่งแล้ว ใช้เฉพาะหน้ายอดคงคลัง FG ──────────────────────────────
+ *
+ * เจ้าของขอให้หักยอดที่เราส่งไปหลังนำเข้าไฟล์ออกจากยอดของ Delta (14 ก.ย. 2026)
+ * แล้วเลือกให้หัก "เฉพาะยอดที่โชว์ในหน้ายอดคงคลัง FG" — หน้าใบส่งสินค้าและกระดาษยังเป็นยอดของ Delta ตรง ๆ
+ * ข้อนี้คุมไม่ให้ใครเผลอเอาตัวหักไปใช้กับหน้านี้หรือกระดาษ · ฝั่งที่หักอยู่ใน fg.spec.js
+ *
+ * ⚠️ วันส่งในเทสห่างจากวันนำเข้าอย่างน้อยสองวัน — เวลานำเข้าเก็บเป็น UTC แล้วแปลงเป็นวันท้องถิ่น
+ *    ถ้าวางชิดกัน เครื่องที่รันเทสคนละโซนเวลาจะได้วันคนละวัน แล้วเทสแกว่ง */
+const shipRec = (id, orderId, date, qty) => ({
+  id, date, orderId, process: 'shipping', qty, note: '', deviceName: 't',
+  createdAt: date + 'T05:00:00.000Z', updatedAt: date + 'T05:00:00.000Z', voided: false, _dirty: false
+});
+
+test('หน้าใบส่งสินค้าและกระดาษใช้ Wip bal. ของ Delta ตรง ๆ — ไม่หักยอดที่ส่งหลังนำเข้าไฟล์', async ({ page }) => {
+  const ID = 'PO-B001|' + PN_B;
+  await openWithDelta(page, [deltaRow(ID, 35, 5000, '2026-09-01T05:00:00.000Z')], ORDERS, [
+    shipRec('s2', ID, '2026-09-03', 1200)     // ส่งหลังนำเข้า — หน้า FG หัก แต่หน้านี้ห้ามหัก
+  ]);
+  await page.fill('#dnDate', '2026-09-05');
+  await page.waitForTimeout(200);
+  await alloc(page, ID, 1000);
+
+  const cell = await page.locator(`#dnTable td[data-deltawip="${ID}"]`).innerText();
+  expect(cell, 'บนจอต้องเป็นยอดในไฟล์ของ Delta').toContain('5,000');
+  expect(cell, 'ห้ามเป็นยอดที่หักแล้ว').not.toContain('3,800');
+
+  await pack(page, PN_B, 'perBox', 50);
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>[^<]*<v>([^<]*)</v>').exec(xml) || [])[1];
+  expect(at('G10'), 'กระดาษต้องเป็นยอดในไฟล์ของ Delta ตรง ๆ').toBe('5000');
+});
+
 // ── ค้นหา ─────────────────────────────────────
 //
 // พนักงานแจ้ง 31 ส.ค. 2026 ว่าไล่หา PO กับ P/N ในรายการยาว ๆ ลำบาก

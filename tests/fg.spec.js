@@ -209,6 +209,42 @@ test('การ์ดต้องเทียบราย PO และบอก�
   expect(cmp, 'ใบที่ Delta ไม่มีข้อมูล ต้องบอกตรง ๆ ว่าไม่มี ไม่ใช่โชว์ 0').toContain('ไม่มี');
 });
 
+test('ยอดค้างของ Delta นับเฉพาะงวดล่าสุด — ใบที่ส่งครบแล้ว Delta ตัดออกจากไฟล์ ต้องไม่ค้างยอดของงวดเก่า', async ({ page }) => {
+  // เจ้าของเจอ 14 ก.ย. 2026 — Delta ไม่ใส่ 0 ให้ใบที่ส่งครบ แต่ตัดออกจากไฟล์งวดใหม่ไปเลย
+  // แถวของงวดก่อนค้างอยู่เป็นประวัติ ถ้าหยิบโดยไม่ดูงวด ยอดค้างของ Delta จะเกินไปตลอด (ดู deltaWipOf)
+  await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 5000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'shipping', 5000, '2026-08-22')
+  ], [
+    deltaRow('PO-A1|' + PN_A, 34, 800),       // งวดเก่า — ตอนนั้นยังค้าง
+    deltaRow('PO-A2|' + PN_A, 35, 5000)       // งวดล่าสุด — ไม่มี PO-A1 แล้ว
+  ]);
+
+  expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) ต้องเป็นของงวดล่าสุดเท่านั้น ไม่ใช่ 5,800')
+    .toBe('5,000');
+  expect(await rowOf(page, PN_A, 'TUE-U'), 'เทียบได้แค่ใบที่อยู่ในไฟล์งวดล่าสุด').toContain('1/2');
+
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  expect(cmp, 'การ์ดต้องไม่อ้างยอดของงวดเก่า').not.toContain('wk34');
+});
+
+test('ยอดค้างของ Delta หักยอดที่เราส่งหลังวันนำเข้าไฟล์ — เจ้าของสั่ง 14 ก.ย. 2026', async ({ page }) => {
+  // ⚠️ วันส่งห่างจากวันนำเข้าสองวันขึ้นไป — เวลานำเข้าเป็น UTC แปลงเป็นวันท้องถิ่น (ดู delivery-note.spec.js)
+  await open(page, [order('PO-A1', PN_A, 5000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'shipping', 2000, '2026-08-28'),   // ก่อนนำเข้า — อยู่ในไฟล์ของ Delta แล้ว
+    rec('r2', 'PO-A1|' + PN_A, 'shipping', 1000, '2026-09-03')    // หลังนำเข้า — ต้องหัก
+  ], [deltaRow('PO-A1|' + PN_A, 35, 3000, '2026-09-01T05:00:00.000Z')]);
+
+  expect(await cellOf(page, PN_A, 'TUE-U', 5), 'ค้างส่ง (เรา) 5,000 − 3,000').toBe('2,000');
+  expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) 3,000 − 1,000 ไม่หัก 2,000 ที่ส่งก่อนนำเข้า')
+    .toBe('2,000');
+  expect(await rowOf(page, PN_A, 'TUE-U'), 'หักแล้วตรงกันพอดี').toContain('ตรงกันทุกใบ');
+
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  expect(cmp, 'การ์ดบอกยอดดิบจากไฟล์กับยอดที่หักไป').toContain('ไฟล์ 3,000');
+});
+
 /** อ่านค่าในช่องหนึ่งของแถว — เจาะจงกว่าการดูข้อความทั้งแถว
  *  (เทสรอบแรกใช้ toContain('0') ซึ่งจริงเกือบตลอด เพราะ '5,000' ก็มี '0') */
 const cellOf = (page, pn, unit, i) =>
