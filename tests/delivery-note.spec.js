@@ -944,10 +944,11 @@ test('ใบที่ไม่อยู่ในไฟล์งวดล่า�
   expect(g10, 'ช่อง Wip bal. ต้องเว้นว่าง ไม่ใช่ยอดของงวดเก่า').not.toMatch(/<v>[^<]+<\/v>/);
 });
 
-/* ── หักยอดที่เราส่งไปแล้วออกจาก Wip bal. ของ Delta (เจ้าของสั่ง 14 ก.ย. 2026) ──────────────
+/* ── ยอดที่หักยอดส่งแล้ว ใช้เฉพาะหน้ายอดคงคลัง FG ──────────────────────────────
  *
- * ไฟล์ Call In มาสัปดาห์ละครั้ง ระหว่างสัปดาห์เราส่งของไปแล้วแต่ Wip bal. ในไฟล์ไม่ขยับ
- * เกณฑ์ที่เจ้าของเลือก: หักยอดที่ "วันที่ส่ง" ตั้งแต่วันที่นำเข้าไฟล์ · บนกระดาษเป็นยอดก่อนส่งใบนี้
+ * เจ้าของขอให้หักยอดที่เราส่งไปหลังนำเข้าไฟล์ออกจากยอดของ Delta (14 ก.ย. 2026)
+ * แล้วเลือกให้หัก "เฉพาะยอดที่โชว์ในหน้ายอดคงคลัง FG" — หน้าใบส่งสินค้าและกระดาษยังเป็นยอดของ Delta ตรง ๆ
+ * ข้อนี้คุมไม่ให้ใครเผลอเอาตัวหักไปใช้กับหน้านี้หรือกระดาษ · ฝั่งที่หักอยู่ใน fg.spec.js
  *
  * ⚠️ วันส่งในเทสห่างจากวันนำเข้าอย่างน้อยสองวัน — เวลานำเข้าเก็บเป็น UTC แล้วแปลงเป็นวันท้องถิ่น
  *    ถ้าวางชิดกัน เครื่องที่รันเทสคนละโซนเวลาจะได้วันคนละวัน แล้วเทสแกว่ง */
@@ -955,42 +956,25 @@ const shipRec = (id, orderId, date, qty) => ({
   id, date, orderId, process: 'shipping', qty, note: '', deviceName: 't',
   createdAt: date + 'T05:00:00.000Z', updatedAt: date + 'T05:00:00.000Z', voided: false, _dirty: false
 });
-const IMPORTED = '2026-09-01T05:00:00.000Z';
 
-test('Wip bal. ของ Delta หักยอดที่ส่งหลังวันนำเข้าไฟล์ — ไม่หักยอดก่อนนำเข้า และไม่หักใบนี้เอง', async ({ page }) => {
+test('หน้าใบส่งสินค้าและกระดาษใช้ Wip bal. ของ Delta ตรง ๆ — ไม่หักยอดที่ส่งหลังนำเข้าไฟล์', async ({ page }) => {
   const ID = 'PO-B001|' + PN_B;
-  await openWithDelta(page, [deltaRow(ID, 35, 5000, IMPORTED)], ORDERS, [
-    shipRec('s1', ID, '2026-08-28', 700),     // ก่อนนำเข้า — Delta นับไปแล้วในไฟล์ ห้ามหักซ้ำ
-    shipRec('s2', ID, '2026-09-03', 1200)     // หลังนำเข้า — ต้องหัก
+  await openWithDelta(page, [deltaRow(ID, 35, 5000, '2026-09-01T05:00:00.000Z')], ORDERS, [
+    shipRec('s2', ID, '2026-09-03', 1200)     // ส่งหลังนำเข้า — หน้า FG หัก แต่หน้านี้ห้ามหัก
   ]);
   await page.fill('#dnDate', '2026-09-05');
   await page.waitForTimeout(200);
-  await alloc(page, ID, 1000);                // ใบนี้เอง — ไม่หัก
+  await alloc(page, ID, 1000);
 
   const cell = await page.locator(`#dnTable td[data-deltawip="${ID}"]`).innerText();
-  expect(cell, 'บนจอต้องเป็น 5,000 − 1,200').toContain('3,800');
-  expect(cell, 'และบอกยอดดิบจากไฟล์กับยอดที่หักไป').toContain('ไฟล์ 5,000');
+  expect(cell, 'บนจอต้องเป็นยอดในไฟล์ของ Delta').toContain('5,000');
+  expect(cell, 'ห้ามเป็นยอดที่หักแล้ว').not.toContain('3,800');
 
   await pack(page, PN_B, 'perBox', 50);
   const { out } = await exportForm(page);
   const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
   const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>[^<]*<v>([^<]*)</v>').exec(xml) || [])[1];
-  expect(at('G10'), 'กระดาษ = ยอดก่อนส่งใบนี้ 5,000 − 1,200 (ไม่หัก 700 ก่อนนำเข้า ไม่หัก 1,000 ของใบนี้)')
-    .toBe('3800');
-});
-
-test('ส่งครบตามที่ Delta ค้างหลังนำเข้าไฟล์แล้ว ใบนั้นต้องไม่ค้างบนจอเพราะยอดของ Delta', async ({ page }) => {
-  const ID = 'PO-B001|' + PN_B;
-  await openWithDelta(page, [deltaRow(ID, 35, 500, IMPORTED)], ORDERS, [
-    shipRec('s1', ID, '2026-08-20', 11500),   // ก่อนนำเข้า — ไฟล์ของ Delta นับแล้ว เหลือค้าง 500
-    shipRec('s2', ID, '2026-09-03', 500)      // ส่งส่วนที่ค้างหลังนำเข้าไฟล์
-  ]);
-  await page.fill('#dnDate', '2026-09-05');
-  await page.uncheck('#dnHideNoDelta');
-  await page.waitForTimeout(200);
-
-  expect(await page.locator(`#dnTable input.dn-alloc[data-order="${ID}"]`).count(),
-    'บัญชีเราส่งครบ และ Delta หักแล้วไม่เหลือค้าง ต้องไม่ขึ้น').toBe(0);
+  expect(at('G10'), 'กระดาษต้องเป็นยอดในไฟล์ของ Delta ตรง ๆ').toBe('5000');
 });
 
 // ── ค้นหา ─────────────────────────────────────
