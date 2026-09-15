@@ -10,9 +10,9 @@
 const TOKEN = 'CHANGE-ME-1234';   // ⚠️ ต้องเปลี่ยน และต้องตรงกับที่กรอกในโปรแกรม
 
 // Orders / Records ใช้ระบบ upsert รายแถวอิง id — ห้ามลบคอลัมน์ id กับ updatedAt
-// ⚠️ 'voided' ต้องอยู่ท้ายสุดเสมอ — doPushRows เขียนแถวด้วยตำแหน่ง (toRow ตามลำดับ cols)
+// ⚠️ คอลัมน์ใหม่ต้องเติม "ท้ายสุด" ของรายการเสมอ — doPushRows เขียนแถวด้วยตำแหน่ง (toRow ตามลำดับ cols)
 //    ส่วน sheetOf() เติมคอลัมน์ที่ขาด "ต่อท้าย" หัวตารางของชีตเดิม
-//    ลำดับสองฝั่งจึงตรงกันได้ต่อเมื่อคอลัมน์ใหม่ถูกเติมท้ายทั้งคู่
+//    ลำดับสองฝั่งจึงตรงกันได้ต่อเมื่อคอลัมน์ใหม่ถูกเติมท้ายทั้งคู่ (เช่น batchId · override* อยู่หลัง voided)
 //    ถ้าแทรกไว้กลางรายการ ชีตที่มีอยู่แล้วจะเขียนข้อมูลเหลื่อมคอลัมน์ทั้งตารางโดยไม่มี error
 const ORDER_COLS  = ['id','week','poNo','pn','subName','osc','pc','orderQty','orderDate',
   'planWinding','planAssembly','planSupport','planInspection','status','importedAt','updatedAt',
@@ -27,8 +27,18 @@ const DELIVERY_COLS = ['id','date','unit','orderId','pn','perBox','boxes','remai
 
 // ยอดค้างส่งที่ Delta บันทึกไว้ อ่านมาจากไฟล์ Call In รายสัปดาห์
 // หนึ่งแถว = หนึ่งใบสั่ง ต่อหนึ่งงวด — เก็บทุกงวด ไม่ทับของเก่า เพื่อให้ย้อนตรวจได้ตอน Delta ถาม
+// override* = ตัวแก้มือเมื่อ Delta ทำ Wip bal. ผิด (เจ้าของสั่ง 15 ก.ย. 2026) — อยู่บนแถวของงวดนั้น
+//   จึงหมดอายุเองเมื่อนำเข้าไฟล์งวดใหม่ · wip เดิมจากไฟล์ไม่ถูกทับ · บังคับชื่อผู้แก้กับเหตุผลที่ฝั่งแอป
+//   ⚠️ ต่อท้ายหลัง voided — ชีตที่มีอยู่แล้วถูกเติมหัวคอลัมน์ต่อท้าย ต้องเรียงตรงกัน (ดูคอมเมนต์ข้างบน)
 const DELTAWIP_COLS = ['id','orderId','week','wip','fileName',
-  'deviceName','createdAt','updatedAt','voided'];
+  'deviceName','createdAt','updatedAt','voided',
+  'wipOverride','overrideNote','overrideBy','overrideAt'];
+
+// คอลัมน์ที่ doPushRows ต้องคงค่าเดิมไว้ ถ้าแถวที่ส่งมาไม่มีช่องนั้นเลย (undefined)
+// ⚠️ เครื่องที่ยังใช้แอปรุ่นเก่าไม่รู้จักคอลัมน์ตัวแก้มือ cleanForPush ของมันจึงไม่ส่งช่องพวกนี้
+//    ถ้าไม่กันไว้ toRow จะเขียนค่าว่างทับ — ยอดที่หัวหน้าแก้มือไว้หายเงียบ ๆ ทุกครั้งที่เครื่องนั้นซิงค์แถวนั้น
+//    แอปรุ่นใหม่ที่ตั้งใจยกเลิกการแก้ต้องส่งค่าว่าง ('' หรือ null) มาตรง ๆ ไม่ใช่ละช่องไว้
+var KEEP_IF_ABSENT = { DeltaWip: ['wipOverride', 'overrideNote', 'overrideBy', 'overrideAt'] };
 
 // ⚠️ เพิ่มตารางใหม่ ต้องเติมให้ครบทั้งสี่ที่ในไฟล์นี้ + setupSheets()
 //    ตกหล่นที่ไหนที่หนึ่งจะไม่มี error แต่ข้อมูลคอลัมน์นั้นจะหายเงียบ ๆ ทุกครั้งที่ซิงค์
@@ -49,7 +59,7 @@ var TIMESTAMP_COLS = {
   Orders: ['importedAt', 'updatedAt'],
   Records: ['createdAt', 'updatedAt'],
   DeliveryNotes: ['createdAt', 'updatedAt'],
-  DeltaWip: ['createdAt', 'updatedAt']
+  DeltaWip: ['createdAt', 'updatedAt', 'overrideAt']
 };
 
 // ═══════════ จุดเข้า ═══════════
@@ -261,10 +271,22 @@ function doPushRows(table, rows, device) {
     }
     var stamp = nowIso();
     var appends = [];
+    // คอลัมน์ที่ต้องคงค่าเดิมเมื่อแถวที่ส่งมา "ไม่มีช่องนั้นเลย" — อ่านของเดิมครั้งเดียวทั้งตาราง ไม่อ่านทีละแถว
+    var keep = KEEP_IF_ABSENT[table] || [];
+    var existing = (keep.length && last >= 2)
+      ? sheet.getRange(2, 1, last - 1, Math.max(sheet.getLastColumn(), cols.length)).getValues() : [];
+    var head = keep.length ? sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), cols.length)).getValues()[0].map(String) : [];
     for (var k = 0; k < rows.length; k++) {
       var r = rows[k];
       if (!r.id) continue;
       r.updatedAt = stamp;
+      var atRow = index[String(r.id)];
+      if (atRow && keep.length) {
+        for (var q = 0; q < keep.length; q++) {
+          var hi = head.indexOf(keep[q]);
+          if (r[keep[q]] === undefined && hi >= 0) r[keep[q]] = existing[atRow - 2][hi];
+        }
+      }
       if (table === 'Records') {
         if (!r.deviceName) r.deviceName = device || '';
         r.voided = r.voided ? 'TRUE' : 'FALSE';

@@ -20,6 +20,88 @@ const ORDER = (id, updatedAt) => ({ id, week: 'W36', poNo: 'PO-' + id, pn: 'PN-'
   subName: 'TUE-U', orderQty: 100, orderDate: '2026-09-01', status: 'active',
   importedAt: updatedAt, updatedAt });
 
+/* ── ตัวแก้มือ Wip bal. ของ Delta — คอลัมน์ใหม่ต้องต่อท้ายชีตเดิมโดยไม่ทำข้อมูลเดิมเหลื่อม ────────
+ *
+ * เจ้าของสั่ง 15 ก.ย. 2026 · ชีต DeltaWip ของจริงมีข้อมูลอยู่แล้วด้วยหัวตาราง 9 คอลัมน์
+ * doPushRows เขียนแถวตามตำแหน่ง ส่วน sheetOf เติมหัวที่ขาดต่อท้าย — ถ้าวันหนึ่งมีคนแทรกคอลัมน์
+ * ไว้กลางรายการ ทุกแถวที่เขียนใหม่จะเหลื่อมคอลัมน์โดยไม่มี error · เลขในเทสเป็นเลขสมมติ */
+const OLD_DELTAWIP_HEAD = ['id','orderId','week','wip','fileName','deviceName','createdAt','updatedAt','voided'];
+
+test('DeltaWip — ชีตเดิม 9 คอลัมน์ได้หัวของตัวแก้มือต่อท้าย และข้อมูลเดิมไม่เหลื่อม', async () => {
+  const { api, book } = loadGs();
+  const sheet = book.insertSheet('DeltaWip');
+  sheet.rows[0] = OLD_DELTAWIP_HEAD.slice();
+  sheet.rows[1] = ['DW1', 'PO-1|PN-1', '36', 500, 'c.xlsx', 'A',
+                   '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', 'FALSE'];
+
+  const res = api.doPushRows('DeltaWip', [{
+    id: 'DW2', orderId: 'PO-2|PN-2', week: '36', wip: 800, fileName: 'c.xlsx', deviceName: 'B',
+    createdAt: '2026-09-02T00:00:00.000Z', updatedAt: '2026-09-02T00:00:00.000Z', voided: false,
+    wipOverride: 650, overrideNote: 'เทียบใบส่งของแล้ว Delta นับขาดหนึ่งรอบ', overrideBy: 'หัวหน้าทดสอบ',
+    overrideAt: '2026-09-03T01:02:03.000Z'
+  }], 'B');
+  expect(res.ok, res.error).toBe(true);
+
+  expect(sheet.rows[0], 'หัวของตัวแก้มือต้องต่อท้ายหัวเดิม ไม่แทรกกลาง')
+    .toEqual([...OLD_DELTAWIP_HEAD, 'wipOverride', 'overrideNote', 'overrideBy', 'overrideAt']);
+  expect(sheet.rows[1].slice(0, 4), 'แถวเดิมต้องไม่ถูกแตะ').toEqual(['DW1', 'PO-1|PN-1', '36', 500]);
+
+  const rows = api.doPullRows('DeltaWip', '').rows;
+  const old = rows.find(r => r.id === 'DW1');
+  const neu = rows.find(r => r.id === 'DW2');
+  expect(old.wip, 'ยอดของแถวเดิมต้องอยู่ช่องเดิม').toBe(500);
+  expect(old.wipOverride, 'แถวเดิมไม่มีการแก้มือ ต้องว่าง ไม่ใช่ 0').toBe('');
+  expect(neu.wip, 'ยอดจากไฟล์ของ Delta ต้องไม่ถูกทับด้วยยอดที่แก้').toBe(800);
+  expect(neu.wipOverride).toBe(650);
+  expect(neu.overrideNote).toBe('เทียบใบส่งของแล้ว Delta นับขาดหนึ่งรอบ');
+  expect(neu.overrideBy).toBe('หัวหน้าทดสอบ');
+  expect(neu.overrideAt).toBe('2026-09-03T01:02:03.000Z');
+});
+
+test('DeltaWip — เครื่องแอปรุ่นเก่าส่งแถวเดิมขึ้นมา ยอดที่แก้มือไว้ต้องไม่ถูกล้าง', async () => {
+  // แอปรุ่นเก่าไม่รู้จักคอลัมน์ตัวแก้มือ cleanForPush จึงไม่ส่งช่องพวกนี้ (ไม่ใช่ส่งค่าว่าง)
+  const { api } = loadGs();
+  const base = { id: 'DW1', orderId: 'PO-1|PN-1', week: '36', wip: 500, fileName: 'c.xlsx', deviceName: 'A',
+    createdAt: '2026-09-01T00:00:00.000Z', voided: false };
+  api.doPushRows('DeltaWip', [Object.assign({}, base, { wipOverride: 450, overrideNote: 'ทดสอบ',
+    overrideBy: 'หัวหน้าทดสอบ', overrideAt: '2026-09-03T01:02:03.000Z' })], 'A');
+
+  api.doPushRows('DeltaWip', [Object.assign({}, base, { wip: 520, fileName: 'c2.xlsx' })], 'OLD');   // รุ่นเก่า
+
+  const row = api.doPullRows('DeltaWip', '').rows[0];
+  expect(row.wip, 'ยอดจากไฟล์อัปเดตตามปกติ').toBe(520);
+  expect(row.wipOverride, 'ยอดที่แก้มือต้องยังอยู่').toBe(450);
+  expect(row.overrideBy).toBe('หัวหน้าทดสอบ');
+  expect(row.overrideNote).toBe('ทดสอบ');
+  expect(row.overrideAt).toBe('2026-09-03T01:02:03.000Z');
+});
+
+test('DeltaWip — แอปรุ่นใหม่ส่งช่องตัวแก้มือเป็นค่าว่างมาตรง ๆ ต้องล้างได้ (ยกเลิกการแก้)', async () => {
+  const { api } = loadGs();
+  const base = { id: 'DW1', orderId: 'PO-1|PN-1', week: '36', wip: 500, voided: false,
+    createdAt: '2026-09-01T00:00:00.000Z' };
+  api.doPushRows('DeltaWip', [Object.assign({}, base, { wipOverride: 450, overrideNote: 'ทดสอบ',
+    overrideBy: 'หัวหน้าทดสอบ', overrideAt: '2026-09-03T01:02:03.000Z' })], 'A');
+  api.doPushRows('DeltaWip', [Object.assign({}, base, { wipOverride: null, overrideNote: '',
+    overrideBy: '', overrideAt: '' })], 'A');
+
+  const row = api.doPullRows('DeltaWip', '').rows[0];
+  expect(row.wipOverride, 'ยกเลิกแล้วต้องว่าง').toBe('');
+  expect(row.overrideBy).toBe('');
+});
+
+test('DeltaWip — เวลาที่แก้มือที่ชีตแปลงเป็นวันที่ ต้องกลับมาเป็น ISO', async () => {
+  const { api, book } = loadGs();
+  api.doPushRows('DeltaWip', [{ id: 'DW1', orderId: 'PO-1|PN-1', week: '36', wip: 500, voided: false,
+    createdAt: '2026-09-01T00:00:00.000Z', wipOverride: 450, overrideNote: 'ทดสอบ', overrideBy: 'ทดสอบ',
+    overrideAt: '2026-09-03T01:02:03.000Z' }], 'A');
+  const sheet = book.getSheetByName('DeltaWip');
+  const col = sheet.rows[0].indexOf('overrideAt');
+  sheet.rows[1][col] = new Date('2026-09-03T01:02:03.000Z');     // จำลอง Sheets แปลงชนิดเอง
+  const row = api.doPullRows('DeltaWip', '').rows[0];
+  expect(row.overrideAt, 'ต้องได้สตริง ISO ไม่ใช่ Date object').toBe('2026-09-03T01:02:03.000Z');
+});
+
 /* ── ช่องโหว่เวลา — ข้อที่ทำให้ข้อมูลหายจากเครื่องหนึ่งถาวร ────────────
  *
  * เหตุการณ์จริงที่กันอยู่:
