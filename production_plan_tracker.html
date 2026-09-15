@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-15.2">
+<meta name="app-version" content="2026-09-15.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1740,11 +1740,37 @@ function deltaWipOf(orderId, week = currentDeltaWeek()){
  *     ด้วย toRow() ที่แปลง null เป็น '' พอ pull กลับมาจึงได้สตริงว่าง (ไม่ใช่ 0
  *     เพราะ getValues() คืน '' สำหรับเซลล์เปล่า) ส่วนศูนย์จริงกลับมาเป็นเลข 0 */
 function deltaWipNum(d){
+  // ⚠️ ยอดที่แก้มือชนะยอดในไฟล์ทุกที่ รวมช่อง Wip bal. บนกระดาษ (เจ้าของสั่ง 15 ก.ย. 2026)
+  //    ทุกจุดอ่านยอดของ Delta ผ่านฟังก์ชันนี้ จึงไม่ต้องไปแก้ทีละหน้า · ยอดดิบของไฟล์ดูที่ deltaWipFileNum
+  const o = deltaWipOverride(d);
+  return o != null ? o : deltaWipFileNum(d);
+}
+
+/** ยอดตามไฟล์ของ Delta ล้วน ๆ ไม่สนการแก้มือ — ใช้โชว์คู่กับยอดที่แก้ · กติกาช่องว่างเหมือน deltaWipNum */
+function deltaWipFileNum(d){
   if(!d) return null;
   const txt = String(d.wip == null ? '' : d.wip).trim();
   if(txt === '') return null;
   const n = Number(txt);
   return isFinite(n) ? n : null;
+}
+
+/** ยอดที่แก้มือไว้บนแถวนี้ — null ถ้าไม่ได้แก้หรือยกเลิกแล้ว (รับทั้ง null และ '' เหตุผลเดียวกับ deltaWipNum) */
+function deltaWipOverride(d){
+  if(!d) return null;
+  const txt = String(d.wipOverride == null ? '' : d.wipOverride).trim();
+  if(txt === '') return null;
+  const n = Number(txt);
+  return isFinite(n) ? n : null;
+}
+
+/** ข้อความอธิบายการแก้มือ — ยอดในไฟล์ · ยอดที่แก้ · ใครแก้ · เมื่อไหร่ · เพราะอะไร (ยังไม่ escape) */
+function deltaOverrideTip(d){
+  const file = deltaWipFileNum(d), ov = deltaWipOverride(d);
+  const t = Date.parse(d.overrideAt);
+  return `ไฟล์ของ Delta ${file == null ? 'ว่าง' : numFmt(file)} → แก้มือเป็น ${numFmt(ov)}`
+    + ` · โดย ${d.overrideBy || '-'}` + (isFinite(t) ? ` · ${fmtDateTH(isoLocal(new Date(t)))}` : '')
+    + ` · เหตุผล: ${d.overrideNote || '-'}`;
 }
 
 /** ยอดค้างของ Delta หลังหักยอดที่เราส่งแล้วแต่ Delta ยังไม่นับ — ใช้เฉพาะหน้ายอดคงคลัง FG
@@ -1904,7 +1930,7 @@ function fgRows(){
     const dl = deltaWipLeft(dw, o.orderQty, outQty);
     const dwNum = dl ? dl.left : null;
     if(dwNum != null){ g.deltaWip += dwNum; g.deltaHave++; }
-    g.orders.push({o, inQty, outQty, ourWip: wipBalance(o, c), delta: dl});
+    g.orders.push({o, inQty, outQty, ourWip: wipBalance(o, c), delta: dl, dw});
   });
 
   const rows = [];
@@ -2047,7 +2073,7 @@ function deliveryGroups(date, unit){
     // จัดกลุ่มด้วยข้อความเสมอ ไม่งั้น P/N เดียวกันที่มาคนละทางจะแตกเป็นสองกลุ่ม
     const key = String(o.pn == null ? '' : o.pn);
     if(!byPn.has(key)) byPn.set(key, []);
-    byPn.get(key).push({o, wip, alloc, deltaWip: dwNum, deltaWeek: dw ? dw.week : '',
+    byPn.get(key).push({o, wip, alloc, deltaWip: dwNum, deltaRow: dw, deltaWeek: dw ? dw.week : '',
       /* อยู่ในไฟล์ Call In "ของงวดล่าสุด" หรือไม่ — คนละเรื่องกับ "มียอด" (ดู deltaWipNum)
        *
        * ⚠️ ต้องเทียบงวดด้วย ห้ามใช้แค่ !!dw · ใบที่ Delta ตัดออกจากไฟล์รอบนี้
@@ -3027,22 +3053,31 @@ function renderFgCard(pn, unit){
     `<thead><tr><th>PO No.</th><th style="width:110px">ค้างส่ง (เรา)</th>
       <th style="width:110px">ค้างส่ง (Delta)</th><th style="width:90px">งวด</th>
       <th style="width:100px">ต่าง</th></tr></thead><tbody>` +
-    g.orders.map(({o, ourWip, delta})=>{
+    g.orders.map(({o, ourWip, delta, dw})=>{
       const d = delta ? delta.left : null;
       const diff = d == null ? null : ourWip - d;
+      // ยอดฐานของการหักคือยอดที่แก้มือถ้ามี (deltaWipNum) — บอกให้ชัดว่าเลขนั้นมาจากไฟล์หรือจากคนแก้
+      const edited = dw && deltaWipOverride(dw) != null;
       const cut = delta && delta.uncounted > 0
         ? `<div class="hint" title="ยอดสั่ง − Wip bal. = Delta นับส่งแล้ว ${numFmt(delta.counted)} · เราส่งมากกว่านั้น ${numFmt(delta.uncounted)}">`
-          + `ไฟล์ ${numFmt(delta.raw)} − Delta ยังไม่นับ ${numFmt(delta.uncounted)}</div>` : '';
+          + `${edited ? 'แก้มือ' : 'ไฟล์'} ${numFmt(delta.raw)} − Delta ยังไม่นับ ${numFmt(delta.uncounted)}</div>` : '';
+      const tools = (edited ? `<div><span class="badge amber" title="${escapeHtml(deltaOverrideTip(dw))}">แก้มือ</span></div>` : '')
+        + (dw ? `<button type="button" class="btn-mini fg-dw-edit" data-dw="${escapeHtml(dw.id)}"`
+          + ` title="แก้ Wip bal. ของ Delta ด้วยมือ — ต้องใส่เหตุผลและชื่อผู้แก้">✎ แก้</button>` : '');
       return `<tr>
         <td class="left">${escapeHtml(o.poNo)}</td>
         <td>${numFmt(ourWip)}</td>
-        <td>${d == null ? '<span class="hint">ไม่มี</span>' : numFmt(d) + cut}</td>
+        <td>${(d == null ? '<span class="hint">ไม่มี</span>' : numFmt(d) + cut) + tools}</td>
         <td>${delta && delta.week ? 'wk'+escapeHtml(delta.week) : '—'}</td>
         <td>${diff == null ? '—'
              : diff === 0 ? '<span class="badge green">ตรง</span>'
              : `<span class="badge amber">${diff>0?'+':''}${numFmt(diff)}</span>`}</td>
       </tr>`;
     }).join('') + '</tbody>';
+  document.querySelectorAll('#fgCardCmp .fg-dw-edit').forEach(el=>{
+    // renderAll() ไม่ได้วาดการ์ดนี้ใหม่ — แก้เสร็จต้องวาดเองให้เห็นเลขที่แก้ทันที
+    el.addEventListener('click', function(){ if(editDeltaWip(this.dataset.dw)) renderFgCard(pn, unit); });
+  });
 
   document.getElementById('fgCardPanel').style.display = '';
   document.getElementById('fgCardPanel').scrollIntoView({block:'nearest'});
@@ -3962,7 +3997,7 @@ function renderDeliveryNote(){
               data-pn="${pn}" value="${escapeHtml(g.remark)}" style="width:88px" placeholder="Remark"
               title="ลงช่อง Remark ของใบส่งสินค้า เช่น NEW / RETURN / แพค 3 กล่องไม่เต็ม"></td>`;
 
-    return g.orders.map(({o, wip, alloc, deltaWip, deltaWeek, inCallIn, onlyDelta, wipBefore}, i)=>{
+    return g.orders.map(({o, wip, alloc, deltaWip, deltaRow, deltaWeek, inCallIn, onlyDelta, wipBefore}, i)=>{
       const first = i === 0;
       return `<tr${first ? ' class="dn-group"' : ''}>`
         + (first ? `<td class="dn-pn left" rowspan="${span}"><b>${pn}</b>
@@ -3972,7 +4007,7 @@ function renderDeliveryNote(){
         <td>${fmtDateTH(o.orderDate)}</td>
         <td>${numFmt(o.orderQty)}</td>
         <td data-ourwip="${escapeHtml(o.id)}">${numFmt(wip)}</td>
-        <td data-deltawip="${escapeHtml(o.id)}">${dnDeltaCell(deltaWip, deltaWeek, wip, inCallIn)}</td>
+        <td data-deltawip="${escapeHtml(o.id)}">${dnDeltaCell(deltaWip, deltaWeek, wip, inCallIn, deltaRow)}</td>
         <td><input type="number" min="0" class="row-input dn-alloc" data-order="${escapeHtml(o.id)}" data-pn="${pn}" value="${alloc||''}" placeholder="จำนวนที่ส่ง"></td>
         <td data-include="${escapeHtml(o.id)}">${dnIncludeCell(o.id, alloc)}</td>`
         + (first ? packCells : '')
@@ -4125,17 +4160,23 @@ function dnRowNote(wipBefore, alloc, deltaWip, onlyDelta){
  *  วางคู่กันแล้วเห็นทันทีว่าสองฝั่งห่างกันอยู่หรือเปล่า โดยไม่ต้องเปิดหน้ายอดคงคลัง FG
  *
  *  ⚠️ ไม่ตรงกันไม่ใช่ความผิดพลาด และห้ามกันการออกใบ — Delta ตัดยอดช้ากว่าเราเป็นเรื่องปกติ */
-function dnDeltaCell(deltaWip, deltaWeek, ourWip, inCallIn){
+function dnDeltaCell(deltaWip, deltaWeek, ourWip, inCallIn, dw){
+  /* ตัวแก้มือ (เจ้าของสั่ง 15 ก.ย. 2026) — แก้ได้เฉพาะใบที่มีแถวของงวดล่าสุด (dw)
+   * ใบที่ไม่อยู่ในไฟล์ไม่มีแถวให้แก้ และกระดาษของใบนั้นเว้นว่างตามกติกาเดิม */
+  const edited = dw && deltaWipOverride(dw) != null;
+  const tools = (edited ? `<div><span class="badge amber" title="${escapeHtml(deltaOverrideTip(dw))}">แก้มือ</span></div>` : '')
+    + (dw ? `<button type="button" class="btn-mini dn-dw-edit" data-dw="${escapeHtml(dw.id)}"`
+      + ` title="แก้ Wip bal. ของ Delta ด้วยมือ — ต้องใส่เหตุผลและชื่อผู้แก้">✎ แก้</button>` : '');
   /* ⚠️ สองกรณีนี้ต่างกัน และคนคีย์ต้องแยกออกจากข้อความบนจอ
    *    อยู่ในไฟล์แต่เว้นช่องว่าง = เขายังรอของ แต่ไม่ได้บอกยอด
    *    ไม่อยู่ในไฟล์เลย        = รอบนี้เขาไม่ได้เรียกใบนี้ (ปกติถูกซ่อนอยู่แล้ว) */
   if(deltaWip == null){
     const wkTxt = deltaWeek ? ` (wk${escapeHtml(deltaWeek)})` : '';
-    return inCallIn
+    return (inCallIn
       ? `<span class="badge amber" title="ใบนี้อยู่ในไฟล์ Call In${wkTxt} แต่ Delta เว้นช่อง Wip bal. ว่างไว้ `
         + `— ช่อง Wip bal. บนกระดาษจะเว้นว่างตาม">ไม่ระบุยอด</span>`
       : `<span class="badge amber" title="ไม่มีใบนี้ในไฟล์ Call In รอบล่าสุด — ช่อง Wip bal. บนกระดาษจะเว้นว่าง">`
-        + `ไม่อยู่ในไฟล์</span>`;
+        + `ไม่อยู่ในไฟล์</span>`) + tools;
   }
   const wk = deltaWeek ? `<div class="hint">wk${escapeHtml(deltaWeek)}</div>` : '';
   const diff = (Number(deltaWip) || 0) - (Number(ourWip) || 0);
@@ -4143,7 +4184,44 @@ function dnDeltaCell(deltaWip, deltaWeek, ourWip, inCallIn){
   const tip = diff === 0
     ? 'ตรงกับยอดค้างของเรา'
     : `ต่างจากยอดค้างของเรา ${diff > 0 ? '+' : ''}${numFmt(diff)} — Delta ตัดยอดช้ากว่าเราได้ ไม่ใช่ความผิดพลาด`;
-  return `<b${style} title="${tip}">${numFmt(deltaWip)}</b>${wk}`;
+  return `<b${style} title="${tip}">${numFmt(deltaWip)}</b>${wk}${tools}`;
+}
+
+/** แก้ Wip bal. ของ Delta ด้วยมือ — เจ้าของสั่ง 15 ก.ย. 2026 (Delta ทำยอดในไฟล์ผิดได้)
+ *
+ *  ⚠️ บังคับเหตุผลกับชื่อผู้แก้ทุกครั้ง รวมตอนยกเลิก · ช่องชื่อไม่เติมชื่อเครื่องให้ ไม่งั้นคนกดผ่านโดยไม่ได้ลงชื่อจริง
+ *  ⚠️ ยอดจากไฟล์ (wip) ไม่ถูกทับ — ตัวแก้อยู่คู่กันบนแถวของงวดนั้น จึงหมดอายุเองเมื่อนำเข้าไฟล์งวดใหม่
+ *  ⚠️ ยกเลิกต้องเขียน wipOverride เป็น '' ตรง ๆ ห้ามลบฟิลด์ทิ้ง — Apps Script คงค่าเดิมไว้ถ้าฟิลด์หายไป
+ *     (KEEP_IF_ABSENT กันเครื่องรุ่นเก่าล้างยอดที่แก้) ลบฟิลด์ = ยกเลิกไม่ได้บนเซิร์ฟเวอร์
+ *  คืน true ถ้าบันทึก */
+function editDeltaWip(dwId){
+  const d = state.deltaWip.find(x => x.id === dwId && !x.voided);
+  if(!d) return false;
+  const file = deltaWipFileNum(d), cur = deltaWipOverride(d);
+  const ans = prompt(`Wip bal. ที่ถูกต้อง (wk${d.week}) — ในไฟล์ของ Delta: ${file == null ? 'ว่าง' : numFmt(file)}`
+    + (cur != null ? ` · ตอนนี้แก้มือไว้เป็น ${numFmt(cur)}` : '')
+    + `\nเว้นว่าง = ยกเลิกการแก้มือ กลับไปใช้ยอดในไฟล์`, cur != null ? String(cur) : '');
+  if(ans === null) return false;
+  const txt = String(ans).replace(/,/g, '').trim();
+  const clearing = txt === '';
+  if(clearing && cur == null){ toast('ยังไม่ได้แก้มือไว้ — ไม่มีอะไรให้ยกเลิก'); return false; }
+  const n = Number(txt);
+  if(!clearing && (!isFinite(n) || n < 0)){ toast('ยอดต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป — ยังไม่ได้บันทึก'); return false; }
+  const note = String(prompt(clearing ? 'เหตุผลที่ยกเลิกการแก้มือ (บังคับ)'
+    : 'รายละเอียด / เหตุผลที่แก้ (บังคับ) — เช่น เทียบกับใบส่งของใบไหน', '') || '').trim();
+  if(note.length < 3){ toast('ต้องใส่เหตุผลอย่างน้อย 3 ตัวอักษร — ยังไม่ได้บันทึก'); return false; }
+  const by = String(prompt('ชื่อผู้แก้ (บังคับ)', '') || '').trim();
+  if(!by){ toast('ต้องใส่ชื่อผู้แก้ — ยังไม่ได้บันทึก'); return false; }
+  const now = new Date().toISOString();
+  Object.assign(d, {wipOverride: clearing ? '' : n, overrideNote: clearing ? 'ยกเลิกการแก้: ' + note : note,
+    overrideBy: by, overrideAt: now, updatedAt: now, _dirty: true});
+  saveState();
+  doSync();
+  renderAll();
+  // ⚠️ renderAll() ไม่วาดหน้าใบส่งสินค้า (หน้านั้นวาดตอนกดแท็บ) — แก้จากหน้านั้นต้องวาดเอง ไม่งั้นจอค้างเลขเก่า
+  if(document.getElementById('view-delivery').classList.contains('active')) renderDeliveryNote();
+  toast(clearing ? 'ยกเลิกการแก้มือแล้ว — กลับไปใช้ยอดในไฟล์ของ Delta' : `แก้ Wip bal. เป็น ${numFmt(n)} แล้ว`);
+  return true;
 }
 
 /** ช่องสถานะของกลุ่ม — ตัวเลขที่คนต้องมองก่อนกดออกใบ
@@ -4200,6 +4278,9 @@ function bindDnInputs(){
       else dnExtraRows.delete(this.dataset.order);
       renderDnSummary();
     });
+  });
+  document.querySelectorAll('#dnTable .dn-dw-edit').forEach(el=>{
+    el.addEventListener('click', function(){ editDeltaWip(this.dataset.dw); });
   });
 }
 

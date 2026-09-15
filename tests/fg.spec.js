@@ -279,6 +279,21 @@ test('Delta นับยอดส่งมากกว่าที่เรา�
   expect(await page.locator('#fgCardCmp tbody').innerText(), 'ไม่มีอะไรให้หัก').not.toContain('ยังไม่นับ');
 });
 
+test('ยอดที่แก้มือเป็นฐานของหน้า FG — แล้วค่อยหักส่วนที่ Delta ยังไม่นับ (เจ้าของสั่ง 15 ก.ย. 2026)', async ({ page }) => {
+  // ยอดสั่ง 5,000 · ไฟล์ของ Delta ผิดเป็น 5,000 · แก้มือเป็น 3,000 (= Delta นับส่งแล้ว 2,000)
+  // เราส่ง 2,500 → Delta ยังไม่นับ 500 → แสดง 2,500 ตรงกับของเรา · เลขสมมติ
+  await open(page, [order('PO-A1', PN_A, 5000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'shipping', 2500, '2026-08-28')
+  ], [Object.assign(deltaRow('PO-A1|' + PN_A, 35, 5000), {
+    wipOverride: 3000, overrideNote: 'ทดสอบ', overrideBy: 'หัวหน้าทดสอบ', overrideAt: '2026-09-02T05:00:00.000Z' })]);
+
+  expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) = แก้มือ 3,000 − ยังไม่นับ 500').toBe('2,500');
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  expect(cmp, 'ต้องบอกว่าฐานมาจากการแก้มือ ไม่ใช่จากไฟล์').toContain('แก้มือ 3,000 − Delta ยังไม่นับ 500');
+  await expect(page.locator('#fgCardCmp .fg-dw-edit'), 'การ์ดต้องมีปุ่มแก้').toHaveCount(1);
+});
+
 /** อ่านค่าในช่องหนึ่งของแถว — เจาะจงกว่าการดูข้อความทั้งแถว
  *  (เทสรอบแรกใช้ toContain('0') ซึ่งจริงเกือบตลอด เพราะ '5,000' ก็มี '0') */
 const cellOf = (page, pn, unit, i) =>
