@@ -977,6 +977,122 @@ test('หน้าใบส่งสินค้าและกระดาษ�
   expect(at('G10'), 'กระดาษต้องเป็นยอดในไฟล์ของ Delta ตรง ๆ').toBe('12000');
 });
 
+/* ── ตัวแก้มือ Wip bal. ของ Delta (เจ้าของสั่ง 15 ก.ย. 2026) ─────────────────────
+ *
+ * Delta ทำยอดในไฟล์ผิดได้ · ยอดที่แก้ใช้ทุกที่รวมกระดาษ · เฉพาะงวดนั้น · บังคับเหตุผล + ชื่อผู้แก้
+ * ⚠️ ยอดในไฟล์ (wip) ต้องไม่ถูกทับ · ยกเลิกต้องเขียนค่าว่างตรง ๆ ไม่ใช่ลบฟิลด์ (ดู KEEP_IF_ABSENT ใน .gs)
+ * เลขในเทสเป็นเลขสมมติ */
+const overridden = (row, wipOverride, extra = {}) => Object.assign(row, {
+  wipOverride, overrideNote: 'เทียบใบส่งของแล้ว ยอดในไฟล์ขาดหนึ่งรอบ', overrideBy: 'หัวหน้าทดสอบ',
+  overrideAt: '2026-09-02T05:00:00.000Z'
+}, extra);
+/** ตอบกล่อง prompt ตามลำดับ · null = กดยกเลิก */
+function answerPrompts(page, answers) {
+  const seen = [];
+  const handler = async d => {
+    seen.push(d.message());
+    const a = answers.shift();
+    if (a === null || a === undefined) await d.dismiss(); else await d.accept(a);
+  };
+  page.on('dialog', handler);
+  return { seen, off: () => page.off('dialog', handler) };
+}
+const dwOf = async (page, id) => (await readState(page)).deltaWip.find(d => d.id === id);
+
+test('ยอดที่แก้มือใช้แทนยอดในไฟล์ของ Delta ทั้งบนจอและช่อง Wip bal. บนกระดาษ', async ({ page }) => {
+  const ID = 'PO-B001|' + PN_B;
+  await openWithDelta(page, [overridden(deltaRow(ID, 35, 9000), 7500)]);
+  await alloc(page, ID, 1000);
+
+  const cell = await page.locator(`#dnTable td[data-deltawip="${ID}"]`).innerText();
+  expect(cell, 'บนจอต้องเป็นยอดที่แก้').toContain('7,500');
+  expect(cell, 'และบอกว่าแก้มือ').toContain('แก้มือ');
+  const tip = await page.locator(`#dnTable td[data-deltawip="${ID}"] .badge`).getAttribute('title');
+  expect(tip, 'ชี้ที่ป้ายต้องเห็นยอดในไฟล์ ผู้แก้ และเหตุผล').toContain('9,000');
+  expect(tip).toContain('หัวหน้าทดสอบ');
+  expect(tip).toContain('ขาดหนึ่งรอบ');
+
+  await pack(page, PN_B, 'perBox', 50);
+  const { out } = await exportForm(page);
+  const xml = await (await JSZip.loadAsync(out)).file('xl/worksheets/sheet1.xml').async('string');
+  const at = ref => (new RegExp('<c r="' + ref + '"[^>]*>[^<]*<v>([^<]*)</v>').exec(xml) || [])[1];
+  expect(at('G10'), 'กระดาษต้องเป็นยอดที่แก้มือ').toBe('7500');
+});
+
+test('แก้มือผ่านหน้าจอ — ไม่ใส่เหตุผลหรือไม่ใส่ชื่อ ต้องไม่บันทึก · ใส่ครบจึงบันทึก และยอดในไฟล์ไม่ถูกทับ', async ({ page }) => {
+  const ID = 'PO-B001|' + PN_B, DW = 'DW-' + ID + '-35';
+  await openWithDelta(page, [deltaRow(ID, 35, 9000)]);
+  const btn = () => page.locator(`#dnTable .dn-dw-edit[data-dw="${DW}"]`);
+
+  let p = answerPrompts(page, ['7500', '']);                       // ไม่ใส่เหตุผล
+  await btn().click(); await page.waitForTimeout(200); p.off();
+  await expect(page.locator('#toast')).toContainText('ต้องใส่เหตุผล');
+  expect((await dwOf(page, DW)).wipOverride, 'ไม่มีเหตุผล ต้องไม่บันทึก').toBeFalsy();
+
+  p = answerPrompts(page, ['7500', 'เทียบใบส่งของแล้ว', '']);        // ไม่ใส่ชื่อ
+  await btn().click(); await page.waitForTimeout(200); p.off();
+  await expect(page.locator('#toast')).toContainText('ต้องใส่ชื่อผู้แก้');
+  expect((await dwOf(page, DW)).wipOverride, 'ไม่มีชื่อผู้แก้ ต้องไม่บันทึก').toBeFalsy();
+
+  p = answerPrompts(page, ['7,500', 'เทียบใบส่งของแล้ว', 'หัวหน้าทดสอบ']);
+  await btn().click(); await page.waitForTimeout(200);
+  expect(p.seen[2], 'ช่องชื่อผู้แก้ต้องถามจริง').toContain('ชื่อผู้แก้'); p.off();
+
+  const d = await dwOf(page, DW);
+  expect(d.wipOverride).toBe(7500);
+  expect(d.overrideNote).toBe('เทียบใบส่งของแล้ว');
+  expect(d.overrideBy).toBe('หัวหน้าทดสอบ');
+  expect(d.overrideAt, 'ต้องประทับเวลาที่แก้').toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  expect(d.wip, 'ยอดในไฟล์ของ Delta ต้องไม่ถูกทับ').toBe(9000);
+  expect(d._dirty, 'ต้องรอส่งขึ้น Google Sheets').toBe(true);
+  await expect(page.locator(`#dnTable td[data-deltawip="${ID}"]`)).toContainText('7,500');
+});
+
+test('ยกเลิกการแก้มือ — กลับไปใช้ยอดในไฟล์ บังคับเหตุผลกับชื่อ และเขียนค่าว่างตรง ๆ ไม่ลบฟิลด์', async ({ page }) => {
+  const ID = 'PO-B001|' + PN_B, DW = 'DW-' + ID + '-35';
+  await openWithDelta(page, [overridden(deltaRow(ID, 35, 9000), 7500)]);
+
+  const p = answerPrompts(page, ['', 'Delta แก้ไฟล์แล้ว', 'หัวหน้าอีกคน']);
+  await page.locator(`#dnTable .dn-dw-edit[data-dw="${DW}"]`).click();
+  await page.waitForTimeout(200); p.off();
+
+  const d = await dwOf(page, DW);
+  expect(d.wipOverride, 'ต้องเป็นค่าว่างตรง ๆ — ลบฟิลด์ทิ้งแล้ว Apps Script จะคงยอดที่แก้ไว้').toBe('');
+  expect(d.overrideNote).toContain('ยกเลิกการแก้');
+  expect(d.overrideBy, 'ต้องรู้ว่าใครยกเลิก').toBe('หัวหน้าอีกคน');
+  const cell = await page.locator(`#dnTable td[data-deltawip="${ID}"]`).innerText();
+  expect(cell, 'กลับไปใช้ยอดในไฟล์').toContain('9,000');
+  expect(cell, 'ป้ายแก้มือต้องหาย').not.toContain('แก้มือ');
+});
+
+test('การแก้มือเป็นของงวดนั้น — นำเข้าไฟล์งวดใหม่แล้วใช้ยอดของ Delta งวดใหม่', async ({ page }) => {
+  const ID = 'PO-B001|' + PN_B;
+  await openWithDelta(page, [
+    overridden(deltaRow(ID, 35, 9000), 7500),     // งวดก่อน แก้มือไว้
+    deltaRow(ID, 36, 8000)                        // งวดใหม่ ไม่ได้แก้
+  ]);
+  const cell = await page.locator(`#dnTable td[data-deltawip="${ID}"]`).innerText();
+  expect(cell, 'ต้องเป็นยอดของงวดใหม่').toContain('8,000');
+  expect(cell, 'ยอดที่แก้ของงวดก่อนต้องไม่ติดมา').not.toContain('7,500');
+  expect(cell).not.toContain('แก้มือ');
+});
+
+test('เหตุผลหรือชื่อที่มีแท็ก HTML — ขึ้นเป็นตัวหนังสือ ไม่ถูกรันเป็นโค้ด', async ({ page }) => {
+  /* ⚠️ ข้อความต้อง "หลุดออกจาก title" ได้จริงถ้าไม่ escape — ขึ้นต้นด้วย "> ปิดแอตทริบิวต์ก่อน
+   *    รอบแรกใช้ <img …> เฉย ๆ แล้วเทสเขียวทั้งที่ถอด escape ออก เพราะเครื่องหมายคำพูดตัวแรก
+   *    ปิด title ก่อนถึงแท็ก ไม่มี img เกิดขึ้น — เทสที่จับของพังไม่ได้ ไม่ต่างจากไม่มีเทส */
+  const ID = 'PO-B001|' + PN_B;
+  const NOTE = '"><img src=x onerror="window.__dwxss=1">';
+  await openWithDelta(page, [overridden(deltaRow(ID, 35, 9000), 7500, {
+    overrideNote: NOTE, overrideBy: '"><b id="dwxssb">ใคร</b>' })]);
+  await page.waitForTimeout(400);
+  expect(await page.evaluate(() => window.__dwxss), 'โค้ดในเหตุผลต้องไม่ถูกรัน').toBeUndefined();
+  await expect(page.locator(`#dnTable td[data-deltawip="${ID}"] img`), 'ต้องไม่มีแท็ก img เกิดขึ้น').toHaveCount(0);
+  await expect(page.locator('#dwxssb'), 'ต้องไม่มีแท็กจากชื่อผู้แก้เกิดขึ้น').toHaveCount(0);
+  const tip = await page.locator(`#dnTable td[data-deltawip="${ID}"] .badge`).getAttribute('title');
+  expect(tip, 'ข้อความต้องอยู่ครบในรูปตัวหนังสือ').toContain(NOTE);
+});
+
 // ── ค้นหา ─────────────────────────────────────
 //
 // พนักงานแจ้ง 31 ส.ค. 2026 ว่าไล่หา PO กับ P/N ในรายการยาว ๆ ลำบาก
