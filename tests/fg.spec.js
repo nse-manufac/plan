@@ -228,21 +228,55 @@ test('ยอดค้างของ Delta นับเฉพาะงวดล�
   expect(cmp, 'การ์ดต้องไม่อ้างยอดของงวดเก่า').not.toContain('wk34');
 });
 
-test('ยอดค้างของ Delta หักยอดที่เราส่งหลังวันนำเข้าไฟล์ — เจ้าของสั่ง 14 ก.ย. 2026', async ({ page }) => {
-  // ⚠️ วันส่งห่างจากวันนำเข้าสองวันขึ้นไป — เวลานำเข้าเป็น UTC แปลงเป็นวันท้องถิ่น (ดู delivery-note.spec.js)
-  await open(page, [order('PO-A1', PN_A, 5000)], [
-    rec('r1', 'PO-A1|' + PN_A, 'shipping', 2000, '2026-08-28'),   // ก่อนนำเข้า — อยู่ในไฟล์ของ Delta แล้ว
-    rec('r2', 'PO-A1|' + PN_A, 'shipping', 1000, '2026-09-03')    // หลังนำเข้า — ต้องหัก
-  ], [deltaRow('PO-A1|' + PN_A, 35, 3000, '2026-09-01T05:00:00.000Z')]);
+/* ── หน้า FG หักยอดที่เราส่งแล้วแต่ Delta ยังไม่นับ (เจ้าของเลือก 15 ก.ย. 2026) ─────────────
+ *
+ * Delta นับส่งแล้ว = ยอดสั่ง − Wip bal. · ส่วนที่เราส่งเกินจากนั้นหักออกจากยอดของ Delta
+ * เกณฑ์ของ #87 หักตามวันนำเข้าไฟล์ แล้วพังกับของจริง — ส่งของหลายรอบก่อนวันนำเข้าไฟล์ แต่ไฟล์ยังให้ค้างเต็มยอดสั่ง
+ * โปรแกรมจึงไม่หักเลย · ⚠️ ข้อมูลในเทสเป็นเลขสมมติ ห้ามเอาตัวเลขจากภาพหน้าจอของจริงมาใส่ (repo เป็น public) */
+test('Delta ยังไม่นับยอดส่งเลย — ยอดของ Delta ต้องหักยอดที่เราส่งทั้งหมด แม้ส่งก่อนวันนำเข้าไฟล์', async ({ page }) => {
+  await open(page, [order('PO-A1', PN_A, 6000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'shipping', 500, '2026-08-24'),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping', 1800, '2026-08-26'),
+    rec('r3', 'PO-A1|' + PN_A, 'shipping', 1200, '2026-08-28')
+  ], [deltaRow('PO-A1|' + PN_A, 36, 6000, '2026-09-02T05:00:00.000Z')]);   // นำเข้าหลังส่งครบทุกรอบ
 
-  expect(await cellOf(page, PN_A, 'TUE-U', 5), 'ค้างส่ง (เรา) 5,000 − 3,000').toBe('2,000');
-  expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) 3,000 − 1,000 ไม่หัก 2,000 ที่ส่งก่อนนำเข้า')
-    .toBe('2,000');
+  expect(await cellOf(page, PN_A, 'TUE-U', 5), 'ค้างส่ง (เรา) 6,000 − 3,500').toBe('2,500');
+  expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) 6,000 − ที่ Delta ยังไม่นับ 3,500').toBe('2,500');
   expect(await rowOf(page, PN_A, 'TUE-U'), 'หักแล้วตรงกันพอดี').toContain('ตรงกันทุกใบ');
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
   const cmp = await page.locator('#fgCardCmp tbody').innerText();
-  expect(cmp, 'การ์ดบอกยอดดิบจากไฟล์กับยอดที่หักไป').toContain('ไฟล์ 3,000');
+  expect(cmp, 'การ์ดบอกยอดในไฟล์').toContain('ไฟล์ 6,000');
+  expect(cmp, 'และบอกว่าหักส่วนที่ Delta ยังไม่นับไปเท่าไหร่').toContain('Delta ยังไม่นับ 3,500');
+});
+
+test('Delta นับยอดส่งไปแล้วบางส่วน — หักเฉพาะส่วนที่เราส่งเกินจากที่ Delta นับ', async ({ page }) => {
+  // ยอดสั่ง 5,000 · Wip bal. 3,000 = Delta นับส่งแล้ว 2,000 · เราส่ง 3,000 = Delta ยังไม่นับ 1,000
+  await open(page, [order('PO-A1', PN_A, 5000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'shipping', 2000, '2026-08-28'),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping', 1000, '2026-09-03')
+  ], [deltaRow('PO-A1|' + PN_A, 35, 3000)]);
+
+  expect(await cellOf(page, PN_A, 'TUE-U', 5), 'ค้างส่ง (เรา) 5,000 − 3,000').toBe('2,000');
+  expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) 3,000 − 1,000 ห้ามหัก 2,000 ที่ Delta นับไปแล้วซ้ำ')
+    .toBe('2,000');
+
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  expect(await page.locator('#fgCardCmp tbody').innerText()).toContain('Delta ยังไม่นับ 1,000');
+});
+
+test('Delta นับยอดส่งมากกว่าที่เราคีย์ — ไม่หักอะไร และยังต้องเห็นว่าต่าง เพราะเราอาจลืมคีย์ยอดส่ง', async ({ page }) => {
+  // ยอดสั่ง 5,000 · Wip bal. 1,000 = Delta นับส่งแล้ว 4,000 · เราคีย์ส่งแค่ 3,000
+  await open(page, [order('PO-A1', PN_A, 5000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'shipping', 3000, '2026-08-28')
+  ], [deltaRow('PO-A1|' + PN_A, 35, 1000)]);
+
+  expect(await cellOf(page, PN_A, 'TUE-U', 5), 'ค้างส่ง (เรา) 5,000 − 3,000').toBe('2,000');
+  expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) ยังเป็นยอดในไฟล์').toBe('1,000');
+  expect(await rowOf(page, PN_A, 'TUE-U'), 'สัญญาณว่าเราอาจลืมคีย์ยอดส่ง ต้องยังอยู่').toContain('+1,000');
+
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  expect(await page.locator('#fgCardCmp tbody').innerText(), 'ไม่มีอะไรให้หัก').not.toContain('ยังไม่นับ');
 });
 
 /** อ่านค่าในช่องหนึ่งของแถว — เจาะจงกว่าการดูข้อความทั้งแถว
