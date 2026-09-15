@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-15.1">
+<meta name="app-version" content="2026-09-15.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1275,7 +1275,7 @@ let syncIntervalId = null;
  *  ฟิลด์ที่ไม่อยู่ในนี้จะไม่ถูกส่ง จึงโกหกไม่ได้
  *  และ tests/sync-contract.spec.js อ่านทั้งไฟล์นี้กับ .gs มาเทียบกันทุกครั้งที่รันเทส */
 const SYNC_COLS = {
-  // ⚠️ 'voided' ต้องอยู่ท้ายสุด — ฝั่ง Apps Script เขียนแถวด้วยตำแหน่ง (toRow)
+  // ⚠️ คอลัมน์ใหม่ต้องเติมท้ายสุดเสมอ — ฝั่ง Apps Script เขียนแถวด้วยตำแหน่ง (toRow)
   //    แต่เติมคอลัมน์ที่ขาดต่อท้ายหัวตาราง ลำดับสองฝั่งจึงตรงกันได้ต่อเมื่อเติมท้ายเหมือนกัน
   Orders: ['id','week','poNo','pn','subName','osc','pc','orderQty','orderDate',
            'planWinding','planAssembly','planSupport','planInspection','status','importedAt','updatedAt',
@@ -1284,8 +1284,10 @@ const SYNC_COLS = {
             'createdAt','updatedAt','voided','batchId'],
   DeliveryNotes: ['id','date','unit','orderId','pn','perBox','boxes','remainder','remark','billNo',
                   'deviceName','createdAt','updatedAt','voided'],
+  // override* = ตัวแก้มือเมื่อ Delta ทำ Wip bal. ผิด (15 ก.ย. 2026) · ใบนี้เพิ่มแค่คอลัมน์ หน้าจอแก้มืออยู่ใบถัดไป
   DeltaWip: ['id','orderId','week','wip','fileName',
-             'deviceName','createdAt','updatedAt','voided']
+             'deviceName','createdAt','updatedAt','voided',
+             'wipOverride','overrideNote','overrideBy','overrideAt']
 };
 
 /** เอาเฉพาะคอลัมน์ที่ประกาศไว้ขึ้นไป — ฟิลด์ภายในเครื่องอย่าง _dirty ไม่ถูกส่ง (D2) */
