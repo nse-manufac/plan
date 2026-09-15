@@ -58,6 +58,38 @@ test('DeltaWip — ชีตเดิม 9 คอลัมน์ได้หั�
   expect(neu.overrideAt).toBe('2026-09-03T01:02:03.000Z');
 });
 
+test('DeltaWip — เครื่องแอปรุ่นเก่าส่งแถวเดิมขึ้นมา ยอดที่แก้มือไว้ต้องไม่ถูกล้าง', async () => {
+  // แอปรุ่นเก่าไม่รู้จักคอลัมน์ตัวแก้มือ cleanForPush จึงไม่ส่งช่องพวกนี้ (ไม่ใช่ส่งค่าว่าง)
+  const { api } = loadGs();
+  const base = { id: 'DW1', orderId: 'PO-1|PN-1', week: '36', wip: 500, fileName: 'c.xlsx', deviceName: 'A',
+    createdAt: '2026-09-01T00:00:00.000Z', voided: false };
+  api.doPushRows('DeltaWip', [Object.assign({}, base, { wipOverride: 450, overrideNote: 'ทดสอบ',
+    overrideBy: 'หัวหน้าทดสอบ', overrideAt: '2026-09-03T01:02:03.000Z' })], 'A');
+
+  api.doPushRows('DeltaWip', [Object.assign({}, base, { wip: 520, fileName: 'c2.xlsx' })], 'OLD');   // รุ่นเก่า
+
+  const row = api.doPullRows('DeltaWip', '').rows[0];
+  expect(row.wip, 'ยอดจากไฟล์อัปเดตตามปกติ').toBe(520);
+  expect(row.wipOverride, 'ยอดที่แก้มือต้องยังอยู่').toBe(450);
+  expect(row.overrideBy).toBe('หัวหน้าทดสอบ');
+  expect(row.overrideNote).toBe('ทดสอบ');
+  expect(row.overrideAt).toBe('2026-09-03T01:02:03.000Z');
+});
+
+test('DeltaWip — แอปรุ่นใหม่ส่งช่องตัวแก้มือเป็นค่าว่างมาตรง ๆ ต้องล้างได้ (ยกเลิกการแก้)', async () => {
+  const { api } = loadGs();
+  const base = { id: 'DW1', orderId: 'PO-1|PN-1', week: '36', wip: 500, voided: false,
+    createdAt: '2026-09-01T00:00:00.000Z' };
+  api.doPushRows('DeltaWip', [Object.assign({}, base, { wipOverride: 450, overrideNote: 'ทดสอบ',
+    overrideBy: 'หัวหน้าทดสอบ', overrideAt: '2026-09-03T01:02:03.000Z' })], 'A');
+  api.doPushRows('DeltaWip', [Object.assign({}, base, { wipOverride: null, overrideNote: '',
+    overrideBy: '', overrideAt: '' })], 'A');
+
+  const row = api.doPullRows('DeltaWip', '').rows[0];
+  expect(row.wipOverride, 'ยกเลิกแล้วต้องว่าง').toBe('');
+  expect(row.overrideBy).toBe('');
+});
+
 test('DeltaWip — เวลาที่แก้มือที่ชีตแปลงเป็นวันที่ ต้องกลับมาเป็น ISO', async () => {
   const { api, book } = loadGs();
   api.doPushRows('DeltaWip', [{ id: 'DW1', orderId: 'PO-1|PN-1', week: '36', wip: 500, voided: false,

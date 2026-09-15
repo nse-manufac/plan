@@ -34,6 +34,12 @@ const DELTAWIP_COLS = ['id','orderId','week','wip','fileName',
   'deviceName','createdAt','updatedAt','voided',
   'wipOverride','overrideNote','overrideBy','overrideAt'];
 
+// คอลัมน์ที่ doPushRows ต้องคงค่าเดิมไว้ ถ้าแถวที่ส่งมาไม่มีช่องนั้นเลย (undefined)
+// ⚠️ เครื่องที่ยังใช้แอปรุ่นเก่าไม่รู้จักคอลัมน์ตัวแก้มือ cleanForPush ของมันจึงไม่ส่งช่องพวกนี้
+//    ถ้าไม่กันไว้ toRow จะเขียนค่าว่างทับ — ยอดที่หัวหน้าแก้มือไว้หายเงียบ ๆ ทุกครั้งที่เครื่องนั้นซิงค์แถวนั้น
+//    แอปรุ่นใหม่ที่ตั้งใจยกเลิกการแก้ต้องส่งค่าว่าง ('' หรือ null) มาตรง ๆ ไม่ใช่ละช่องไว้
+var KEEP_IF_ABSENT = { DeltaWip: ['wipOverride', 'overrideNote', 'overrideBy', 'overrideAt'] };
+
 // ⚠️ เพิ่มตารางใหม่ ต้องเติมให้ครบทั้งสี่ที่ในไฟล์นี้ + setupSheets()
 //    ตกหล่นที่ไหนที่หนึ่งจะไม่มี error แต่ข้อมูลคอลัมน์นั้นจะหายเงียบ ๆ ทุกครั้งที่ซิงค์
 //    (planSupport เคยตกหล่นแบบนี้มาตั้งแต่ issue #17 จนถึง 30 ส.ค. 2026)
@@ -265,10 +271,22 @@ function doPushRows(table, rows, device) {
     }
     var stamp = nowIso();
     var appends = [];
+    // คอลัมน์ที่ต้องคงค่าเดิมเมื่อแถวที่ส่งมา "ไม่มีช่องนั้นเลย" — อ่านของเดิมครั้งเดียวทั้งตาราง ไม่อ่านทีละแถว
+    var keep = KEEP_IF_ABSENT[table] || [];
+    var existing = (keep.length && last >= 2)
+      ? sheet.getRange(2, 1, last - 1, Math.max(sheet.getLastColumn(), cols.length)).getValues() : [];
+    var head = keep.length ? sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), cols.length)).getValues()[0].map(String) : [];
     for (var k = 0; k < rows.length; k++) {
       var r = rows[k];
       if (!r.id) continue;
       r.updatedAt = stamp;
+      var atRow = index[String(r.id)];
+      if (atRow && keep.length) {
+        for (var q = 0; q < keep.length; q++) {
+          var hi = head.indexOf(keep[q]);
+          if (r[keep[q]] === undefined && hi >= 0) r[keep[q]] = existing[atRow - 2][hi];
+        }
+      }
       if (table === 'Records') {
         if (!r.deviceName) r.deviceName = device || '';
         r.voided = r.voided ? 'TRUE' : 'FALSE';
