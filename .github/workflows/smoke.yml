@@ -39,7 +39,9 @@ jobs:
 
           # แก้ .js ก็ต้องบัมป์ด้วย — ไม่งั้นเครื่องที่ค้างไฟล์เก่าจะเอา app.js ใหม่ไปคู่กับ core/ เก่า
           # ซึ่งพังเงียบกว่าเดิม เพราะแต่ละไฟล์หมดอายุแคชไม่พร้อมกัน (INVARIANTS F2 · F4)
-          APPCHANGED=$(app_changed_files "$BASE")
+          # ใช้ versioned_changed_files ไม่ใช่ app_changed_files — ตัวนี้รวม lib/ ด้วย
+          # เปลี่ยนไลบรารี = เครื่องในโรงงานต้องโหลดใหม่ จึงต้องบังคับบัมป์เลขรุ่นเหมือนกัน
+          APPCHANGED=$(versioned_changed_files "$BASE")
 
           if [ -z "$APPCHANGED" ]; then
             echo "PR นี้ไม่ได้แก้ไฟล์แอป — ข้ามการตรวจ"

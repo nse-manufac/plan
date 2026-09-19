@@ -66,6 +66,7 @@ seal docs
 eq ""  "$(app_changed_files main)"  'แก้แค่เอกสาร เทส และไฟล์ตั้งค่า → ไม่นับว่าแตะแอป'
 eq "0" "$(app_changed_lines main)"  'แก้แค่เอกสาร เทส และไฟล์ตั้งค่า → นับได้ 0 บรรทัด'
 eq "0" "$(vendor_hits main)"        'แก้แค่เอกสาร เทส และไฟล์ตั้งค่า → ไม่แตะ vendor'
+eq ""  "$(versioned_changed_files main)" 'แก้แค่เอกสาร เทส และไฟล์ตั้งค่า → ด่านเลขรุ่นข้าม'
 
 # ── 2. แก้ .js ของแอป ต้องถูกนับ (นี่คือข้อที่ด่านเดิมมองไม่เห็น) ──
 scenario app-js
@@ -79,7 +80,8 @@ scenario lib-touch
 printf 'window.LIB = 2;\n' > lib/exceljs.min.js
 seal lib
 eq "1"  "$(vendor_hits main)"       'แก้ไฟล์ใน lib/ → นับเป็นแตะ vendor'
-eq ""   "$(app_changed_files main)" 'ไฟล์ใน lib/ ไม่ถูกนับเป็นไฟล์แอป (มีด่านของตัวเอง)'
+eq ""   "$(app_changed_files main)" 'ไฟล์ใน lib/ ไม่ถูกนับเป็นไฟล์แอป (เพดานบรรทัดไม่ควรนับไลบรารี)'
+eq "lib/exceljs.min.js" "$(versioned_changed_files main)" 'แต่ด่านเลขรุ่นต้องเห็น — เปลี่ยนไลบรารี = เครื่องต้องโหลดใหม่'
 
 # ── 4. บรรทัดยาวผิดปกติในไฟล์แอป ยังนับเป็น vendor เหมือนเดิม ──
 scenario long-line
@@ -163,7 +165,7 @@ eq "0" "$?" 'เรียกแบบเดียวกับ agent-guard ใต
 (
   set -euo pipefail
   source "$ROOT/.github/scripts/app-files.sh"
-  APPCHANGED=$(app_changed_files main)
+  APPCHANGED=$(versioned_changed_files main)
   [ -z "$APPCHANGED" ] || exit 9
 )
 eq "0" "$?" 'เรียกแบบเดียวกับ smoke.yml ใต้ set -euo pipefail แล้วไม่ตาย'
