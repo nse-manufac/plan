@@ -31,14 +31,15 @@ jobs:
           set -euo pipefail
           BASE="origin/${{ github.base_ref }}"
           git fetch --quiet origin "${{ github.base_ref }}"
-          CHANGED=$(git diff --name-only "$BASE...HEAD")
+
+          # นิยาม "ไฟล์แอป" อยู่ในสคริปต์ที่มีเทสคุม (tests/guard-app-files.test.sh)
+          source .github/scripts/app-files.sh
 
           ver() { grep -o '<meta name="app-version" content="[^"]*"' | head -1 | sed 's/.*content="//; s/"$//'; }
 
-          # ไฟล์แอป = .html และ .js ทุกตัว ยกเว้นไลบรารีที่ vendor ไว้ · ชุดเทส · ไฟล์ตั้งค่าของเทส
           # แก้ .js ก็ต้องบัมป์ด้วย — ไม่งั้นเครื่องที่ค้างไฟล์เก่าจะเอา app.js ใหม่ไปคู่กับ core/ เก่า
-          # ซึ่งพังแบบเงียบกว่าเดิม เพราะแต่ละไฟล์หมดอายุแคชไม่พร้อมกัน (INVARIANTS F2 · F4)
-          APPCHANGED=$(git diff --name-only "$BASE...HEAD" -- '*.html' '*.js' ':(exclude)lib/**' ':(exclude)tests/**' ':(exclude)playwright.config.js')
+          # ซึ่งพังเงียบกว่าเดิม เพราะแต่ละไฟล์หมดอายุแคชไม่พร้อมกัน (INVARIANTS F2 · F4)
+          APPCHANGED=$(app_changed_files "$BASE")
 
           if [ -z "$APPCHANGED" ]; then
             echo "PR นี้ไม่ได้แก้ไฟล์แอป — ข้ามการตรวจ"
@@ -86,6 +87,11 @@ jobs:
       # ล้มเร็วกว่ารอ playwright ติดตั้งเสร็จสามนาทีแล้วค่อยรู้ว่าด่านพัง
       - name: เทสตรรกะของด่านตรวจ
         run: bash tests/guard-rules.test.sh
+
+      # ด่านที่ตัดสินจาก "ไฟล์ไหนคือไฟล์แอป" — สร้าง repo จำลองแล้วรันของจริงกับ PR สมมติ
+      # ไม่ต้องใช้เบราว์เซอร์และไม่ต้องต่อเน็ต จึงรันก่อนติดตั้งอะไรเช่นกัน
+      - name: เทสด่านไฟล์แอป
+        run: bash tests/guard-app-files.test.sh
 
       - uses: actions/setup-node@v4
         with:
