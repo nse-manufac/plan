@@ -168,7 +168,24 @@ eq "0" "$?" 'เรียกแบบเดียวกับ agent-guard ใต
 )
 eq "0" "$?" 'เรียกแบบเดียวกับ smoke.yml ใต้ set -euo pipefail แล้วไม่ตาย'
 
-# ── 8. ของที่ต้องไม่ถูกจับผิด ──
+# ── 8. diff ใหญ่ที่มี CDN อยู่ต้น ๆ — กรณีที่ `grep -q` จะรายงานผิดว่าสะอาด ──
+# grep -q ออกทันทีที่เจอบรรทัดแรก ต้นน้ำจึงโดน SIGPIPE คืน 141 แล้ว pipefail
+# ยก 141 เป็นผลของทั้งไปป์ไลน์ → ฟังก์ชันตอบ "ไม่เจอ" ทั้งที่เจอจริง
+# ต้องรันใต้ set -o pipefail เหมือน workflow ถึงจะเห็นอาการ
+# ฉากนี้ต้องใหญ่กว่าบัฟเฟอร์ของไปป์ (~64–128 KB) และ CDN ต้องอยู่ต้น ๆ
+scenario net-big-diff
+{
+  printf 'import big from "https://cdn.example.com/big.js";\n'
+  i=0
+  while [ "$i" -lt 4000 ]; do
+    printf 'export const filler%s = "%s";\n' "$i" "0123456789012345678901234567890123456789"
+    i=$((i + 1))
+  done
+} > core/a.js
+seal big
+eq "yes" "$( set -o pipefail; net_says main )" 'diff ใหญ่ + CDN อยู่บรรทัดต้น ๆ → ยังต้องจับได้'
+
+# ── 9. ของที่ต้องไม่ถูกจับผิด ──
 scenario net-clean
 printf '// อ้างอิง https://example.com/doc — เป็นแค่คอมเมนต์\n' >> core/a.js
 printf 'const r = await fetch(syncCfg.url, { method: "POST" });\n' >> core/a.js
