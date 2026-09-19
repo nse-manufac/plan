@@ -92,6 +92,8 @@ scenario both-vendor
 printf 'window.LIB = 3;\n' > lib/exceljs.min.js
 { printf '<script>var W="'; head -c 25000 < /dev/zero | tr '\0' 'y'; printf '";</script>\n'; } >> production_plan_tracker.html
 seal both
+eq "1" "$(vendor_long main)" 'แตะทั้งสองแบบ → นับบรรทัดยาวได้ 1'
+eq "1" "$(vendor_lib main)"  'แตะทั้งสองแบบ → นับไฟล์ใน lib/ ได้ 1'
 eq "2" "$(vendor_hits main)" 'แตะทั้ง lib/ และบรรทัดยาว → รวมเป็น 2 จุด'
 
 # ── 6. การโหลดของจากเน็ต — ต้องจับได้ทุกรูปแบบ ──
@@ -135,18 +137,36 @@ eq "yes" "$(net_says main)" 'importScripts ของ worker'
 # เพราะตัวเทสไม่ได้เปิด errexit แต่ใน CI ซึ่งรันด้วย `set -euo pipefail`
 # grep ที่ไม่เจออะไร (กรณีปกติที่สุด) จะทำให้ step ตายเงียบโดยไม่มีข้อความบอกสาเหตุ
 #
-# ⚠️ ฉากนี้ต้อง **ไม่แก้ไฟล์ .html/.js เลย** ถึงจะจับของจริงได้
-# ถ้าฉากมีไฟล์ .js เปลี่ยนด้วย grep จะเจอบรรทัดแล้วคืน 0 · ไปป์ไลน์ผ่าน · บั๊กหลุด
-# (เขียนรอบแรกใช้ฉากที่แก้ core/a.js แล้วเทสเขียวทั้งที่สคริปต์ยังพัง)
+# ⚠️ สองอย่างที่ฉากนี้ต้องทำให้ถูก ไม่งั้นเทสเขียวทั้งที่ของจริงพัง (เกิดมาแล้วทั้งคู่)
+#
+#   1. ต้อง **ไม่แก้ไฟล์ .html/.js เลย** — ถ้ามีไฟล์ .js เปลี่ยนด้วย grep จะเจอบรรทัด
+#      แล้วคืน 0 ไปป์ไลน์ผ่าน บั๊ก errexit หลุด (รอบแรกเขียนฉากผิดแบบนี้)
+#   2. ต้องเรียก **แบบเดียวกับที่ workflow เรียกเป๊ะ ๆ** คือรับค่าผ่าน $( ) แล้วอ้างตัวแปร
+#      ต่อในบรรทัดถัดไป — รอบแรกเรียกฟังก์ชันเฉย ๆ เทสจึงเขียว แต่ของจริงตายด้วย
+#      "VENDOR_LONG: unbound variable" เพราะ $( ) รันในซับเชลล์ (run 35426934295)
 scenario errexit
 printf '# เอกสารที่แก้แล้วอีกครั้ง\n' > CLAUDE.md
 seal errexit
-( set -euo pipefail; source "$ROOT/.github/scripts/app-files.sh"; vendor_hits main >/dev/null )
-eq "0" "$?" 'vendor_hits ไม่ฆ่า step เมื่อรันใต้ set -e และไม่เจอ vendor'
-( set -euo pipefail; source "$ROOT/.github/scripts/app-files.sh"; app_changed_lines main >/dev/null )
-eq "0" "$?" 'app_changed_lines ไม่ฆ่า step เมื่อรันใต้ set -e'
-( set -euo pipefail; source "$ROOT/.github/scripts/app-files.sh"; app_changed_files main >/dev/null )
-eq "0" "$?" 'app_changed_files ไม่ฆ่า step เมื่อรันใต้ set -e'
+
+# ชุดคำสั่งข้างล่างนี้ต้องเหมือนกับใน .github/workflows/agent-guard.yml ทุกบรรทัด
+(
+  set -euo pipefail
+  source "$ROOT/.github/scripts/app-files.sh"
+  APPLINES=$(app_changed_lines main)
+  VENDOR_LONG=$(vendor_long main)
+  VENDOR_LIB=$(vendor_lib main)
+  VENDORHIT=$((VENDOR_LONG + VENDOR_LIB))
+  echo "$APPLINES $VENDOR_LONG $VENDOR_LIB $VENDORHIT" > /dev/null
+)
+eq "0" "$?" 'เรียกแบบเดียวกับ agent-guard ใต้ set -euo pipefail แล้วไม่ตาย'
+
+(
+  set -euo pipefail
+  source "$ROOT/.github/scripts/app-files.sh"
+  APPCHANGED=$(app_changed_files main)
+  [ -z "$APPCHANGED" ] || exit 9
+)
+eq "0" "$?" 'เรียกแบบเดียวกับ smoke.yml ใต้ set -euo pipefail แล้วไม่ตาย'
 
 # ── 8. ของที่ต้องไม่ถูกจับผิด ──
 scenario net-clean
