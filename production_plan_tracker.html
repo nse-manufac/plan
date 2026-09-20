@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-20.2">
+<meta name="app-version" content="2026-09-20.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -618,6 +618,9 @@
       <div class="field"><label>ชื่อขั้นใหม่</label><input type="text" id="newProcLabel" maxlength="40" placeholder="ขึ้นบนปุ่มเลือกขั้น"></div>
       <div class="field"><label>ชื่อสั้น</label><input type="text" id="newProcShort" maxlength="20" placeholder="หัวตาราง · ว่างไว้ใช้ชื่อขั้น"></div>
       <div class="field"><label>ตำแหน่ง</label><select id="newProcAfter"></select></div>
+      <div class="field"><label>ชนิดของขั้น</label>
+        <label style="font-weight:500;" title="ขั้นที่ยอดไม่เกี่ยวกับสายหลัก เช่นงานซ่อม งานนอกแผน — คีย์ยอดเก็บไว้ดูย้อนหลังได้ แต่ไม่ถูกนับเป็นขั้นก่อนหน้าของใคร ไม่มีการ์ด WIP และไม่ถูกตัดสินล่าช้า">
+          <input type="checkbox" id="newProcStandalone"> นับแยก ไม่อยู่ในสายการผลิต</label></div>
       <div class="field"><label>&nbsp;</label><button class="btn success" id="btnProcessAdd">เพิ่มขั้น</button></div>
     </div>
   </div>
@@ -1241,7 +1244,7 @@ state.deltaWip.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
 let workbookGlobal = null;
 let pendingImportItems = null;
 let pendingMerge = null;
-let currentProcess = PROCESSES[0];
+let currentProcess = MAIN_PROCESSES[0];   // ขั้นแรกของสายการผลิต ไม่ใช่ขั้นนับแยกที่อาจถูกแทรกไว้หน้าสุด
 let lastRenderedOrderIds = [];
 let pendingFocusOrderId = null;
 
@@ -4650,8 +4653,11 @@ document.getElementById('btnRecalcSubName').addEventListener('click', ()=>{
  *     getElementById คืน null แล้ว throw ตอนโหลด โค้ดส่วน Init ไม่ถูกรัน แอปพังทั้งหน้า
  *  ⚠️ ต้องถูกเรียกก่อน loadSettingsIntoForm เพราะช่องวันกำหนดส่งถูกสร้างที่นี่ */
 function renderProcessControls(){
-  // ขั้นที่กำลังคีย์อยู่ถูกซ่อนจากเครื่องอื่น — กลับไปขั้นแรก ไม่งั้นหน้าคีย์ยอดไม่มีปุ่มไหนถูกเลือก
-  if(!PROCESSES.includes(currentProcess)) currentProcess = PROCESSES[0];
+  /* ขั้นที่กำลังคีย์อยู่ถูกซ่อนจากเครื่องอื่น — กลับไปขั้นแรก ไม่งั้นหน้าคีย์ยอดไม่มีปุ่มไหนถูกเลือก
+   * ⚠️ กลับไปขั้นแรก "ของสายการผลิต" ไม่ใช่ PROCESSES[0] — ถ้าขั้นนับแยกถูกแทรกเป็นขั้นแรก
+   *    คนเปิดหน้ามาจะเจอปุ่มงานซ่อมถูกเลือกไว้แทน Winding ซึ่งไม่ใช่งานประจำวันของใคร
+   *    (เลือกขั้นนับแยกเองยังได้ตามปกติ ตรงนี้คุมแค่ค่าตั้งต้นกับตอนตกกลับ) */
+  if(!PROCESSES.includes(currentProcess)) currentProcess = MAIN_PROCESSES[0];
   // บรรทัดนี้คือ "สายการผลิต" ที่วาดด้วยลูกศร — ขั้นนับแยกอยู่ในนั้นจะอ่านว่าต่อจากขั้นก่อนหน้า
   document.getElementById('processFlow').textContent = 'Thai Union Electronics — '
     + MAIN_PROCESSES.filter(p=>p!=='shipping').map(p=>PROCESS_LABELS[p]).join(' → ');
@@ -4786,8 +4792,11 @@ function renderProcessAdmin(){
   table.innerHTML = '<thead><tr><th>#</th><th>ชื่อขั้น</th><th>ชื่อสั้น</th><th>สถานะ</th><th>ยอดที่คีย์ไว้ (รายการ)</th><th></th></tr></thead><tbody>'
     + PROCESS_LIST.map((p, i)=>{
       const locked = LOCKED_PROCESS_IDS.includes(p.id);
-      const status = locked ? '<span class="badge gray">ล็อก</span>'
-        : p.hidden ? '<span class="badge amber">ซ่อนอยู่</span>' : '<span class="badge green">แสดง</span>';
+      const status = (locked ? '<span class="badge gray">ล็อก</span>'
+        : p.hidden ? '<span class="badge amber">ซ่อนอยู่</span>' : '<span class="badge green">แสดง</span>')
+        // ชนิดของขั้นเปลี่ยนทีหลังไม่ได้ จึงต้องเห็นได้ตลอดว่าขั้นไหนไม่ได้อยู่ในสายการผลิต
+        // ⚠️ ต้องมีคลาสสีด้วย — `.badge` เปล่า ๆ ไม่มีพื้นหลัง จะออกมาเป็นตัวหนาเล็ก ๆ ไม่เหมือนป้ายอื่น
+        + (p.standalone ? ' <span class="badge gray" title="ยอดไม่เกี่ยวกับสายหลัก ไม่มีการ์ด WIP และไม่ถูกตัดสินล่าช้า">นับแยก</span>' : '');
       const who = p.updatedBy || p.addedBy;
       const audit = who ? `<div class="hint">${escapeHtml((p.updatedBy ? 'แก้ล่าสุดโดย ' : 'เพิ่มโดย ') + who)}</div>` : '';
       const actions = unlocked && !locked
@@ -4870,16 +4879,22 @@ document.getElementById('btnProcessAdd').addEventListener('click', ()=>{
   if(label.length > 40 || short.length > 20){ toast('ชื่อขั้นยาวไม่เกิน 40 ตัว · ชื่อสั้นไม่เกิน 20 ตัว'); return; }
   if(PROCESS_LIST.some(p=>p.label === label || p.short === short)){ toast('มีขั้นชื่อนี้อยู่แล้ว'); return; }
   const after = document.getElementById('newProcAfter').value;
+  const standalone = document.getElementById('newProcStandalone').checked;
   const list = PROCESS_LIST.slice();
   const at = after === '__first__' ? 0 : list.findIndex(p=>p.id === after) + 1;
   if(after !== '__first__' && at <= 0){ toast('เลือกตำแหน่งของขั้นก่อน'); return; }
   const where = after === '__first__' ? 'เป็นขั้นแรก' : 'ต่อจาก ' + PROCESS_LABELS[after];
-  if(!confirm(`เพิ่มขั้น "${label}" ${where}? — ทุกเครื่องจะเห็นขั้นนี้หลังซิงค์ · ลบทีหลังไม่ได้ ซ่อนได้อย่างเดียว`)) return;
-  list.splice(at, 0, {id: 'p' + Date.now().toString(36), label, short, icon: '🔹',
+  // ⚠️ ชนิดของขั้นเปลี่ยนทีหลังไม่ได้ (มีแต่เปลี่ยนชื่อกับซ่อน) จึงต้องบอกให้ชัดตั้งแต่ตอนกด
+  const kind = standalone
+    ? ' · เป็นขั้นนับแยก ยอดไม่เกี่ยวกับสายหลัก ไม่มีการ์ด WIP และไม่ถูกตัดสินล่าช้า'
+    : ' · อยู่ในสายการผลิต';
+  if(!confirm(`เพิ่มขั้น "${label}" ${where}?${kind}\n— ทุกเครื่องจะเห็นขั้นนี้หลังซิงค์ · ลบทีหลังไม่ได้ ซ่อนได้อย่างเดียว · ชนิดของขั้นเปลี่ยนทีหลังไม่ได้`)) return;
+  list.splice(at, 0, {id: 'p' + Date.now().toString(36), label, short, icon: standalone ? '🧰' : '🔹',
     color: PROCESS_PALETTE.find(c=>!list.some(p=>p.color === c)) || PROCESS_PALETTE[0],
-    hidden: false, addedBy: state.deviceName || '', addedAt: new Date().toISOString()});
+    hidden: false, standalone, addedBy: state.deviceName || '', addedAt: new Date().toISOString()});
   saveProcessList(list, `เพิ่มขั้น ${label} แล้ว`).then(ok=>{
-    if(ok){ document.getElementById('newProcLabel').value = ''; document.getElementById('newProcShort').value = ''; }
+    if(ok){ document.getElementById('newProcLabel').value = ''; document.getElementById('newProcShort').value = '';
+      document.getElementById('newProcStandalone').checked = false; }
   });
 });
 
@@ -4901,7 +4916,9 @@ document.getElementById('processTable').addEventListener('click', e=>{
       `เปลี่ยนชื่อเป็น ${label} แล้ว`);
     return;
   }
-  if(!p.hidden && PROCESS_LIST.filter(x=>!x.hidden && !LOCKED_PROCESS_IDS.includes(x.id)).length <= 1){
+  // ⚠️ นับเฉพาะขั้นในสายการผลิต — ขั้นนับแยกไม่ใช่ขั้นผลิต ถ้านับรวมด้วยจะซ่อนสายหลักจนหมด
+  //    แล้วเหลือแต่ขั้นนับแยก ซึ่งแปลว่าไม่มีขั้นไหนป้อนยอดเข้าสายให้ Inspection อีกเลย
+  if(!p.hidden && !p.standalone && PROCESS_LIST.filter(x=>!x.hidden && !x.standalone && !LOCKED_PROCESS_IDS.includes(x.id)).length <= 1){
     toast('ต้องเหลือขั้นผลิตที่แสดงอยู่อย่างน้อยหนึ่งขั้น'); return;
   }
   const n = state.records.filter(r=>!r.voided && r.process === id).length;
