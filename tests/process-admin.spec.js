@@ -424,3 +424,107 @@ test('A3 — กดเปลี่ยนชื่อขั้นอื่น ต
   const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
   expect(opts).not.toContain('p_repair');
 });
+
+// ── ติ๊ก "นับแยก" ตอนเพิ่มขั้น (ใบ 2) ────────────────────────────────
+
+test('A3 — ติ๊กนับแยกแล้วเพิ่มขั้น ธงต้องขึ้นชีตและขั้นนั้นต้องอยู่นอกสายการผลิตจริง', async ({ page }) => {
+  const gs = loadGs();
+  seedPin(gs);
+  await open(page, gs, { records: [rec('r1', 'winding', 800), rec('r2', 'assembly', 300)] });
+  await unlock(page);
+  answerDialogs(page);
+  await page.check('#newProcStandalone');
+  await addStep(page, 'งานซ่อม', 'ซ่อม', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(6);
+
+  const added = serverList(gs).find(p => p.label === 'งานซ่อม');
+  expect(added.standalone).toBe(true);
+
+  // อยู่นอกสายจริง ไม่ใช่แค่มีฟิลด์ — ไม่มีการ์ด WIP และไม่อยู่ในตัวกรอง "ค้างอยู่ที่ขั้น"
+  await tab(page, 'dashboard');
+  await expect(page.locator('#wipCards')).not.toContainText('ค้างหน้า ซ่อม');
+  const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
+  expect(opts).not.toContain(added.id);
+  // ขั้นที่ตามหลังมันต้องข้ามไปเทียบกับ Winding (800) ไม่ใช่ขั้นนับแยก (0)
+  await expect(page.locator('#wipCards')).toContainText('WIP ค้างหน้า Assembly');
+  await expect(page.locator('#wipCards')).not.toContainText('ข้อมูลย้อนแย้ง');
+});
+
+test('A3 — ไม่ติ๊ก = ขั้นในสายการผลิตตามเดิม ไม่มีธงติดไปด้วย', async ({ page }) => {
+  const gs = loadGs();
+  seedPin(gs);
+  await open(page, gs);
+  await unlock(page);
+  answerDialogs(page);
+  await addStep(page, 'Plating', 'Plating', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(6);
+
+  const added = serverList(gs).find(p => p.label === 'Plating');
+  expect(added.standalone).toBeUndefined();
+  await tab(page, 'dashboard');
+  const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
+  expect(opts).toContain(added.id);
+});
+
+test('ตารางจัดการขั้นต้องมีป้าย "นับแยก" บอกว่าขั้นไหนไม่อยู่ในสายการผลิต', async ({ page }) => {
+  const gs = loadGs();
+  const list = baseList();
+  list.splice(1, 0, { id: 'p_repair', label: 'งานซ่อม', short: 'ซ่อม', hidden: false, standalone: true });
+  const r = gs.api.doPushSettings({ processes: list });
+  if (!r.ok) throw new Error(r.error);
+  seedPin(gs);
+  await open(page, gs);
+  await tab(page, 'data');
+  await expect(page.locator('[data-proc-row="p_repair"]')).toContainText('นับแยก');
+  // ขั้นสายหลักต้องไม่มีป้ายนี้ติดมาด้วย
+  await expect(page.locator('[data-proc-row="assembly"]')).not.toContainText('นับแยก');
+});
+
+test('A3 — ซ่อนขั้นสายหลักจนเหลือขั้นนับแยกอย่างเดียวไม่ได้', async ({ page }) => {
+  // ด่าน "ต้องเหลือขั้นผลิตอย่างน้อยหนึ่งขั้น" ต้องนับเฉพาะขั้นในสายการผลิต
+  // ถ้านับขั้นนับแยกด้วย จะซ่อน winding/assembly/support ได้หมดโดยเหลือแต่งานซ่อม
+  // ซึ่งแปลว่าไม่มีขั้นไหนป้อนยอดเข้าสายให้ Inspection อีกเลย
+  const gs = loadGs();
+  const list = baseList();
+  list.splice(1, 0, { id: 'p_repair', label: 'งานซ่อม', short: 'ซ่อม', hidden: false, standalone: true });
+  const r = gs.api.doPushSettings({ processes: list });
+  if (!r.ok) throw new Error(r.error);
+  seedPin(gs);
+  await open(page, gs);
+  await unlock(page);
+  answerDialogs(page);
+
+  for (const id of ['winding', 'assembly']) {
+    await page.click(`[data-proc-toggle="${id}"]`);
+    await expect.poll(() => (serverList(gs).find(p => p.id === id) || {}).hidden).toBe(true);
+  }
+  // เหลือ support ขั้นเดียวในสายหลัก — กดซ่อนต่อต้องถูกปฏิเสธ
+  await page.click('[data-proc-toggle="support"]');
+  await expect(page.locator('#toast')).toContainText('ต้องเหลือขั้นผลิตที่แสดงอยู่อย่างน้อยหนึ่งขั้น');
+  expect(serverList(gs).find(p => p.id === 'support').hidden).toBe(false);
+
+  // แต่ซ่อนขั้นนับแยกยังต้องทำได้ เพราะไม่ได้ลดจำนวนขั้นผลิตลงเลย
+  await page.click('[data-proc-toggle="p_repair"]');
+  await expect.poll(() => (serverList(gs).find(p => p.id === 'p_repair') || {}).hidden).toBe(true);
+});
+
+test('ขั้นนับแยกที่เป็นขั้นแรก ต้องไม่กลายเป็นปุ่มตั้งต้นของหน้าคีย์ยอด', async ({ page }) => {
+  // ⚠️ ต้องซ่อน winding ด้วย ไม่งั้นเทสนี้ไม่ได้ทดสอบอะไรเลย —
+  //    currentProcess ตั้งต้นเป็น winding อยู่แล้ว และจะถูกตั้งใหม่ก็ต่อเมื่อขั้นนั้นหายจาก PROCESSES
+  //    เส้นทางที่ต้องคุมคือ "ตกกลับ" ซึ่งเข้าได้เมื่อขั้นที่ค้างอยู่ถูกซ่อนเท่านั้น
+  const gs = loadGs();
+  const list = baseList();
+  list[0].hidden = true;
+  list.unshift({ id: 'p_repair', label: 'งานซ่อม', short: 'ซ่อม', hidden: false, standalone: true });
+  const r = gs.api.doPushSettings({ processes: list });
+  if (!r.ok) throw new Error(r.error);
+  await open(page, gs);
+  await tab(page, 'entry');
+  // ปุ่มยังมีขั้นนับแยกอยู่ (เลือกเองได้) แต่ตัวที่ถูกเลือกไว้ต้องเป็นขั้นแรกของสายการผลิต
+  expect(await procButtonIds(page)).toEqual(['p_repair', 'assembly', 'support', 'inspection', 'shipping']);
+  const active = await page.locator('#procButtons button.primary').getAttribute('data-proc');
+  expect(active).toBe('assembly');
+  // บรรทัดลูกศรสายการผลิตต้องไม่มีขั้นนับแยก
+  await expect(page.locator('#processFlow')).not.toContainText('งานซ่อม');
+  await expect(page.locator('#processFlow')).toContainText('Assembly');
+});
