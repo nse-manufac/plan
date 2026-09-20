@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-20.3">
+<meta name="app-version" content="2026-09-20.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -4795,7 +4795,8 @@ function renderProcessAdmin(){
       const status = (locked ? '<span class="badge gray">ล็อก</span>'
         : p.hidden ? '<span class="badge amber">ซ่อนอยู่</span>' : '<span class="badge green">แสดง</span>')
         // ชนิดของขั้นเปลี่ยนทีหลังไม่ได้ จึงต้องเห็นได้ตลอดว่าขั้นไหนไม่ได้อยู่ในสายการผลิต
-        + (p.standalone ? ' <span class="badge" title="ยอดไม่เกี่ยวกับสายหลัก ไม่มีการ์ด WIP และไม่ถูกตัดสินล่าช้า">นับแยก</span>' : '');
+        // ⚠️ ต้องมีคลาสสีด้วย — `.badge` เปล่า ๆ ไม่มีพื้นหลัง จะออกมาเป็นตัวหนาเล็ก ๆ ไม่เหมือนป้ายอื่น
+        + (p.standalone ? ' <span class="badge gray" title="ยอดไม่เกี่ยวกับสายหลัก ไม่มีการ์ด WIP และไม่ถูกตัดสินล่าช้า">นับแยก</span>' : '');
       const who = p.updatedBy || p.addedBy;
       const audit = who ? `<div class="hint">${escapeHtml((p.updatedBy ? 'แก้ล่าสุดโดย ' : 'เพิ่มโดย ') + who)}</div>` : '';
       const actions = unlocked && !locked
