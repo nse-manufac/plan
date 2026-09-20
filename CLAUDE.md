@@ -131,6 +131,12 @@
 เพิ่ม · เปลี่ยนชื่อ · ซ่อน ได้เมื่อต่อ Google Sheets และใส่รหัสหัวหน้า · `inspection` กับ `shipping` ล็อกอยู่ท้ายสุด · ลบขั้นไม่ได้
 รหัสหัวหน้าเก็บเป็น SHA-256 + salt ใน Meta `processAdmin` — **เป็นรั้วกันกดพลาด ไม่ใช่ความปลอดภัยจริง** (ใครดึงค่าตั้งได้ก็เห็น hash)
 
+> ⚠️ **ขั้นนับแยก (`standalone`) — เจ้าของสั่ง 20 ก.ย. 2026** · ขั้นที่ยอดไม่เกี่ยวกับสายหลักเลย
+> (งานซ่อม งานนอกแผน) คีย์ยอดเก็บไว้ดูย้อนหลังได้ แต่ไม่ได้ไหลมาจากขั้นไหนและไม่ไหลไปขั้นไหน
+> **ที่ไหนที่แปลว่า "สายการผลิต" ต้องอ่าน `MAIN_PROCESSES`** ไม่ใช่ `PROCESSES` (INVARIANTS A3 · A5)
+> ไม่ต้อง redeploy Apps Script — `processes` เก็บเป็น JSON ก้อนเดียวใน Meta และ `processListError()` ไม่ตัดฟิลด์ที่ไม่รู้จักทิ้ง
+> ตอนนี้ยังไม่มีปุ่มสร้างขั้นแบบนี้บนหน้าจอ (อยู่ในใบที่ 2) · ห้าขั้นตั้งต้นเป็นสายหลักเสมอ
+
 ---
 
 ## 2. Deploy
@@ -219,7 +225,7 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 | Section banner | มีอะไร |
 |---|---|
 | `Basic helpers` | `normalizeDateOnly` `fmtDateTH` `addDaysISO` `daysBetween` `escapeHtml` `uid` `toast` |
-| `Processes` / `รายการขั้นการผลิต` | `DEFAULT_PROCESSES` (ที่เดียวของรายการขั้น) → `PROCESSES` `PREV_PROCESS` `ptext` `hasOrderAnomaly` · `ORDER_DATE_FIELDS` `RECORD_DATE_FIELDS` |
+| `Processes` / `รายการขั้นการผลิต` | `DEFAULT_PROCESSES` (ที่เดียวของรายการขั้น) → `PROCESSES` **`MAIN_PROCESSES`** `PREV_PROCESS` `ptext` `hasOrderAnomaly` · `ORDER_DATE_FIELDS` `RECORD_DATE_FIELDS` |
 | `State` | `STORAGE_KEY` `defaultState` `loadState` `saveState` `migrateCorruptedDates` |
 | `Google Sheets sync` | `gsApi` `cleanForPush` `doSync` และการ merge ตอน pull |
 | `แก้ไฟล์ Excel เฉพาะช่องที่ต้องแก้` | ตัวช่วยแก้ XML ในไฟล์ .xlsx ผ่าน JSZip |
