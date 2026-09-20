@@ -31,41 +31,51 @@ jobs:
           set -euo pipefail
           BASE="origin/${{ github.base_ref }}"
           git fetch --quiet origin "${{ github.base_ref }}"
-          CHANGED=$(git diff --name-only "$BASE...HEAD")
+
+          # นิยาม "ไฟล์แอป" อยู่ในสคริปต์ที่มีเทสคุม (tests/guard-app-files.test.sh)
+          source .github/scripts/app-files.sh
 
           ver() { grep -o '<meta name="app-version" content="[^"]*"' | head -1 | sed 's/.*content="//; s/"$//'; }
 
-          # วนตรวจไฟล์แอปทุกไฟล์ที่ PR แตะ ไม่ hardcode ชื่อไว้
-          # เพิ่มแอปใหม่แล้วจะถูกตรวจเอง — กฎที่ต้องจำว่าให้ไปเติม คือกฎที่จะลืม
-          FAIL=0
-          FOUND=0
-          for APP in *.html; do
-            echo "$CHANGED" | grep -qxF "$APP" || continue
-            FOUND=1
+          # แก้ .js ก็ต้องบัมป์ด้วย — ไม่งั้นเครื่องที่ค้างไฟล์เก่าจะเอา app.js ใหม่ไปคู่กับ core/ เก่า
+          # ซึ่งพังเงียบกว่าเดิม เพราะแต่ละไฟล์หมดอายุแคชไม่พร้อมกัน (INVARIANTS F2 · F4)
+          # ใช้ versioned_changed_files ไม่ใช่ app_changed_files — ตัวนี้รวม lib/ ด้วย
+          # เปลี่ยนไลบรารี = เครื่องในโรงงานต้องโหลดใหม่ จึงต้องบังคับบัมป์เลขรุ่นเหมือนกัน
+          APPCHANGED=$(versioned_changed_files "$BASE")
 
-            NEW=$(ver < "$APP" || true)
-            OLD=$(git show "$BASE:$APP" 2>/dev/null | ver || true)
-            echo "── $APP"
-            echo "   บน ${{ github.base_ref }} : ${OLD:-(ไม่พบ)}"
-            echo "   ใน PR นี้        : ${NEW:-(ไม่พบ)}"
-
-            if [ -z "$NEW" ]; then
-              echo "::error file=$APP::ไม่พบ <meta name=\"app-version\"> ในไฟล์ — ผู้ใช้จะบอกไม่ได้ว่าเครื่องตัวเองรันรุ่นไหน (INVARIANTS F4)"
-              FAIL=1
-            elif [ "$OLD" = "$NEW" ]; then
-              echo "::error file=$APP::แก้ $APP แล้วแต่ไม่ได้บัมป์ app-version (ยังเป็น $NEW) — เครื่องที่ค้างไฟล์เก่าไว้จะไม่รู้ว่ามีของใหม่ (INVARIANTS F4)"
-              FAIL=1
-            else
-              echo "   ✓ บัมป์แล้ว: ${OLD:-(ไม่มี)} → $NEW"
-            fi
-          done
-
-          # ห้ามเขียนเป็น `[ ... ] && echo` — ภายใต้ set -e ถ้าเงื่อนไขเป็นเท็จ
-          # AND-list จะคืนค่า 1 และทำให้ step ล้มทั้งที่ทุกอย่างถูกต้อง
-          if [ "$FOUND" -eq 0 ]; then
+          if [ -z "$APPCHANGED" ]; then
             echo "PR นี้ไม่ได้แก้ไฟล์แอป — ข้ามการตรวจ"
+            exit 0
           fi
-          exit "$FAIL"
+          echo "ไฟล์แอปที่เปลี่ยน:"
+          echo "$APPCHANGED" | sed 's/^/  /'
+          echo ""
+
+          # เลขรุ่นประกาศที่ <head> ของไฟล์ .html ที่รากไฟล์เดียว (F4 — ประกาศที่เดียว)
+          # ถ้าวันหนึ่งมีหลายแอปในรากเดียวกัน ด่านนี้ต้องถูกเขียนใหม่
+          # ให้มันแดงเองตอนนั้นดีกว่าเดาเงียบ ๆ ว่าไฟล์ไหนคือแอปหลัก
+          COUNT=$(ls -1 *.html 2>/dev/null | wc -l)
+          if [ "$COUNT" -ne 1 ]; then
+            echo "::error::รากของ repo มีไฟล์ .html $COUNT ไฟล์ — ด่านนี้เขียนไว้สำหรับแอปเดียว ต้องแก้ด่านก่อนเพิ่มแอปที่สอง"
+            exit 1
+          fi
+          APP=$(ls -1 *.html)
+
+          NEW=$(ver < "$APP" || true)
+          OLD=$(git show "$BASE:$APP" 2>/dev/null | ver || true)
+          echo "── $APP"
+          echo "   บน ${{ github.base_ref }} : ${OLD:-(ไม่พบ)}"
+          echo "   ใน PR นี้        : ${NEW:-(ไม่พบ)}"
+
+          if [ -z "$NEW" ]; then
+            echo "::error file=$APP::ไม่พบ <meta name=\"app-version\"> ในไฟล์ — ผู้ใช้จะบอกไม่ได้ว่าเครื่องตัวเองรันรุ่นไหน (INVARIANTS F4)"
+            exit 1
+          fi
+          if [ "$OLD" = "$NEW" ]; then
+            echo "::error file=$APP::PR นี้แก้ไฟล์แอปแต่ไม่ได้บัมป์ app-version (ยังเป็น $NEW) — เครื่องที่ค้างไฟล์เก่าไว้จะไม่รู้ว่ามีของใหม่ (INVARIANTS F4)"
+            exit 1
+          fi
+          echo "   ✓ บัมป์แล้ว: ${OLD:-(ไม่มี)} → $NEW"
 
   smoke:
     name: ตรวจกฎใน INVARIANTS.md
@@ -80,6 +90,11 @@ jobs:
       - name: เทสตรรกะของด่านตรวจ
         run: bash tests/guard-rules.test.sh
 
+      # ด่านที่ตัดสินจาก "ไฟล์ไหนคือไฟล์แอป" — สร้าง repo จำลองแล้วรันของจริงกับ PR สมมติ
+      # ไม่ต้องใช้เบราว์เซอร์และไม่ต้องต่อเน็ต จึงรันก่อนติดตั้งอะไรเช่นกัน
+      - name: เทสด่านไฟล์แอป
+        run: bash tests/guard-app-files.test.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -88,6 +103,12 @@ jobs:
       # (ตั้งใจ — แอปจริงไม่มี dependency, package.json มีไว้ให้ตัวเทสเท่านั้น)
       - name: ติดตั้ง dependency ของเทส
         run: npm install --no-audit --no-fund
+
+      # เทสกฎที่รันด้วย node ล้วน — ยังไม่มีสคริปต์ `test:core` จนกว่าจะแยก core/ ก้อนแรก
+      # ใส่ --if-present ไว้ล่วงหน้า เพื่อให้ PR ที่แยกไฟล์ไม่ต้องมาแตะ .github/ อีก
+      # (การแตะ .github/ ไปโดนด่านข้อ 1 ของ agent-guard ซึ่งบล็อก PR ของ agent ทันที)
+      - name: เทสกฎด้วย node (ถ้ามี)
+        run: npm run test:core --if-present
 
       - name: ติดตั้งเบราว์เซอร์
         run: npx playwright install --with-deps chromium
