@@ -392,3 +392,35 @@ test('รายการขั้นบนชีตรูปผิด — ไม
   expect(await procButtonIds(page)).toEqual(DEFAULT_IDS);
   expect((await readState(page)).processes).toBeFalsy();
 });
+
+// ── ธงขั้นนับแยกต้องรอดขา push (ผู้ตรวจ PR #94 จับได้) ──────────────
+
+test('A3 — กดเปลี่ยนชื่อขั้นอื่น ต้องไม่ทำให้ธงขั้นนับแยกหายจากเซิร์ฟเวอร์', async ({ page }) => {
+  // เส้นทางจริง: เจ้าของสร้างขั้นนับแยกบนชีต (ตอนนี้เป็นทางเดียว) แล้ววันหลังมีคนกดเปลี่ยนชื่อขั้นไหนก็ได้
+  // saveProcessList() ประกอบรายการทั้งก้อนใหม่ผ่าน storedProcessList() แล้ว push ทับ Meta
+  // ถ้าฟังก์ชันนั้นไม่พกธงไปด้วย ขั้นนับแยกจะกลับเข้าสายหลักทุกเครื่อง แล้วทุกใบขึ้นล่าช้า
+  const gs = loadGs();
+  const list = baseList();
+  list.splice(1, 0, { id: 'p_repair', label: 'งานซ่อม', short: 'ซ่อม', hidden: false, standalone: true });
+  const seeded = gs.api.doPushSettings({ processes: list });
+  if (!seeded.ok) throw new Error(seeded.error);
+  seedPin(gs);
+
+  await open(page, gs);
+  expect(serverList(gs).find(p => p.id === 'p_repair').standalone).toBe(true);
+
+  await unlock(page);
+  answerDialogs(page, ['Assembly ชื่อใหม่']);
+  await page.click('[data-proc-rename="assembly"]');
+  await expect.poll(() => (serverList(gs).find(p => p.id === 'assembly') || {}).label).toBe('Assembly ชื่อใหม่');
+
+  // ธงต้องยังอยู่ทั้งบนเซิร์ฟเวอร์และในเครื่อง
+  expect(serverList(gs).find(p => p.id === 'p_repair').standalone).toBe(true);
+  const st = await readState(page);
+  expect(st.processes.find(p => p.id === 'p_repair').standalone).toBe(true);
+
+  // และยังทำงานเป็นขั้นนับแยกจริง ไม่ใช่แค่มีฟิลด์ค้างไว้
+  await tab(page, 'dashboard');
+  const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
+  expect(opts).not.toContain('p_repair');
+});

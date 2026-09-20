@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-20.1">
+<meta name="app-version" content="2026-09-20.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -4652,8 +4652,9 @@ document.getElementById('btnRecalcSubName').addEventListener('click', ()=>{
 function renderProcessControls(){
   // ขั้นที่กำลังคีย์อยู่ถูกซ่อนจากเครื่องอื่น — กลับไปขั้นแรก ไม่งั้นหน้าคีย์ยอดไม่มีปุ่มไหนถูกเลือก
   if(!PROCESSES.includes(currentProcess)) currentProcess = PROCESSES[0];
+  // บรรทัดนี้คือ "สายการผลิต" ที่วาดด้วยลูกศร — ขั้นนับแยกอยู่ในนั้นจะอ่านว่าต่อจากขั้นก่อนหน้า
   document.getElementById('processFlow').textContent = 'Thai Union Electronics — '
-    + PROCESSES.filter(p=>p!=='shipping').map(p=>PROCESS_LABELS[p]).join(' → ');
+    + MAIN_PROCESSES.filter(p=>p!=='shipping').map(p=>PROCESS_LABELS[p]).join(' → ');
 
   const btns = document.getElementById('procButtons');
   btns.innerHTML = PROCESSES.map(p=>{
@@ -4733,11 +4734,17 @@ function adoptProcessList(list){
   return true;
 }
 
-/** รายการเต็มในเครื่อง → รูปที่เก็บบนเซิร์ฟเวอร์ · ขั้นตั้งต้นไม่ต้องพกไอคอนกับสี เพราะอยู่ในโค้ดแล้ว */
+/** รายการเต็มในเครื่อง → รูปที่เก็บบนเซิร์ฟเวอร์ · ขั้นตั้งต้นไม่ต้องพกไอคอนกับสี เพราะอยู่ในโค้ดแล้ว
+ *
+ *  ⚠️ ฟังก์ชันนี้คัดฟิลด์แบบ whitelist — ฟิลด์ที่ลืมใส่จะหายจากเซิร์ฟเวอร์ถาวร ไม่ใช่แค่ไม่ถูกส่ง
+ *     เพราะ saveProcessList() เอาผลของตัวนี้ไป adoptProcessList() ทับในเครื่องต่อด้วย
+ *     ลืม standalone แล้วใครกดเปลี่ยนชื่อ/ซ่อนขั้นไหนก็ได้ ขั้นนับแยกจะกลับเข้าสายหลักทุกเครื่อง
+ *     แล้วทุกใบจะขึ้นล่าช้า ซึ่งเป็นอาการที่ A3/A5 ตั้งใจกันไว้พอดี */
 function storedProcessList(list){
   return list.map(p=>{
     const o = {id:p.id, label:p.label, short:p.short, hidden:!!p.hidden};
     if(!DEFAULT_BY_ID[p.id]){ o.icon = p.icon; o.color = p.color; }
+    if(p.standalone) o.standalone = true;
     PROCESS_AUDIT_KEYS.forEach(k=>{ if(p[k]) o[k] = p[k]; });
     return o;
   });
