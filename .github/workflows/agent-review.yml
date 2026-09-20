@@ -56,7 +56,26 @@ jobs:
       # และตัว fallback "ใบนี้ยังไม่ถูกตรวจ" จะไม่มีวันทำงาน
       # ═══════════════════════════════════════════════════════════════
       - name: ล้างไฟล์ผลลัพธ์เก่า
-        run: rm -f review-report.md fallback.md
+        run: rm -f review-report.md fallback.md pr.txt
+
+      # ═══════════════════════════════════════════════════════════════
+      # ส่งเลข PR ให้ผู้ตรวจทางไฟล์ ไม่ใช่ทาง ${{ }} ใน prompt
+      #
+      # เพราะค่าที่มี ${{ }} อยู่ข้างในติดเพดาน 21,000 ไบต์ (ดูคอมเมนต์เหนือ prompt)
+      # พอเลขไม่ได้อยู่ใน prompt แล้ว prompt ก็ไม่มี ${{ }} เหลือเลย = ไม่ติดเพดานอีก
+      #
+      # ⚠️ อย่าเปลี่ยนไปใช้ `gh pr view` เปล่า ๆ แทน — actions/checkout ของ event
+      #    pull_request วางโค้ดไว้แบบ detached HEAD ไม่ได้อยู่บน branch ไหน
+      #    `gh` จึงหา PR จากชื่อ branch ไม่เจอ
+      # ═══════════════════════════════════════════════════════════════
+      - name: เขียนเลข PR ลงไฟล์ให้ผู้ตรวจอ่าน
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          printf 'pr_number=%s\nrepo=%s\n' "$PR" "$REPO" > pr.txt
+          cat pr.txt
 
       - uses: actions/setup-node@v4
         with:
@@ -125,16 +144,21 @@ jobs:
             --model claude-opus-5
             --max-turns 70
             --allowedTools "Read,Grep,Glob,Write,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git fetch:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh issue view:*),Bash(node:*),Bash(npm test),Bash(npx playwright:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(grep:*),Bash(awk:*),Bash(wc:*),Bash(sed:*),Bash(sort:*),Bash(uniq:*),Bash(diff:*)"
-          # 🛑 **เพดานของ GitHub: ค่าที่มี `${{ }}` อยู่ข้างใน ยาวได้ไม่เกิน 21,000 ไบต์**
-          #    ไม่ใช่ 21,000 ตัวอักษร — ภาษาไทยตัวละ 3 ไบต์ ของจริงจึงได้ราว 7,000 ตัวอักษรเท่านั้น
-          #    เกินแล้ว **workflow ทั้งไฟล์กลายเป็นไฟล์เสีย ไม่ใช่แค่ขั้นตอนนี้ล้ม**
-          #    ผลคือ PR ใบนั้นไม่มีผู้ตรวจเลย และหน้า PR ไม่ขึ้นเช็คสีแดงให้เห็นด้วย
-          #    ต้องเข้าไปดูที่หน้า run ถึงจะเห็นข้อความ "Exceeded max expression length 21000"
-          #    (เจอจริง 20 ก.ย. 2026 เกินไป 64 ไบต์) · วัดด้วย:
-          #      node -e "const y=require('js-yaml'),f=require('fs');const d=y.load(f.readFileSync('.github/workflows/agent-review.yml','utf8'));console.log(Buffer.byteLength(d.jobs.review.steps.at(-2).with.prompt,'utf8'))"
+          # 🛑 **ห้ามใส่ `${{` `}}` ลงใน prompt เด็ดขาด** — ค่าที่มีมันอยู่ข้างในติดเพดาน
+          #    **21,000 ไบต์** ของ GitHub (ไม่ใช่ 21,000 ตัวอักษร · ไทยตัวละ 3 ไบต์
+          #    ของจริงจึงได้ราว 7,000 ตัวอักษร) ส่วน prompt ที่ไม่มีมันเลย ไม่ถูกนับ
+          #
+          #    เกินเพดานแล้ว **workflow ทั้งไฟล์กลายเป็นไฟล์เสีย ไม่ใช่แค่ขั้นตอนนี้ล้ม**
+          #    PR ใบนั้นจะไม่มีผู้ตรวจเลย และ **หน้า PR ไม่ขึ้นเช็คสีแดงให้เห็นด้วย**
+          #    ต้องเปิดหน้า run ถึงจะเห็น "Exceeded max expression length 21000"
+          #    (เจอจริง 20 ก.ย. 2026 เกินไป 64 ไบต์ — ใบนั้นไม่ถูกตรวจโดยไม่มีอะไรฟ้อง)
+          #
+          #    ต้องส่งค่าอะไรเข้าไปให้ผู้ตรวจ ให้เขียนลงไฟล์ในขั้นตอนก่อนหน้าแทน (ดู pr.txt)
+          #    ด่าน `.github/workflows/prompt-size.yml` ตรวจข้อนี้ให้ทุก PR
           prompt: |
-            ตรวจ PR #${{ github.event.pull_request.number }} ของ ${{ github.repository }}
-            ก่อนที่เจ้าของจะอ่าน
+            ตรวจ PR ของ repo นี้ ก่อนที่เจ้าของจะอ่าน
+            **เลข PR กับชื่อ repo อยู่ในไฟล์ `pr.txt` ที่ราก repo — อ่านก่อนเริ่มเสมอ**
+            (`pr_number=<เลข>` · `repo=<เจ้าของ/ชื่อ>`) ทุกคำสั่ง `gh` ข้างล่างให้ใส่เลขนั้นแทน `<PR>`
 
             `production_plan_tracker.html` คือระบบติดตามแผนการผลิตที่ฝ่ายวางแผนคีย์ของจริงทุกวัน
             **push เข้า main = ขึ้น production ทันที** ไม่มี staging ไม่มี build step
@@ -268,7 +292,7 @@ jobs:
             ## อ่านรอบก่อนแล้วไปที่อื่น
 
             ```
-            gh pr view ${{ github.event.pull_request.number }} --json comments -q '.comments[].body'
+            gh pr view <PR> --json comments -q '.comments[].body'
             ```
 
             **สิ่งที่รอบก่อนตรวจไปแล้วและยังไม่มีอะไรเปลี่ยน ไม่ต้องทวนซ้ำ** ยกมาอ้างสั้น ๆ ก็พอ
