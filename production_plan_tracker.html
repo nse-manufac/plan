@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-15.3">
+<meta name="app-version" content="2026-09-20.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -994,9 +994,26 @@ const DEFAULT_PROCESSES = [
  *
  *   PROCESS_LIST   ทุกขั้นเรียงตามสายการผลิต รวมขั้นที่ซ่อน — หน้าจัดการขั้นใช้
  *   PROCESSES      id ของขั้นที่แสดงอยู่ — ตัวคิดยอด ตาราง การ์ด ปุ่ม ใช้ตัวนี้ ขั้นที่ซ่อนจึงไม่ถูกนับ
- *   PROCESS_BY_ID  ทุกขั้นที่รู้จักรวมขั้นที่ซ่อน — ตัวเตือนขั้นแปลกหน้าใช้ตัวนี้ ขั้นที่ซ่อนจึงไม่ถูกเตือน */
+ *   MAIN_PROCESSES id ของขั้นที่อยู่ใน "สายการผลิต" — PROCESSES ที่ตัดขั้นนับแยกออก (ดูข้างล่าง)
+ *   PROCESS_BY_ID  ทุกขั้นที่รู้จักรวมขั้นที่ซ่อน — ตัวเตือนขั้นแปลกหน้าใช้ตัวนี้ ขั้นที่ซ่อนจึงไม่ถูกเตือน
+ *
+ * ⚠️ ขั้นนับแยก (standalone) — เจ้าของสั่ง 20 ก.ย. 2026
+ *    ขั้นที่ยอดไม่เกี่ยวกับสายหลักเลย (งานซ่อม งานนอกแผน) คีย์ยอดเก็บไว้ดูย้อนหลังได้
+ *    แต่ไม่ได้ไหลมาจากขั้นไหนและไม่ได้ไหลไปขั้นไหน
+ *
+ *    **ที่ไหนที่แปลว่า "สายการผลิต" ต้องใช้ MAIN_PROCESSES ไม่ใช่ PROCESSES**
+ *    คือ ขั้นก่อนหน้า · ตัวจับข้อมูลย้อนแย้ง · การ์ด WIP ค้างหน้าขั้น · คอลัมน์ WIP ในรายงาน ·
+ *    ตัวกรอง "ค้างอยู่ที่ขั้น" · ลูปตัดสินล่าช้าใน computeStatus
+ *    เอา PROCESSES ไปใช้ตรงนั้นแล้วขั้นนับแยกจะกลายเป็นขั้นก่อนหน้าของขั้นถัดไป
+ *    ยอดมันถูกเทียบกับสายหลักจนขึ้น "ข้อมูลย้อนแย้ง" ตลอด และถูกตัดสินล่าช้าทุกใบ
+ *    เพราะยอดของมันไม่มีทางถึง orderQty ซึ่งเป็นเกณฑ์ของสายหลัก
+ *
+ *    ส่วนที่เหลือใช้ PROCESSES ตามเดิม — ปุ่มคีย์ยอด คอลัมน์สะสม กราฟ ช่องตั้งวันกำหนด
+ *    การแยกทัน/เกินกำหนด และการซิงค์ · ขั้นนับแยกจึงมีกำหนดวันของตัวเองได้ แค่ไม่ถูกตัดสินล่าช้า
+ *    (ห้าขั้นตั้งต้นเป็นสายหลักเสมอ — composeProcesses ไม่รับ standalone ที่ส่งมาทับขั้นเหล่านั้น) */
 const PROCESS_LIST = [];
 const PROCESSES = [];
+const MAIN_PROCESSES = [];
 const PROCESS_BY_ID = {};
 const PROCESS_LABELS = {};
 const PROCESS_COLORS = {};
@@ -1029,7 +1046,8 @@ function composeProcesses(stored){
     if(base && LOCKED_PROCESS_IDS.includes(s.id)) return Object.assign({}, base, {hidden:false});
     if(base) return Object.assign({}, base, {label:s.label, short:s.short || base.short, hidden:!!s.hidden}, audit(s));
     return Object.assign({id:s.id, label:s.label, short:s.short || s.label, icon:s.icon || '🔹',
-      color:s.color || PROCESS_PALETTE[i % PROCESS_PALETTE.length], defaultOffset:null, hidden:!!s.hidden}, audit(s));
+      color:s.color || PROCESS_PALETTE[i % PROCESS_PALETTE.length], defaultOffset:null,
+      hidden:!!s.hidden, standalone:!!s.standalone}, audit(s));
   });
   // ขั้นตั้งต้นที่หายจากรายการ (เซิร์ฟเวอร์ห้ามลบ จึงไม่ควรเกิด) ใส่คืนก่อน inspection — กันยอดของขั้นนั้นหลุด
   DEFAULT_PROCESSES.forEach(d=>{
@@ -1041,6 +1059,7 @@ function composeProcesses(stored){
 function applyProcessList(list){
   PROCESS_LIST.length = 0;
   PROCESSES.length = 0;
+  MAIN_PROCESSES.length = 0;
   [PROCESS_BY_ID, PROCESS_LABELS, PROCESS_COLORS, PREV_PROCESS].forEach(o=>Object.keys(o).forEach(k=>{ delete o[k]; }));
   list.forEach(p=>{
     PROCESS_LIST.push(p);
@@ -1048,8 +1067,12 @@ function applyProcessList(list){
     PROCESS_LABELS[p.id] = p.label;
     PROCESS_COLORS[p.id] = p.color;
     if(!p.hidden) PROCESSES.push(p.id);
+    if(!p.hidden && !p.standalone) MAIN_PROCESSES.push(p.id);
   });
-  PROCESSES.forEach((p, i)=>{ PREV_PROCESS[p] = i ? PROCESSES[i-1] : null; });
+  /* ขั้นก่อนหน้าไล่ตามสายหลักเท่านั้น — ขั้นนับแยกไม่มีขั้นก่อนหน้า (null)
+   * และไม่เป็นขั้นก่อนหน้าของใคร ขั้นที่อยู่ถัดจากมันจึงข้ามไปเอาขั้นสายหลักตัวก่อน */
+  PROCESSES.forEach(p=>{ PREV_PROCESS[p] = null; });
+  MAIN_PROCESSES.forEach((p, i)=>{ if(i) PREV_PROCESS[p] = MAIN_PROCESSES[i-1]; });
 }
 applyProcessList(composeProcesses(null));
 function emptyCum(){ return Object.fromEntries(PROCESSES.map(p=>[p, 0])); }
@@ -1078,7 +1101,7 @@ function processHeadHtml(id){
 }
 /** ยอดสะสมของขั้นถัดไปมากกว่าขั้นก่อนหน้า = คีย์ข้ามขั้นหรือคีย์ผิด */
 function hasOrderAnomaly(c){
-  return PROCESSES.some((p, i)=> i > 0 && (c[p]||0) > (c[PROCESSES[i-1]]||0));
+  return MAIN_PROCESSES.some((p, i)=> i > 0 && (c[p]||0) > (c[MAIN_PROCESSES[i-1]]||0));
 }
 
 // ฟิลด์ที่เก็บ "วันปฏิทินล้วน" (YYYY-MM-DD) — ต้อง normalize ทุกครั้งที่รับค่าจากภายนอก
@@ -2528,9 +2551,12 @@ function computeStatus(order, cum, dl, refISO){
   const done = cum.shipping >= order.orderQty;
   if(done) return {code:'done', label:'ส่งของครบแล้ว', color:'green'};
   if(!order.orderDate) return {code:'ok', label:'ไม่มีวันที่สั่งซื้อ', color:'gray'};
-  // ⚠️ A5 — รายงานขั้นปลายน้ำก่อนเสมอ จึงไล่จากขั้นท้ายสุดย้อนขึ้นไป ห้ามไล่จากต้นน้ำ
-  for(let i = PROCESSES.length - 1; i >= 0; i--){
-    const p = PROCESSES[i];
+  /* ⚠️ A5 — รายงานขั้นปลายน้ำก่อนเสมอ จึงไล่จากขั้นท้ายสุดย้อนขึ้นไป ห้ามไล่จากต้นน้ำ
+   * ⚠️ ไล่ MAIN_PROCESSES ไม่ใช่ PROCESSES — เกณฑ์ตรงนี้คือ "ยอดขั้นนั้นยังไม่ถึง orderQty"
+   *    ซึ่งเป็นยอดของสายหลัก ขั้นนับแยกไม่มีทางถึง ถ้ารวมมาด้วยจะขึ้นล่าช้าทุกใบทันที
+   *    ที่ตั้งวันกำหนดให้ขั้นนับแยกได้ ยังได้เหมือนเดิม — วันถูกคิดและแสดง แค่ไม่ตัดสินล่าช้า */
+  for(let i = MAIN_PROCESSES.length - 1; i >= 0; i--){
+    const p = MAIN_PROCESSES[i];
     if(dl[p] && refISO > dl[p] && (cum[p]||0) < order.orderQty) return {code:'late', label:ptext(p, 'late'), color:'red'};
   }
   if(dl.shipping){
@@ -3119,9 +3145,9 @@ function renderWipCards(){
   // การ์ดค้างหน้าขั้น = ยอดขั้นก่อนหน้า − ยอดขั้นนั้น · ขั้นแรกไม่มีการ์ดค้างหน้า (อยู่ในยังไม่เริ่มผลิต)
   const cards = [
     {label:'ยอดแผนรวม (Order Qty)', value:numFmt(totalQty), unit:'pcs', accent:'blue'},
-    {label:'ยังไม่เริ่มผลิต', value:numFmt(Math.max(0, totalQty - sum[PROCESSES[0]])), unit:'pcs', accent:'blue'},
-    ...PROCESSES.slice(1).map((p, i)=>({label:ptext(p, 'waitCard'),
-      value:numFmt(Math.max(0, sum[PROCESSES[i]] - sum[p])), unit:'pcs', accent:'amber'})),
+    {label:'ยังไม่เริ่มผลิต', value:numFmt(Math.max(0, totalQty - sum[MAIN_PROCESSES[0]])), unit:'pcs', accent:'blue'},
+    ...MAIN_PROCESSES.slice(1).map((p, i)=>({label:ptext(p, 'waitCard'),
+      value:numFmt(Math.max(0, sum[MAIN_PROCESSES[i]] - sum[p])), unit:'pcs', accent:'amber'})),
     {label:'ส่งของแล้ว (Shipped)', value:numFmt(shipped), unit:`pcs (${totalQty? Math.round(shipped/totalQty*100):0}%)`, accent:'green'}
   ];
   let html = cards.map(c=>`<div class="card accent-${c.accent}"><div class="label">${escapeHtml(c.label)}</div><div class="value">${c.value}<span class="unit">${c.unit}</span></div></div>`).join('');
@@ -3137,7 +3163,7 @@ function renderWipCards(){
  *  stage 'notStarted' = ยังไม่เข้าขั้นแรก */
 function wipQtyAtStage(order, cum, stage){
   const capped = p => Math.min(cum[p]||0, order.orderQty);
-  if(stage === 'notStarted') return Math.max(0, order.orderQty - capped(PROCESSES[0]));
+  if(stage === 'notStarted') return Math.max(0, order.orderQty - capped(MAIN_PROCESSES[0]));
   const prev = PREV_PROCESS[stage];
   if(!prev) return 0;
   return Math.max(0, capped(prev) - capped(stage));
@@ -3541,7 +3567,7 @@ async function exportExcelReport(){
       'Order Qty': o.orderQty, 'Order Date': o.orderDate,
       // ⚠️ ลำดับคอลัมน์ต้องคงที่ — สะสมครบทุกขั้น แล้ว WIP แล้ว Deadline (ไฟล์ถูกส่งต่อไปใช้ข้างนอก)
       ...Object.fromEntries(PROCESSES.map(p=>[ptext(p, 'cumExport'), c[p]||0])),
-      ...Object.fromEntries(PROCESSES.slice(1).map((p, i)=>[ptext(p, 'waitExport'), Math.max(0, (c[PROCESSES[i]]||0) - (c[p]||0))])),
+      ...Object.fromEntries(MAIN_PROCESSES.slice(1).map((p, i)=>[ptext(p, 'waitExport'), Math.max(0, (c[MAIN_PROCESSES[i]]||0) - (c[p]||0))])),
       ...Object.fromEntries(PROCESSES.map(p=>[ptext(p, 'deadlineExport'), dl[p]]))
     };
   });
@@ -4647,8 +4673,9 @@ function renderProcessControls(){
     sel.value = keep;
     if(sel.value !== keep) sel.value = '';
   };
+  // ตัวกรองนี้ถามว่า "ค้างอยู่หน้าขั้นไหน" ซึ่งมีความหมายเฉพาะขั้นในสายหลัก
   refill('dashWipFilter', '<option value="">ทั้งหมด</option><option value="notStarted">ยังไม่เริ่มผลิต</option>'
-    + PROCESSES.slice(1).map(p=>`<option value="${p}">${escapeHtml(ptext(p, 'wait'))}</option>`).join(''));
+    + MAIN_PROCESSES.slice(1).map(p=>`<option value="${p}">${escapeHtml(ptext(p, 'wait'))}</option>`).join(''));
   refill('recFilterProcess', '<option value="">ทั้งหมด</option>'
     + PROCESSES.map(p=>`<option value="${p}">${escapeHtml(PROCESS_LABELS[p])}</option>`).join(''));
 
