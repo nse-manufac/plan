@@ -1,8 +1,8 @@
 name: Smoke tests
 
 on:
+  # pull_request ไม่กรอง base branch — PR ที่ซ้อนบนอีกใบต้องถูกเทสด้วย (เหตุผลอยู่ที่ agent-guard.yml)
   pull_request:
-    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -94,6 +94,12 @@ jobs:
       # ไม่ต้องใช้เบราว์เซอร์และไม่ต้องต่อเน็ต จึงรันก่อนติดตั้งอะไรเช่นกัน
       - name: เทสด่านไฟล์แอป
         run: bash tests/guard-app-files.test.sh
+
+      - name: เทสด่านเพดานขนาด PR
+        run: bash tests/guard-size.test.sh
+
+      - name: เทสตัวพิสูจน์ย้ายอย่างเดียว
+        run: bash tests/guard-move-proof.test.sh
 
       - uses: actions/setup-node@v4
         with:

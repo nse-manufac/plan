@@ -3,9 +3,10 @@ name: ผู้ตรวจ — ตรวจ PR ก่อนถึงเจ้�
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    branches: [main]
 
-# รันทุก PR ที่เข้า main ไม่มีข้อยกเว้น
+# รันทุก PR ไม่มีข้อยกเว้น — รวม PR ที่ซ้อนบนอีกใบ (base ไม่ใช่ main) ด้วย
+# ตอนที่กรองไว้แค่ main ใบที่ซ้อนไม่มีผู้ตรวจเลย (plan #84 · store #87 · เหตุผลเต็มอยู่ที่ agent-guard.yml)
+# base ของใบนั้นถูกเขียนลง pr.txt ให้ผู้ตรวจ diff เทียบกับฐานจริง ไม่ใช่ main เสมอไป
 # (concurrency กันรันซ้ำเวลามี push ตามเข้ามาติด ๆ)
 concurrency:
   group: agent-review-${{ github.event.pull_request.number }}
@@ -72,9 +73,10 @@ jobs:
         env:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          BASE: ${{ github.base_ref }}
         run: |
           set -euo pipefail
-          printf 'pr_number=%s\nrepo=%s\n' "$PR" "$REPO" > pr.txt
+          printf 'pr_number=%s\nrepo=%s\nbase=%s\n' "$PR" "$REPO" "$BASE" > pr.txt
           cat pr.txt
 
       - uses: actions/setup-node@v4
@@ -165,13 +167,14 @@ jobs:
           prompt: |
             ตรวจ PR ของ repo นี้ ก่อนที่เจ้าของจะอ่าน
             **เลข PR กับชื่อ repo อยู่ในไฟล์ `pr.txt` ที่ราก repo — อ่านก่อนเริ่มเสมอ**
-            (`pr_number=<เลข>` · `repo=<เจ้าของ/ชื่อ>`) ทุกคำสั่ง `gh` ข้างล่างให้ใส่เลขนั้นแทน `<PR>`
+            (`pr_number=<เลข>` · `repo=<เจ้าของ/ชื่อ>` · `base=<สาขาฐาน>`) ทุกคำสั่ง `gh` ข้างล่างให้ใส่เลขนั้นแทน `<PR>`
 
             `production_plan_tracker.html` คือระบบติดตามแผนการผลิตที่ฝ่ายวางแผนคีย์ของจริงทุกวัน
             **push เข้า main = ขึ้น production ทันที** ไม่มี staging ไม่มี build step
             ของที่หลุดไปคือของที่พนักงานเจอเช้าวันรุ่งขึ้น
 
-            ดู diff ด้วย `git diff origin/main...HEAD` แล้ว**อ่านไฟล์ที่เปลี่ยนจริง** ไม่ใช่อ่านแค่ diff
+            ดู diff ด้วย `git diff origin/<base>...HEAD` แล้ว**อ่านไฟล์ที่เปลี่ยนจริง** ไม่ใช่อ่านแค่ diff
+            (ใบที่ซ้อนบนใบอื่นมี base ไม่ใช่ main — ตรวจเฉพาะส่วนของใบนี้)
 
             ⚠️ **ห้ามอ่านทั้งไฟล์เข้า context** — ~1,014 KB จาก ~1,409 KB เป็น ExcelJS + JSZip
             ที่ vendor ไว้ใน 5 บรรทัด (บรรทัดละ 20,000–500,000 ตัวอักษร)
@@ -187,8 +190,11 @@ jobs:
             ## มีเครื่องมือดูอยู่แล้ว ไม่ต้องตรวจซ้ำด้วยตา
 
             `smoke.yml` (เทสทั้งชุด + ด่านบัมป์ `app-version` F4) · `agent-guard.yml` (agent แตะ `.github/` ·
-            แตะ vendor · `<script src>` ภายนอก · token หลุด · แอปเกิน 150 บรรทัด) ·
+            แตะ vendor · `<script src>` ภายนอก · token หลุด · แอปเกิน 150 บรรทัด
+            เว้นแต่พิสูจน์ได้ว่าย้ายอย่างเดียว) ·
             `tests/sync-contract.spec.js` (คอลัมน์ `.gs` กับตัวแอปไม่ตรงกัน)
+
+            ใบย้ายอย่างเดียว (`move-proof.mjs` ผ่าน): ห้ามไล่อ่านโค้ดที่ย้าย ดูลำดับ `<script src>` แล้วรันเทส
 
             เวลาที่เหลือเอาไปที่ข้างล่าง ซึ่งไม่มีเครื่องมือไหนจับได้
 
