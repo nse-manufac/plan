@@ -34,6 +34,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # ตัวพิสูจน์ย้ายอย่างเดียว (ข้อ 3) เขียนด้วย node — ไม่พึ่ง node ที่ติดมากับ runner (ผู้ตรวจทักใน #97)
+      # ถ้าไม่มี node ด่านจะตกแบบปลอดภัย (MOVE_PROVEN=no) อยู่แล้ว แต่ใบย้ายที่ถูกต้องจะแดงโดยไม่มีเหตุ
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: ตรวจไฟล์ที่เปลี่ยน
         env:
           HEAD_REF: ${{ github.head_ref }}

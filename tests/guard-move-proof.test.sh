@@ -391,6 +391,13 @@ printf '!/evidence/\n' >> .gitignore
 seal gap
 expect fail 'ย้ายถูก + ปลดล็อก evidence/ ใน .gitignore'
 
+scenario gap-gitignore-evidence-js
+# รอบสองของ #97 — ตัวกันชื่อต้องห้ามเคยครอบแค่รูปแบบโฟลเดอร์ ไม่ครอบรูปแบบไฟล์ .js
+good_move
+printf '!/evidence/x.js\n' >> .gitignore
+seal gap
+expect fail 'ย้ายถูก + ปลดล็อก evidence/x.js ใน .gitignore'
+
 # ── ต้องรอดใต้ `set -euo pipefail` แบบที่ workflow รันจริง และคืนค่าถูกทาง ──
 # (บทเรียนจาก app-files.sh: เทสเขียวแต่ของจริงตายเงียบเพราะเทสไม่ได้เปิด errexit)
 scenario under-errexit

@@ -78,7 +78,8 @@ const ALLOW_REMOVED = [
 //   tests/**        **เพิ่ม** ไฟล์ใหม่ได้เท่านั้น แก้หรือลบของเดิมไม่ได้ — เทสเดิมคือตาข่าย
 //   CLAUDE.md       แก้ตารางว่าอะไรอยู่ไฟล์ไหน
 // ทั้งสามแบบถูกพิมพ์ชื่อไว้ให้ผู้ตรวจอ่านด้วยตา — ตัวพิสูจน์ไม่ได้อ่านเนื้อในแทนให้
-const GITIGNORE_ADD = /^(|#.*|!\/(?!(?:evidence|node_modules|test-results|playwright-report)\b)[A-Za-z0-9_\-]+\/?|!\/[A-Za-z0-9_\-./]+\.js)$/;
+// ตัวกันชื่อต้องห้ามใช้กับทั้งรูปแบบ "ทั้งโฟลเดอร์" และ "ไฟล์ .js" (รอบสองของ #97 ผู้ตรวจพบว่า !/evidence/x.js หลุด)
+const GITIGNORE_ADD = /^(|#.*|!\/(?!(?:evidence|node_modules|test-results|playwright-report)\b)(?:[A-Za-z0-9_\-]+\/?|[A-Za-z0-9_\-./]+\.js))$/;
 
 const MAX_BUF = 512 * 1024 * 1024; // ไฟล์แอปมีไลบรารีฝังอยู่ ~1.4 MB ค่าเริ่มต้น 1 MB ไม่พอ
 const MAX_SHOW = 30;
