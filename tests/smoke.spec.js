@@ -11,11 +11,11 @@
 // แต่ต้องให้เจ้าของอนุมัติก่อน เพราะเป็นการแก้ไฟล์แอปจริง
 
 const { test, expect } = require('@playwright/test');
-const fs = require('fs');
-const path = require('path');
+// ซอร์สของแอปอ่านผ่านตัวช่วยเท่านั้น — appHtml() สำหรับเรื่องของ HTML เอง (เลขรุ่น)
+// appSource() สำหรับ "ต้องมี/ต้องไม่มี X ในแอป" ซึ่งต้องเห็นทุกไฟล์ที่หน้าโหลด (CLAUDE.md §3.1 ข้อ 7)
+const { appHtml, appSource } = require('./app-source');
 
 const APP = '/production_plan_tracker.html';
-const APP_FILE = path.resolve(__dirname, '..', 'production_plan_tracker.html');
 const K_STATE = 'tue_order_tracker_v1';
 const TEST_DATE = '2026-08-03';
 
@@ -410,7 +410,7 @@ test('E3 — ถ้าข้อมูลใน localStorage เสีย แอ�
 });
 
 test('F4 — หน้าจอต้องโชว์เลขรุ่นที่ตรงกับ <meta name="app-version">', async ({ page }) => {
-  const src = fs.readFileSync(APP_FILE, 'utf8');
+  const src = appHtml();
   const m = /<meta\s+name="app-version"\s+content="([^"]*)"/i.exec(src);
   expect(m, 'ไม่พบ <meta name="app-version"> ในไฟล์แอป').not.toBeNull();
   expect(m[1], 'เลขรุ่นต้องเป็นรูปแบบ YYYY-MM-DD.ลำดับ').toMatch(/^\d{4}-\d{2}-\d{2}\.\d+$/);
@@ -588,12 +588,12 @@ test('F2 — ปุ่มพิมพ์ต้องเรียกการพ�
   await page.click('#btnPrintDash');
 
   expect(await page.evaluate(() => window.__printed), 'กดปุ่มแล้วต้องสั่งพิมพ์ด้วย window.print()').toBe(1);
-  const src = fs.readFileSync(APP_FILE, 'utf8');
+  const src = appSource();
   expect(src, 'ห้ามเพิ่มไลบรารีทำ PDF — ต้องเป็นไฟล์เดียวที่เปิดออฟไลน์ได้').not.toMatch(/jsPDF|html2canvas|html2pdf/i);
 });
 
 test('F4 + G1 — หัวกระดาษตอนพิมพ์ต้องบอกตัวกรองที่เลือก วันที่พิมพ์ และเลขรุ่น เป็นภาษาไทย', async ({ page }) => {
-  const m = /<meta\s+name="app-version"\s+content="([^"]*)"/i.exec(fs.readFileSync(APP_FILE, 'utf8'));
+  const m = /<meta\s+name="app-version"\s+content="([^"]*)"/i.exec(appHtml());
 
   await openApp(page);
   await gotoDashboard(page);
@@ -634,7 +634,7 @@ test('G1 — ตอนพิมพ์ต้องซ่อนเมนู/ปุ
 });
 
 test('F3 — ห้ามมี URL ของ Apps Script หรือ token ฝังอยู่ในไฟล์', () => {
-  const src = fs.readFileSync(APP_FILE, 'utf8');
+  const src = appSource();
   expect(src, 'พบ deployment URL จริงฝังในไฟล์ — repo นี้เป็น public')
     .not.toMatch(/AKfyc[A-Za-z0-9_-]{20,}/);
   expect(src, 'พบ GitHub token ฝังในไฟล์').not.toMatch(/gh[pousr]_[A-Za-z0-9]{30,}/);
@@ -871,7 +871,7 @@ function recDateColumn(page) {
 }
 
 test('F2 + F4 + G1 — ปุ่มพิมพ์ในกล่องรายการที่บันทึกแล้ว ต้องสั่งพิมพ์ และหัวกระดาษต้องบอกวันของยอด เวลาพิมพ์ และเลขรุ่น', async ({ page }) => {
-  const m = /<meta\s+name="app-version"\s+content="([^"]*)"/i.exec(fs.readFileSync(APP_FILE, 'utf8'));
+  const m = /<meta\s+name="app-version"\s+content="([^"]*)"/i.exec(appHtml());
 
   await openApp(page, [rec('R1', 'O1', 'winding', TEST_DATE, 10)]);
   await gotoRecordEditor(page);
