@@ -80,8 +80,21 @@ document.getElementById('app').textContent = status(1);
 EOF
 mkdir -p core lib tests
 printf '"use strict";\n\nfunction keep(){\n  return 1;\n}\n' > core/keep.js
+# ไฟล์นอกขอบเขตการพิสูจน์ — ของจริงมีครบทุกตัวนี้ และทุกตัวเป็นช่องที่ใบย้ายจะพ่วงอะไรมาได้
+# .gitignore ปฏิเสธทุกอย่างก่อนเหมือนของจริง — ต้องอนุญาตไฟล์ข้างล่างให้ครบ
+# ไม่งั้นมันไม่ถูก commit และฉากที่แตะมันจะ "ผ่าน" โดยไม่ได้ทดสอบอะไรเลย (เจอจริงตอนเขียนเทสนี้)
+printf '/*\n!/.gitignore\n!/production_plan_tracker.html\n!/google-apps-script.gs\n!/CLAUDE.md\n!/INVARIANTS.md\n!/package.json\n!/core/\n!/tests/\n/evidence/\n' > .gitignore
+printf '{ "scripts": { "test": "playwright test" } }\n' > package.json
+printf 'function doPost(e){\n  return voided(e);\n}\n' > google-apps-script.gs
+printf 'test("D3 ของที่ยังไม่ได้ส่งห้ามถูกทับ", () => { expect(merge()).toBe(1); });\n' > tests/smoke.spec.js
+printf '# คู่มือ\n' > CLAUDE.md
+printf '# กฎ\n' > INVARIANTS.md
 git add -A && git commit -qm base
 git branch -M main
+# ยืนยันว่าไฟล์นอกขอบเขตถูก commit จริง — ถ้าไม่ครบ ฉาก "พ่วงของนอกขอบเขต" จะไม่ได้ทดสอบอะไร
+for f in google-apps-script.gs package.json CLAUDE.md INVARIANTS.md tests/smoke.spec.js core/keep.js; do
+  git ls-files --error-unmatch "$f" >/dev/null 2>&1 || { echo "เทสตั้งต้นพัง: $f ไม่ถูก commit (ดู .gitignore ของ repo จำลอง)"; exit 1; }
+done
 
 scenario() {  # scenario <ชื่อ branch ชั่วคราว>
   git checkout -q main
@@ -131,6 +144,7 @@ cut_lines production_plan_tracker.html $((a + 1)) $((b - 1)) > app.js
 sed -i "${a},$((a + 1))d" production_plan_tracker.html
 sed -i "$((a - 1))a <script src=\"app.js\"></script>" production_plan_tracker.html
 sed -i 's|^ <script src|<script src|' production_plan_tracker.html
+printf '!/app.js\n' >> .gitignore
 seal move
 expect pass 'ย้ายโค้ดทั้งบล็อก <script> ไปเป็น app.js (ถอดแท็กเปิด/ปิดได้)'
 
@@ -174,14 +188,26 @@ scenario vendor-like-move
 a=$(line_of production_plan_tracker.html 'var LIB=')
 cut_lines production_plan_tracker.html "$a" "$a" > lib/lib.js
 sed -i 's|^<script>$|<script src="lib/lib.js"></script>\n<script>|' production_plan_tracker.html
+printf '!/lib/\n' >> .gitignore
 seal move
 expect pass 'ย้ายบรรทัดยาว 30,000 ตัวอักษรตรงทุกไบต์'
 git checkout -q main && git reset -q --hard HEAD~1
 
-scenario nothing
-printf '# เอกสาร\n' > NOTE.md
+scenario with-allowed-extras
+# สามอย่างนอกขอบเขตที่แผนแยกไฟล์ต้องใช้จริง — ผ่านได้ แต่ถูกพิมพ์ชื่อไว้ให้อ่านด้วยตา
+mkdir -p io
+a=$(line_of production_plan_tracker.html 'function fmt')
+{ printf '"use strict";\n\n'; cut_lines production_plan_tracker.html "$a" $((a + 2)); } > io/fmt.js
+printf '!/io/\n' >> .gitignore
+mkdir -p tests/core && printf 'test("fmt", () => {});\n' > tests/core/fmt.test.js
+printf '# คู่มือ\nfmt อยู่ io/fmt.js\n' > CLAUDE.md
+seal extras
+expect pass 'ย้าย + เพิ่มบรรทัดอนุญาตใน .gitignore + เพิ่มเทสใหม่ + แก้ CLAUDE.md'
+
+scenario docs-only
+printf '# คู่มือฉบับใหม่\n' > CLAUDE.md
 seal docs
-expect pass 'ไม่แตะไฟล์แอปเลย'
+expect pass 'แก้แค่ CLAUDE.md (ไม่มีอะไรให้ย้าย)'
 
 # ═══════════════ ท่าโกง — ต้องตกทุกข้อ ═══════════════
 
@@ -307,6 +333,63 @@ scenario edit-markup
 sed -i 's|<title>แผน</title>|<title>แผนใหม่</title>|' production_plan_tracker.html
 seal markup
 expect fail 'แก้ HTML ส่วนอื่นที่ไม่ใช่การย้าย'
+
+# ── ย้ายถูกทุกตัวอักษร แต่พ่วงของนอกขอบเขตมาด้วย (ผู้ตรวจลองจริงใน #97 รอบแรกแล้วผ่าน) ──
+# เทสเดิมคือตาข่ายที่ชดเชยการยกเพดาน ใบเดียวกันจึงห้ามแตะตาข่ายนั้น
+good_move() {  # ย้าย fmt ไป core/fmt.js ให้ถูกต้องทุกตัวอักษร
+  local a
+  a=$(line_of production_plan_tracker.html 'function fmt')
+  { printf '"use strict";\n\n'; cut_lines production_plan_tracker.html "$a" $((a + 2)); } > core/fmt.js
+}
+
+scenario gap-edit-test
+good_move
+sed -i 's/toBe(1)/toBeDefined()/' tests/smoke.spec.js
+seal gap
+expect fail 'ย้ายถูก + ถอดเขี้ยวเทสเดิม'
+
+scenario gap-delete-test
+good_move
+git rm -q tests/smoke.spec.js
+seal gap
+expect fail 'ย้ายถูก + ลบไฟล์เทสเดิม'
+
+scenario gap-gs
+good_move
+sed -i 's/voided(e)/e/' google-apps-script.gs
+seal gap
+expect fail 'ย้ายถูก + แก้ google-apps-script.gs'
+
+scenario gap-npm-test
+good_move
+sed -i 's/playwright test/true/' package.json
+seal gap
+expect fail 'ย้ายถูก + เปลี่ยน npm test ให้ไม่รันอะไร'
+
+scenario gap-invariants
+good_move
+printf 'กฎใหม่\n' >> INVARIANTS.md
+seal gap
+expect fail 'ย้ายถูก + แก้ INVARIANTS.md'
+
+scenario gap-other-file
+good_move
+printf 'x\n' > NOTE.md
+git add -f NOTE.md
+seal gap
+expect fail 'ย้ายถูก + เพิ่มไฟล์อื่นที่ไม่ใช่เทส'
+
+scenario gap-gitignore-remove
+good_move
+sed -i '/^\/evidence\/$/d' .gitignore
+seal gap
+expect fail 'ย้ายถูก + ลบบรรทัดใน .gitignore'
+
+scenario gap-gitignore-evidence
+good_move
+printf '!/evidence/\n' >> .gitignore
+seal gap
+expect fail 'ย้ายถูก + ปลดล็อก evidence/ ใน .gitignore'
 
 # ── ต้องรอดใต้ `set -euo pipefail` แบบที่ workflow รันจริง และคืนค่าถูกทาง ──
 # (บทเรียนจาก app-files.sh: เทสเขียวแต่ของจริงตายเงียบเพราะเทสไม่ได้เปิด errexit)

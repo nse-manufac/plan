@@ -31,7 +31,9 @@
 //   - ลำดับการโหลดไฟล์ (<script src> ตัวไหนก่อน) — ย้ายถูกทุกตัวอักษรแต่โหลดผิดลำดับ แอปพังได้
 //   - บรรทัดชิดซ้ายที่อยู่ใน string หลายบรรทัด (template literal) จะถูกนับเป็นต้นก้อน
 //   - ย้ายทั้งก้อนแต่ไปวางผิดที่จนความหมายเปลี่ยน (เช่นย้ายไปอยู่หลังโค้ดที่เรียกใช้มันตอนโหลด)
+//   - เนื้อในของไฟล์นอกขอบเขตที่อนุญาต (เทสใหม่ · CLAUDE.md) — ตัวพิสูจน์พิมพ์ชื่อไว้ให้อ่านด้วยตา
 //   ข้อพวกนี้พึ่ง Playwright ชุดเดิม ซึ่งเป็น required check อยู่แล้ว
+//   และชุดเทสเดิมเชื่อได้ เพราะใบย้ายอย่างเดียวแก้หรือลบเทสเดิมไม่ได้ (ดู GITIGNORE_ADD ข้างล่าง)
 //   ตัวนี้ตอบคำถามเดียว: "มีโค้ดที่ไม่ได้มาจากของเดิมแอบเข้ามาไหม" — และตอบได้เด็ดขาด
 //
 // ใช้งาน:  node .github/scripts/move-proof.mjs <base> <pathspec...>
@@ -65,6 +67,18 @@ const ALLOW_REMOVED = [
   /^<\/script>$/,
   /^<meta name="app-version" content="[^"]*">$/,
 ];
+
+// ── ไฟล์นอกขอบเขตการพิสูจน์ ──────────────────────────────────────
+// ตัวพิสูจน์อ่านแค่ไฟล์แอป (pathspec ที่ผู้เรียกส่งมา) แต่คำตอบต้องครอบ "ทั้งใบ"
+// ไม่งั้นใบที่ย้ายถูกทุกตัวอักษรจะพ่วงการถอดเขี้ยวเทส แก้ .gs หรือเปลี่ยน `npm test` เป็น `true` มาได้
+// (ผู้ตรวจลองแล้วผ่านจริงใน #97 รอบแรก) — และเทสคือตาข่ายที่ใช้ชดเชยการยกเพดาน
+//
+// ใบย้ายอย่างเดียวแตะไฟล์นอกขอบเขตได้แค่สามแบบที่แผนแยกไฟล์ต้องใช้จริง ที่เหลือ = ตก
+//   .gitignore      เพิ่มบรรทัดอนุญาตโฟลเดอร์/ไฟล์ .js ใหม่ได้อย่างเดียว (ไฟล์นั้นปฏิเสธทุกอย่างก่อน)
+//   tests/**        **เพิ่ม** ไฟล์ใหม่ได้เท่านั้น แก้หรือลบของเดิมไม่ได้ — เทสเดิมคือตาข่าย
+//   CLAUDE.md       แก้ตารางว่าอะไรอยู่ไฟล์ไหน
+// ทั้งสามแบบถูกพิมพ์ชื่อไว้ให้ผู้ตรวจอ่านด้วยตา — ตัวพิสูจน์ไม่ได้อ่านเนื้อในแทนให้
+const GITIGNORE_ADD = /^(|#.*|!\/(?!(?:evidence|node_modules|test-results|playwright-report)\b)[A-Za-z0-9_\-]+\/?|!\/[A-Za-z0-9_\-./]+\.js)$/;
 
 const MAX_BUF = 512 * 1024 * 1024; // ไฟล์แอปมีไลบรารีฝังอยู่ ~1.4 MB ค่าเริ่มต้น 1 MB ไม่พอ
 const MAX_SHOW = 30;
@@ -304,9 +318,35 @@ function main(argv) {
     });
   }
 
+  // ── ไฟล์นอกขอบเขต ──
+  const inScope = new Set(git('diff', '--name-only', '-z', '--no-renames', mb, 'HEAD', '--', ...pathspec).split('\0').filter(Boolean));
+  const ns = git('diff', '--name-status', '-z', '--no-renames', mb, 'HEAD').split('\0').filter(Boolean);
+  const eyes = [];
+  for (let k = 0; k + 1 < ns.length; k += 2) {
+    const status = ns[k][0], path = ns[k + 1];
+    if (inScope.has(path)) continue;
+    if (path === '.gitignore' && status === 'M') {
+      const d = git('diff', '-U0', '--no-color', mb, 'HEAD', '--', '.gitignore').split('\n');
+      const bad = d.filter(l => (l.startsWith('-') && !l.startsWith('---')) ||
+        (l.startsWith('+') && !l.startsWith('+++') && !GITIGNORE_ADD.test(l.slice(1).replace(/\r$/, ''))));
+      if (bad.length) {
+        problems.push({ path, line: 1, msg: `.gitignore ในใบย้ายอย่างเดียวเพิ่มได้แค่บรรทัดอนุญาตโฟลเดอร์/ไฟล์ .js ใหม่ — เจอ "${short(bad[0])}"` });
+      } else eyes.push(`${path} (เพิ่มบรรทัดอนุญาตไฟล์ใหม่)`);
+      continue;
+    }
+    if (path.startsWith('tests/') && status === 'A') { eyes.push(`${path} (เทสใหม่)`); continue; }
+    if (path === 'CLAUDE.md' && status === 'M') { eyes.push(`${path} (เอกสาร)`); continue; }
+    const how = { A: 'เพิ่ม', M: 'แก้', D: 'ลบ', T: 'เปลี่ยนชนิด' }[status] || status;
+    problems.push({ path, line: 1, msg: `${how}ไฟล์นอกขอบเขตที่พิสูจน์ได้ — ใบย้ายอย่างเดียวแตะได้แค่ .gitignore (บรรทัดอนุญาต) · เทสใหม่ · CLAUDE.md` });
+  }
+
   console.log(`ตรวจการย้าย: ก้อนที่ถูกลบ ${removed.length} · ก้อนที่ถูกเพิ่ม ${added.length} · บรรทัดพิเศษ ${special}`);
   for (const [p, n] of outCount) console.log(`  - ${p}: ย้ายออก ${n} ก้อน`);
   for (const [p, n] of inCount) console.log(`  + ${p}: ย้ายเข้า ${n} ก้อน`);
+  if (eyes.length) {
+    console.log('ไฟล์นอกขอบเขตการพิสูจน์ — ต้องอ่านด้วยตา ตัวพิสูจน์ไม่ได้อ่านเนื้อในให้:');
+    for (const e of eyes) console.log(`  ? ${e}`);
+  }
 
   if (problems.length) {
     console.log(`✗ ไม่ใช่การย้ายอย่างเดียว — พบ ${problems.length} จุด`);
