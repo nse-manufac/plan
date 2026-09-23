@@ -13,6 +13,7 @@
 const { test, expect } = require('@playwright/test');
 const fs = require('fs');
 const JSZip = require('jszip');
+const { appSource, fnSource } = require('./app-source');
 const { deliveryFormWorkbook } = require('./fixtures');
 
 const APP = '/production_plan_tracker.html';
@@ -789,8 +790,7 @@ test('แถวที่โผล่เพราะ Delta ยังค้าง 
  * เป็นรูปแบบเดียวกับรายชื่อ "นาฬิกาซิงค์" ที่เคยเขียนซ้ำสี่ที่แล้วเติมไม่ครบจนข้อมูลหาย (#70/#71)
  * ข้อนี้จึงคุม "ห้ามเขียนซ้ำ" ไม่ใช่แค่ "ผลลัพธ์ถูก" — กันการเกิดซ้ำ ไม่ใช่ปะทีละครั้ง */
 test('การตัดสินว่าแถวไหนใหม่กว่า ต้องเขียนที่เดียวคือ deltaWipNewer', async () => {
-  const src = fs.readFileSync(
-    require('path').resolve(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
+  const src = appSource();
 
   const cut = (from, to) => {
     const a = src.indexOf(from), b = src.indexOf(to, a);
@@ -833,10 +833,9 @@ test('ยอดของ Delta ต้องไม่ถูกใช้ตัด�
   /* ชั้นข้อมูลตรวจจากตัวโค้ด เพราะสคริปต์ของแอปถูกห่อไว้ เรียกฟังก์ชันจาก page.evaluate ไม่ได้
    * สิ่งที่ห้ามคือ deliveryGroups() ไปรู้จักตัวกรองของหน้าจอ ถ้าวันหนึ่งมีคนย้ายการซ่อน
    * ลงไปทำในนั้น ใบที่ Delta ไม่มีข้อมูลจะหายจริง ๆ และปลดติ๊กก็ไม่กลับมา */
-  const src = fs.readFileSync(
-    require('path').resolve(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
-  const body = src.slice(src.indexOf('function deliveryGroups'),
-                         src.indexOf('function dnFilter'));
+  // เดิมตัดตั้งแต่ deliveryGroups ถึง dnFilter ซึ่งกินโค้ดที่ไม่เกี่ยวไปราว 1,860 บรรทัด และจะพังทันทีที่
+  // สองฟังก์ชันนี้ถูกย้ายไปอยู่คนละไฟล์ — ตัดเฉพาะตัวฟังก์ชัน ตรงกับเจตนาของข้อนี้ (tests/app-source.js)
+  const body = fnSource('deliveryGroups');
   expect(body.length, 'ตัดตัวฟังก์ชันมาได้จริง ไม่งั้นเทสนี้ไม่ได้ตรวจอะไร').toBeGreaterThan(200);
   expect(body, 'deliveryGroups() ห้ามรู้จักตัวกรองของหน้าจอ — การซ่อนต้องอยู่ชั้นแสดงผลเท่านั้น')
     .not.toMatch(/dnHideNoDelta|dnApplyNoDeltaHide/);

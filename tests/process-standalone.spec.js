@@ -9,6 +9,7 @@
 // ซึ่งเป็นอาการที่ใบนี้กันไว้ · ตามสายจริง assembly เทียบกับ winding (300 < 800) จึงปกติ
 
 const { test, expect } = require('@playwright/test');
+const { patchAppSource } = require('./app-source');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -30,13 +31,9 @@ const OFFSETS = { winding: 10, assembly: 17, support: null, inspection: 24, ship
 const STANDALONE = "{id:'repair', label:'งานซ่อม (นับแยก)', short:'ซ่อม', icon:'🛠️', color:'#be185d', defaultOffset:null, standalone:true},";
 
 async function open(page, { records = RECORDS, offsets = OFFSETS, processes = null } = {}) {
-  await page.route(/production_plan_tracker\.html/, async route => {
-    const res = await route.fetch();
-    const body = await res.text();
-    const anchor = "{id:'assembly',";
-    if (!body.includes(anchor)) throw new Error('หาแถว assembly ใน DEFAULT_PROCESSES ไม่เจอ');
-    await route.fulfill({ response: res, body: body.replace(anchor, STANDALONE + '\n  ' + anchor) });
-  });
+  // แทรกขั้นนับแยกในไฟล์ไหนก็ตามที่ DEFAULT_PROCESSES อยู่ — แยกไฟล์แล้วเทสนี้ยังทำงาน (tests/app-source.js)
+  const anchor = "{id:'assembly',";
+  const patched = await patchAppSource(page, anchor, STANDALONE + '\n  ' + anchor);
   await page.addInitScript(([k, o, r, off, procs]) => localStorage.setItem(k, JSON.stringify({
     version: 1, deviceName: 't', deadlineOffsets: off, processes: procs,
     chartPref: { mode: '14', from: '', to: '', hidden: [] },
@@ -44,6 +41,7 @@ async function open(page, { records = RECORDS, offsets = OFFSETS, processes = nu
   })), [K_STATE, ORDER, records, offsets, processes]);
   await page.goto(APP);
   await page.waitForTimeout(300);
+  expect(patched(), 'หาแถว assembly ใน DEFAULT_PROCESSES ไม่เจอ — ไม่งั้นเทสนี้ทดสอบแอปที่ไม่มีขั้นนับแยก').toBe(1);
 }
 const tab = async (page, name) => { await page.click(`.tab-btn[data-tab="${name}"]`); await page.waitForTimeout(200); };
 
