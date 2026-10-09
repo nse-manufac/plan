@@ -7,12 +7,11 @@
 // ⚠️ เทสกลุ่มท้ายไฟล์ไม่แทรกขั้น — คุมว่าหน้าตาของห้าขั้นเดิมยังเหมือนเดิมทุกตัวอักษร
 
 const { test, expect } = require('@playwright/test');
-const fs = require('fs');
-const path = require('path');
 const ExcelJS = require('exceljs');
 
+const { appSources, patchAppSource } = require('./app-source');
+
 const APP = '/production_plan_tracker.html';
-const APP_FILE = path.join(__dirname, '..', 'production_plan_tracker.html');
 const K_STATE = 'tue_order_tracker_v1';
 
 const daysAgo = n => {
@@ -31,15 +30,9 @@ const OFFSETS = { winding: 10, assembly: 17, support: null, inspection: 24, ship
 const EXTRA = "{id:'coating', label:'Coating ทดสอบ', short:'Coating', icon:'🧪', color:'#be185d', defaultOffset:null},";
 
 async function open(page, { extra = true, offsets = OFFSETS, records = RECORDS } = {}) {
-  if (extra) {
-    await page.route(/production_plan_tracker\.html/, async route => {
-      const res = await route.fetch();
-      const body = await res.text();
-      const anchor = "{id:'assembly',";
-      if (!body.includes(anchor)) throw new Error('หาแถว assembly ใน DEFAULT_PROCESSES ไม่เจอ');
-      await route.fulfill({ response: res, body: body.replace(anchor, EXTRA + '\n  ' + anchor) });
-    });
-  }
+  // แทรกขั้นทดสอบในไฟล์ไหนก็ตามที่ DEFAULT_PROCESSES อยู่ — แยกไฟล์แล้วเทสนี้ยังทำงาน (tests/app-source.js)
+  const anchor = "{id:'assembly',";
+  const patched = extra ? await patchAppSource(page, anchor, EXTRA + '\n  ' + anchor) : null;
   await page.addInitScript(([k, o, r, off]) => localStorage.setItem(k, JSON.stringify({
     version: 1, deviceName: 't', deadlineOffsets: off,
     chartPref: { mode: '14', from: '', to: '', hidden: [] },
@@ -47,6 +40,7 @@ async function open(page, { extra = true, offsets = OFFSETS, records = RECORDS }
   })), [K_STATE, ORDER, records, offsets]);
   await page.goto(APP);
   await page.waitForTimeout(300);
+  if (patched) expect(patched(), 'หาแถว assembly ใน DEFAULT_PROCESSES ไม่เจอ — ไม่งั้นเทสนี้ทดสอบแอปที่ไม่ได้แทรกขั้น').toBe(1);
 }
 const tab = async (page, name) => { await page.click(`.tab-btn[data-tab="${name}"]`); await page.waitForTimeout(200); };
 const readState = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)), K_STATE);
@@ -208,11 +202,12 @@ test('ห้าขั้นเดิม — ปุ่ม ตัวกรอง �
 test('ชื่อขั้นต้นน้ำต้องไม่ถูกเขียนตายตัวนอกรายการขั้น', async () => {
   // inspection กับ shipping ล็อกไว้และมีหน้าที่พิเศษ (FG · ใบส่งของ) จึงอ้างตรง ๆ ได้
   // ส่วนขั้นต้นน้ำต้องมาจาก DEFAULT_PROCESSES เท่านั้น ไม่งั้นเพิ่มขั้นแล้วจะมีจุดที่ไม่ตาม
-  const src = fs.readFileSync(APP_FILE, 'utf8')
-    .replace(/const DEFAULT_PROCESSES = \[[\s\S]*?\r?\n\];/, '');
-  const hits = src.split(/\r?\n/)
-    .map((line, i) => ({ line: line.trim(), no: i + 1 }))
+  // ตรวจทุกไฟล์ที่หน้าโหลด ไม่ใช่แค่ HTML — แยกไฟล์แล้วข้อนี้ต้องไม่เขียวเองเพราะมองไม่เห็นโค้ด
+  const hits = appSources().flatMap(({ file, text }) => text
+    .replace(/const DEFAULT_PROCESSES = \[[\s\S]*?\r?\n\];/, '')
+    .split(/\r?\n/)
+    .map((line, i) => ({ line: line.trim(), no: `${file}:${i + 1}` }))
     .filter(x => x.line.length < 400 && !/^(\/\/|\*|\/\*|<!--)/.test(x.line))
-    .filter(x => /['"](winding|assembly|support)['"]|\.(winding|assembly|support)\b|\b(winding|assembly|support)\s*:/.test(x.line));
+    .filter(x => /['"](winding|assembly|support)['"]|\.(winding|assembly|support)\b|\b(winding|assembly|support)\s*:/.test(x.line)));
   expect(hits.map(x => `${x.no}: ${x.line.slice(0, 120)}`), 'ย้ายไปอ่านจาก PROCESSES').toEqual([]);
 });

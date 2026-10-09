@@ -17,7 +17,8 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const APP_SRC = fs.readFileSync(path.join(ROOT, 'production_plan_tracker.html'), 'utf8');
+// ต้องเห็นทุกไฟล์ที่หน้าโหลด — แยกไฟล์แล้วค่าคงที่ของคอลัมน์จะไม่อยู่ใน HTML (tests/app-source.js)
+const APP_SRC = require('./app-source').appSource();
 const GS_SRC = fs.readFileSync(path.join(ROOT, 'google-apps-script.gs'), 'utf8');
 
 /** ดึงรายการสตริงในวงเล็บเหลี่ยมของค่าคงที่ตัวหนึ่ง เช่น const X = ['a','b']; */

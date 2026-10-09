@@ -2,6 +2,9 @@ const { defineConfig, devices } = require('@playwright/test');
 
 module.exports = defineConfig({
   testDir: './tests',
+  // tests/node/ คือเทสที่รันด้วย node ล้วน (npm run test:core) — ชื่อไฟล์ *.test.js ตรงกับที่ Playwright
+  // หาโดยปริยาย ถ้าไม่ข้ามไว้ Playwright จะพยายามรันแล้วพังเพราะไม่ใช่เทสของมัน
+  testIgnore: '**/node/**',
   timeout: 30_000,
   expect: { timeout: 5_000 },
   fullyParallel: false,

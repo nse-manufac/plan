@@ -15,6 +15,8 @@ const path = require('path');
 
 // ชีตปลอมกับตัวโหลดสคริปต์อยู่ใน fake-gs.js — process-admin.spec.js ใช้ตัวเดียวกันตอบหน้าเว็บ
 const { loadGs } = require('./fake-gs');
+// ซอร์สของแอปต้องอ่านผ่านตัวช่วย — เห็นทุกไฟล์ที่หน้าโหลด ไม่ใช่แค่ HTML (CLAUDE.md §3.1 ข้อ 7)
+const { appSource } = require('./app-source');
 
 const ORDER = (id, updatedAt) => ({ id, week: 'W36', poNo: 'PO-' + id, pn: 'PN-' + id,
   subName: 'TUE-U', orderQty: 100, orderDate: '2026-09-01', status: 'active',
@@ -171,8 +173,7 @@ test('แถวที่เวลาชนกับ since พอดี ต้อ
  * เทสสองข้อนี้จึงคุมสองเรื่อง: ล้าง "ครบ" และล้าง "ที่เดียว"
  * ข้อหลังสำคัญกว่า เพราะมันกันการเกิดซ้ำครั้งที่สี่ ไม่ใช่แค่ปะครั้งนี้ */
 test('นาฬิกาซิงค์ต้องถูกประกาศครบ และล้างครบทุกตัว', async () => {
-  const APP = fs.readFileSync(
-    path.join(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
+  const APP = appSource();
 
   /* รายชื่อที่ถือว่าเป็นความจริง คือ "นาฬิกาที่ doSync ใช้จริง" ไม่ใช่ที่ประกาศไว้
    * เพราะของที่ "ใช้แต่ไม่ได้ประกาศ" คือบั๊กชนิดที่เทสข้อนี้ต้องจับ */
@@ -199,8 +200,7 @@ test('saveSyncCfg ต้องเก็บนาฬิกาด้วยกา�
   /* ⚠️ ที่ที่สี่ที่เคยมีรายชื่อนาฬิกาซ้ำ · ลืมเติมชื่อที่นี่เมื่อไหร่ นาฬิกาตัวนั้น
    *    จะไม่ถูกเก็บลง localStorage = รีเซ็ตทุกครั้งที่เปิดโปรแกรม แล้วดึงทั้งกระดาน
    *    ลงมาใหม่ทุกวันโดยไม่มีใครสังเกต (ผู้ตรวจทักไว้ใน #71) */
-  const APP = fs.readFileSync(
-    path.join(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
+  const APP = appSource();
   const fn = /function saveSyncCfg\(\)\{([\s\S]*?)\n\}/.exec(APP);
   expect(fn, 'ต้องหา saveSyncCfg เจอ').not.toBeNull();
 
@@ -211,8 +211,7 @@ test('saveSyncCfg ต้องเก็บนาฬิกาด้วยกา�
 });
 
 test('ห้ามล้างนาฬิกาซิงค์ที่อื่นนอกจาก resetPullClocks', async () => {
-  const APP = fs.readFileSync(
-    path.join(__dirname, '..', 'production_plan_tracker.html'), 'utf8');
+  const APP = appSource();
 
   // ทุกที่ที่เซ็ตนาฬิกาเป็นค่าว่าง ต้องอยู่ในตัวกลางตัวเดียวเท่านั้น
   const assigns = [...APP.matchAll(/syncCfg\.lastPull[A-Za-z]*\s*=\s*''/g)];
