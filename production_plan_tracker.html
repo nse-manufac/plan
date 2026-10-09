@@ -198,6 +198,8 @@
     .rec-qty-input{border:none;background:none;padding:0;width:auto;appearance:textfield;-moz-appearance:textfield;}
     .rec-qty-input::-webkit-inner-spin-button, .rec-qty-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
   }
+  /* ระหว่างรอโหลดข้อมูล (openState) ห้ามกด — ของที่พิมพ์ช่วงนั้นไม่ถูกบันทึก แล้วจะถูกค่าจริงทับเงียบ ๆ */
+  html:not([data-state-ready]) main{pointer-events:none;opacity:.4;}
 </style>
 </head>
 <body>
@@ -1175,6 +1177,8 @@ const STORAGE_KEY = 'tue_order_tracker_v1';
    ไม่งั้น Date ที่หลุดเข้า state จะรอดข้ามการรีโหลดเป็น Date แทนที่จะเป็นข้อความเหมือนเดิม (C1)
    localStorage เหลือแค่: ต้นทางตอนย้ายครั้งแรก · ทางสำรองเมื่อเปิด IndexedDB ไม่ได้ · ค่าตั้งซิงค์ (SYNC_KEY) */
 const IDB_NAME = 'tue_order_tracker', IDB_STORE = 'kv';
+const LEGACY_COPY_KEY = STORAGE_KEY + ':localStorage';   // สำเนาดิบของ localStorage ตอนย้าย (ใน IndexedDB)
+const MOVED_KEY = STORAGE_KEY + ':moved';   // ธงใน localStorage: เครื่องนี้ย้ายเข้า IndexedDB แล้ว · localStorage ว่างแล้ว
 let stateDb = null;      // null = ใช้ localStorage แบบเดิม
 let stateReady = false;  // ก่อนโหลดเสร็จ ห้ามบันทึกและห้ามซิงค์ — ไม่งั้น state ว่างจะไปทับของจริง
 let syncWaiting;         // มีคนขอซิงค์ระหว่างรอโหลด · ค่าคือ silent ที่ขอ (false ชนะ) · ซิงค์ให้ใน openState
@@ -1258,19 +1262,23 @@ async function bootState(){
   try{
     stateDb = await openStateDb();
     const legacy = localStorage.getItem(STORAGE_KEY);
-    if(legacy) await idbTx('readwrite', s=>s.put(legacy, STORAGE_KEY + ':localStorage'));
+    if(legacy) await idbTx('readwrite', s=>s.put(legacy, LEGACY_COPY_KEY));
     const saved = await idbTx('readonly', s=>s.get(STORAGE_KEY));
-    if(saved){ if(legacy) localStorage.removeItem(STORAGE_KEY); return loadState(saved); }
+    if(saved){ if(legacy) localStorage.removeItem(STORAGE_KEY); markMoved(); return loadState(saved); }
     const st = loadState(legacy), json = JSON.stringify(st);
     await idbTx('readwrite', s=>s.put(json, STORAGE_KEY));
     if(legacy && await idbTx('readonly', s=>s.get(STORAGE_KEY)) === json) localStorage.removeItem(STORAGE_KEY);
+    markMoved();
     return st;
   }catch(e){
-    console.error('เปิด IndexedDB ไม่ได้ — ใช้ localStorage แบบเดิม', e);
     stateDb = null;
+    // ย้ายไปแล้ว = localStorage ว่าง · ถ้าเปิดแบบเดิมจะได้หน้าว่างให้คีย์ทับ แล้วของที่คีย์หายตอนบูตครั้งถัดไป
+    if(localStorage.getItem(MOVED_KEY)){ console.error('เปิด IndexedDB ไม่ได้ ทั้งที่ข้อมูลย้ายไปอยู่ในนั้นแล้ว', e); return null; }
+    console.error('เปิด IndexedDB ไม่ได้ — ใช้ localStorage แบบเดิม', e);
     return loadState();
   }
 }
+function markMoved(){ try{ localStorage.setItem(MOVED_KEY, '1'); }catch(e){ console.error('ตั้งธงย้ายไม่ได้', e); } }
 
 /** เตรียม state ที่เพิ่งโหลด — ต้องรันหลังโหลดเสร็จเท่านั้น (openState) */
 function prepareState(){
@@ -1296,9 +1304,13 @@ function prepareState(){
 
 /** เปิดหน้า: รอโหลดเสร็จก่อน แล้วค่อยเตรียม · วาดจอ · ซิงค์ที่มีคนขอไว้ระหว่างรอ */
 async function openState(){
-  state = await bootState();
+  const st = await bootState();
+  if(!st){   // stateReady ค้าง false = ห้ามบันทึก ห้ามซิงค์ · จอถูกบังไว้ ไม่ให้คีย์ลงหน้าว่าง
+    document.body.insertAdjacentHTML('afterbegin', '<div id="storageLocked" style="position:fixed;inset:0;z-index:9999;background:#fff;color:#b00;padding:40px;font-size:22px;line-height:1.6">⛔ เปิดที่เก็บข้อมูลของเครื่องนี้ไม่ได้ — <b>ห้ามคีย์ยอด</b><br>ปิดเบราว์เซอร์ทุกหน้าต่างแล้วเปิดใหม่ ถ้ายังขึ้นข้อความนี้ให้แจ้งหัวหน้า<br>(ข้อมูลยังอยู่ในเครื่อง ไม่หาย)</div>');
+    return;
+  }
+  state = st;
   stateReady = true;
-  if(navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(()=>{});
   prepareState();
   currentProcess = MAIN_PROCESSES[0];
   renderProcessControls();
@@ -5325,6 +5337,7 @@ document.getElementById('btnClearAll').addEventListener('click', ()=>{
   if(!confirm('ยืนยันอีกครั้ง: ต้องการลบข้อมูลแผนงานและบันทึกทั้งหมดในเครื่องนี้จริงหรือไม่?')) return;
   state = defaultState();
   saveState();
+  if(stateDb) idbTx('readwrite', s=>s.delete(LEGACY_COPY_KEY)).catch(e=>console.error('ลบสำเนาตอนย้ายไม่ได้', e));   // สำเนาก็เป็นข้อมูลในเครื่อง
   /* ล้างเฉพาะข้อมูลในเครื่องนี้ ไม่แตะเซิร์ฟเวอร์ — ถ้าเคยต่อ Google Sheets ไว้ ให้รีเซ็ตเวลา
    * ดึงข้อมูลกลับไปเป็นค่าว่าง เพื่อให้ซิงค์รอบถัดไปดึงของทั้งหมดจากเซิร์ฟเวอร์กลับมาใหม่
    *

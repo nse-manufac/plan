@@ -1,11 +1,12 @@
 // ที่เก็บข้อมูลในเครื่อง — IndexedDB แทน localStorage (9 ต.ค. 2026)
 //
 // ที่มา: localStorage ของเครื่องหน้างานเต็มจริง (เพดานราว 5 MB) ยอดที่คีย์สะสมทุกวันจึงบันทึกลงเครื่องไม่ได้
-// เทสชุดนี้คุมสี่เรื่องที่การย้ายที่เก็บต้องไม่พัง
+// เทสชุดนี้คุมห้าเรื่องที่การย้ายที่เก็บต้องไม่พัง
 //   1. เครื่องที่มีข้อมูลเดิม เปิดรุ่นใหม่ครั้งแรกแล้วข้อมูลต้องย้ายมาครบ (E1 · E2)
 //   2. ข้อมูลเกินเพดานเดิมต้องบันทึกได้ — ปัญหาจริงที่ทำให้ต้องมีใบนี้
 //   3. ข้อมูลอยู่สองที่ (แท็บรุ่นเก่ายังเปิดค้าง) ต้องไม่ทำของหาย
 //   4. ซิงค์ตอนเปิดหน้าต้องรอข้อมูลโหลดเสร็จ ไม่งั้นรอบแรกจะซิงค์ state ว่าง (D3 · D7)
+//   5. เครื่องที่ย้ายแล้วเปิด IndexedDB ไม่ได้ ต้องบังจอ ไม่ใช่เปิดหน้าว่างให้คีย์ทับ (E3) · ลบข้อมูลทั้งหมดต้องลบสำเนาด้วย
 
 const { test, expect } = require('@playwright/test');
 const { IDB_NAME, IDB_STORE, readSaved, waitReady } = require('./app-state');
@@ -128,4 +129,46 @@ test('D3 · D7 — ซิงค์ตอนเปิดหน้าต้อง�
 
   await expect.poll(() => pushed, { timeout: 5000, message: 'ยอดที่ค้างส่งต้องขึ้นไปในรอบซิงค์แรก' })
     .toContain('Records:R1');
+});
+
+test('E3 — เครื่องที่ย้ายแล้ว วันหนึ่งเปิด IndexedDB ไม่ได้ ต้องบังจอห้ามคีย์ ไม่ใช่เปิดหน้าว่างให้คีย์ทับ', async ({ page }) => {
+  // localStorage ของเครื่องที่ย้ายแล้วว่าง ถ้ากลับไปใช้ localStorage แบบเดิม จอจะว่างโดยไม่มีอะไรเตือน
+  // คนจะนำเข้าแผนใหม่แล้วคีย์ยอดทั้งวัน แล้วพอ IndexedDB กลับมา ของวันนั้นหายทั้งก้อน (ผู้ตรวจ #99)
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('breakIdb')) {
+      IDBFactory.prototype.open = function () { throw new DOMException('เปิดไม่ได้', 'UnknownError'); };
+    }
+  });
+  await seedOnce(page, legacy([rec('R1', 10)]));
+  await page.goto(APP);
+  await waitReady(page);
+  expect(await lsItem(page, K_STATE + ':moved'), 'ย้ายเสร็จต้องทิ้งธงไว้ใน localStorage').toBe('1');
+
+  await page.evaluate(() => sessionStorage.setItem('breakIdb', '1'));
+  await page.reload();
+  await expect(page.locator('#storageLocked'), 'ต้องบอกตรง ๆ ว่าห้ามคีย์').toContainText('ห้ามคีย์ยอด');
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => document.documentElement.dataset.stateReady), 'ต้องไม่เปิดให้บันทึกหรือซิงค์')
+    .toBeUndefined();
+  expect(await lsItem(page, K_STATE), 'ต้องไม่เขียน state ว่างลง localStorage').toBeNull();
+
+  await page.evaluate(() => sessionStorage.removeItem('breakIdb'));
+  await page.reload();
+  await waitReady(page);
+  await expect(page.locator('#storageLocked')).toHaveCount(0);
+  expect((await readSaved(page, K_STATE)).records.map(r => r.id), 'ข้อมูลเดิมต้องยังอยู่ครบ').toEqual(['R1']);
+});
+
+test('ลบข้อมูลทั้งหมด ต้องลบสำเนาดิบที่เก็บไว้ตอนย้ายด้วย — กล่องยืนยันบอกว่าย้อนกลับไม่ได้', async ({ page }) => {
+  await seedOnce(page, legacy([rec('R1', 10)]));
+  await page.goto(APP);
+  await waitReady(page);
+  expect(await readSaved(page, BACKUP, { raw: true }), 'ก่อนลบต้องมีสำเนาอยู่จริง').not.toBeNull();
+
+  page.on('dialog', d => d.accept());
+  await page.click('.tab-btn[data-tab="data"]');
+  await page.click('#btnClearAll');
+
+  await expect.poll(() => readSaved(page, BACKUP, { raw: true }), { message: 'สำเนาดิบต้องถูกลบ' }).toBeNull();
+  expect((await readSaved(page, K_STATE)).records, 'ข้อมูลหลักต้องว่าง').toEqual([]);
 });

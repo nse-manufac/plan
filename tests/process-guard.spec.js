@@ -5,6 +5,7 @@
 // ไม่งั้นการ์ด WIP ตาราง กราฟ จะต่ำกว่าเครื่องอื่นเงียบ ๆ เพราะตัวคิดยอดข้ามขั้นที่ไม่รู้จักทิ้ง
 
 const { test, expect } = require('@playwright/test');
+const { waitReady } = require('./app-state');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -24,6 +25,7 @@ async function open(page, records) {
     orders: [o], records: r, deliveryNotes: [], deltaWip: [], importHistory: []
   })), [K_STATE, order, records]);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForTimeout(300);
 }
 const warn = page => page.locator('#unknownProcessWarn');

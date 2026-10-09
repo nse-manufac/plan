@@ -11,7 +11,7 @@
 // ถ้ายอดคิดผิด Dashboard · การ์ด WIP · และยอดที่ส่งลูกค้าจะผิดตามกันหมดโดยไม่มีใครรู้
 
 const { test, expect } = require('@playwright/test');
-const { readSaved, forgetSavedOnEveryLoad } = require('./app-state');
+const { readSaved, forgetSavedOnEveryLoad, waitReady } = require('./app-state');
 const fs = require('fs');
 const JSZip = require('jszip');
 const { appSource, fnSource } = require('./app-source');
@@ -45,6 +45,7 @@ async function open(page, orders = ORDERS, records = [], unit = 'TUE-U') {
     orders: o, records: r, deliveryNotes: [], importHistory: []
   })), [K_STATE, orders, records]);
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="delivery"]');
   await page.fill('#dnDate', DATE);
   await page.waitForTimeout(150);
@@ -283,6 +284,7 @@ test('P/N ที่เป็นตัวเลข — ต่อกล่อง�
   const saved = await readState(page);
   await page.addInitScript(([k, st]) => localStorage.setItem(k, JSON.stringify(st)), [K_STATE, saved]);
   await page.reload();
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="delivery"]');
   await page.fill('#dnDate', DATE);
   await page.waitForTimeout(150);
@@ -414,6 +416,7 @@ async function openWithDelta(page, deltaWip, orders = ORDERS, records = []) {
     orders: o, records: r, deliveryNotes: [], deltaWip: d, importHistory: []
   })), [K_STATE, orders, records, deltaWip]);
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="delivery"]');
   await page.fill('#dnDate', DATE);
   await page.waitForTimeout(150);

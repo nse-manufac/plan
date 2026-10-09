@@ -9,6 +9,7 @@
 // ซึ่งเป็นอาการที่ใบนี้กันไว้ · ตามสายจริง assembly เทียบกับ winding (300 < 800) จึงปกติ
 
 const { test, expect } = require('@playwright/test');
+const { waitReady } = require('./app-state');
 const { patchAppSource } = require('./app-source');
 
 const APP = '/production_plan_tracker.html';
@@ -40,6 +41,7 @@ async function open(page, { records = RECORDS, offsets = OFFSETS, processes = nu
     orders: [o], records: r, deliveryNotes: [], deltaWip: [], importHistory: []
   })), [K_STATE, ORDER, records, offsets, processes]);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForTimeout(300);
   expect(patched(), 'หาแถว assembly ใน DEFAULT_PROCESSES ไม่เจอ — ไม่งั้นเทสนี้ทดสอบแอปที่ไม่มีขั้นนับแยก').toBe(1);
 }

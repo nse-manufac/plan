@@ -7,16 +7,18 @@
 // แอปจะย้ายเข้า IndexedDB ให้เองตอนเปิดหน้า (เส้นทางเดียวกับเครื่องจริงที่อัปเดตรุ่นครั้งแรก)
 // แต่ "อ่าน" ต้องอ่านจาก IndexedDB ผ่านตัวนี้ — localStorage ว่างทันทีที่ย้ายเสร็จ
 
+const { expect } = require('@playwright/test');
+
 const IDB_NAME = 'tue_order_tracker';
 const IDB_STORE = 'kv';
 
-/** รอให้แอปโหลด state และวาดจอเสร็จ — ก่อนหน้านั้นแอปยังไม่บันทึกอะไร และ IndexedDB อาจยังไม่มีข้อมูล
+/** รอให้แอปโหลด state และวาดจอเสร็จ — ก่อนหน้านั้นแอปยังไม่บันทึกอะไร IndexedDB อาจยังไม่มีข้อมูล และจอยังกดไม่ได้
+ *  ⚠️ ทุกตัวช่วยที่เปิดหน้า (goto · reload) ต้องเรียกตัวนี้ก่อนกดอะไร — ไม่งั้นแข่งกับการวาดจอ แดงแบบสุ่ม (ผู้ตรวจ #99)
  *  ดูจากป้ายบน <html> ไม่ใช่ตัวแปร stateReady — ตัวแปรระดับบนสุดของแอปอาจมองจากเทสไม่เห็น */
 async function waitReady(page) {
-  const ready = () => document.documentElement.dataset.stateReady === '1';
-  // เช็กครั้งเดียวก่อน — เทสที่ใช้ page.clock แช่นาฬิกาไว้ การรอแบบวนเช็กอาจไม่เดินเลย
-  if (await page.evaluate(ready)) return;
-  await page.waitForFunction(ready);
+  // วนเช็กจากฝั่งเทส ไม่ใช่ waitForFunction ในหน้า — เทสที่ใช้ page.clock แช่นาฬิกาของหน้าไว้ การวนในหน้าอาจไม่เดินเลย
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.stateReady === '1'),
+    { message: 'แอปโหลดข้อมูลไม่เสร็จ (ไม่มี data-state-ready บน <html>)' }).toBe(true);
 }
 
 /**

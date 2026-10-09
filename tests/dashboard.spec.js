@@ -5,6 +5,7 @@
 //    ทั้งที่ทั้งสองฝั่งถูก — เทสในไฟล์นี้กันไม่ให้ส่วนใดส่วนหนึ่งหลุดออกจากตัวกรองอีก
 
 const { test, expect } = require('@playwright/test');
+const { waitReady } = require('./app-state');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -46,6 +47,7 @@ async function openDash(page, orders, records = []) {
     orders: o, records: r, deliveryNotes: [], deltaWip: [], importHistory: []
   })), [K_STATE, orders, records]);
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="dashboard"]');
   await page.waitForTimeout(200);
 }
@@ -313,6 +315,7 @@ test('ขั้นที่ซ่อนไว้ต้องอยู่ข้�
     'เปลี่ยนช่วงเวลาแล้วขั้นที่ซ่อนไว้ต้องไม่เด้งกลับ').toBe(0);
 
   await page.reload();
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="dashboard"]');
   await page.waitForTimeout(300);
   expect(await page.locator('#chartWrap svg rect[data-proc="support"]').count(),

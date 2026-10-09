@@ -12,7 +12,7 @@
 //    การคุ้มกันแบบเดียวกันยังอยู่ครบใน delivery-note.spec.js ซึ่งยังเขียนไฟล์จริงอยู่
 
 const { test, expect } = require('@playwright/test');
-const { readSaved } = require('./app-state');
+const { readSaved, waitReady } = require('./app-state');
 const { callInWorkbook } = require('./fixtures');
 
 const APP = '/production_plan_tracker.html';
@@ -35,6 +35,7 @@ async function openWith(page, orders, records = []) {
     chartPref: { mode: '14', from: '', to: '' }, orders: o, records: r, importHistory: []
   })), [K_STATE, orders, records]);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForSelector('.tab-btn[data-tab="data"]');
   await page.click('.tab-btn[data-tab="data"]');
 }

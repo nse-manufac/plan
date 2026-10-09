@@ -350,9 +350,11 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 | **IndexedDB** ฐาน `tue_order_tracker` store `kv` | `tue_order_tracker_v1` | `state` ทั้งก้อน เป็นข้อความ JSON |
 | IndexedDB (ที่เดียวกัน) | `tue_order_tracker_v1:localStorage` | สำเนาดิบของ localStorage ตอนย้าย — กู้ได้ถ้าย้ายพลาด |
 | localStorage | `tue_order_tracker_sync_v1` | การตั้งค่าเชื่อมต่อ Google Sheets |
+| localStorage | `tue_order_tracker_v1:moved` | ธงว่าเครื่องนี้ย้ายเข้า IndexedDB แล้ว — เปิด IndexedDB ไม่ได้จะบังจอแทนเปิดหน้าว่าง (E3) |
 
 > ⚠️ **ย้ายจาก localStorage เมื่อ 9 ต.ค. 2026** เพราะเครื่องหน้างานเต็มเพดาน ~5 MB · กติกาอยู่ที่ INVARIANTS E1–E4
 > ก่อนโหลดเสร็จห้ามบันทึกและห้ามซิงค์ (`stateReady`) · เทสอ่าน state ผ่าน `tests/app-state.js` เท่านั้น
+> เทสที่เปิดหน้า (`goto` · `reload`) ต้อง `waitReady(page)` ก่อนกดอะไร — ไม่งั้นแข่งกับการวาดจอ แดงแบบสุ่ม
 
 **state**
 

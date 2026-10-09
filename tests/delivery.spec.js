@@ -5,7 +5,7 @@
 // จึงต้องพิสูจน์ก่อนว่า "ของเดิมที่มีอยู่ในเครื่องแล้วไม่พัง" ก่อนจะมีหน้าจอให้ใครกด
 
 const { test, expect } = require('@playwright/test');
-const { readSaved, forgetSavedOnEveryLoad } = require('./app-state');
+const { readSaved, forgetSavedOnEveryLoad, waitReady } = require('./app-state');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -30,6 +30,7 @@ async function open(page, st, init) {
   await page.addInitScript(([k, s]) => localStorage.setItem(k, JSON.stringify(s)), [K_STATE, st]);
   if (init) await page.addInitScript(init);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForSelector('.tab-btn[data-tab="entry"]');
 }
 
@@ -90,6 +91,7 @@ test('D5 — ใบส่งที่ยังไม่เคยส่งขึ�
   await page.evaluate(k => localStorage.setItem(k, JSON.stringify(
     { url: 'https://script.google.com/macros/s/EXAMPLE/exec', token: 'x', auto: false })), K_SYNC);
   await page.reload();
+  await waitReady(page);
   await page.waitForSelector('#syncLabel');
   await expect(page.locator('#syncLabel'),
     'ป้ายต้องนับใบส่งที่ค้างด้วย ไม่งั้นป้ายจะบอกว่าซิงค์แล้วทั้งที่ยังไม่ได้ส่ง').toContainText('รอส่ง 1');

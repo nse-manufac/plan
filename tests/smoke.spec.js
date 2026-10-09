@@ -14,7 +14,7 @@ const { test, expect } = require('@playwright/test');
 // ซอร์สของแอปอ่านผ่านตัวช่วยเท่านั้น — appHtml() สำหรับเรื่องของ HTML เอง (เลขรุ่น)
 // appSource() สำหรับ "ต้องมี/ต้องไม่มี X ในแอป" ซึ่งต้องเห็นทุกไฟล์ที่หน้าโหลด (CLAUDE.md §3.1 ข้อ 7)
 const { appHtml, appSource } = require('./app-source');
-const { readSaved } = require('./app-state');
+const { readSaved, waitReady } = require('./app-state');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -151,6 +151,7 @@ async function openApp(page, records = [], orders = null) {
     localStorage.setItem(key, JSON.stringify(st));
   }, [K_STATE, seedState(records, orders)]);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForSelector('.tab-btn[data-tab="entry"]');
 }
 
@@ -227,6 +228,7 @@ test('D3 — ยอดที่คีย์ระหว่างซิงค์ 
       Object.assign(seedState([R1, R2], ORDERS), { deliveryNotes: [], deltaWip: [] })]);
 
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="entry"]');
   await page.fill('#entryDate', TEST_DATE);
   await page.waitForTimeout(150);
@@ -405,6 +407,7 @@ test('E3 — ถ้าข้อมูลใน localStorage เสีย แอ�
 
   await page.addInitScript(k => localStorage.setItem(k, '{ นี่ไม่ใช่ JSON'), K_STATE);
   await page.goto(APP);
+  await waitReady(page);
 
   await expect(page.locator('.tab-btn[data-tab="entry"]')).toBeVisible();
   expect(errors, 'JSON เสียแล้วแอปต้อง fallback เป็น defaultState ไม่ใช่พังทั้งหน้า').toEqual([]);
@@ -1093,6 +1096,7 @@ test('A4 — ยังไม่ตั้งจำนวนวันกำหน�
     localStorage.setItem(key, JSON.stringify(s));
   }, [K_STATE, st]);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForSelector('.tab-btn[data-tab="entry"]');
   await gotoDashboard(page);
 
