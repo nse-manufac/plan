@@ -1,8 +1,8 @@
 name: Smoke tests
 
 on:
+  # pull_request ไม่กรอง base branch — PR ที่ซ้อนบนอีกใบต้องถูกเทสด้วย (เหตุผลอยู่ที่ agent-guard.yml)
   pull_request:
-    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -95,9 +95,17 @@ jobs:
       - name: เทสด่านไฟล์แอป
         run: bash tests/guard-app-files.test.sh
 
+      - name: เทสด่านเพดานขนาด PR
+        run: bash tests/guard-size.test.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      # ตัวพิสูจน์ย้ายอย่างเดียวเขียนด้วย node จึงต้องรันหลัง setup-node (ผู้ตรวจทักใน #97)
+      # แต่ยังไม่ต้องใช้ dependency หรือเบราว์เซอร์ จึงรันก่อน npm install
+      - name: เทสตัวพิสูจน์ย้ายอย่างเดียว
+        run: bash tests/guard-move-proof.test.sh
 
       # ไม่ใช้ npm ci เพราะ repo นี้ไม่มี package-lock.json
       # (ตั้งใจ — แอปจริงไม่มี dependency, package.json มีไว้ให้ตัวเทสเท่านั้น)

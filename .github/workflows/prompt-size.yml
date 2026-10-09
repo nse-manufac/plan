@@ -6,8 +6,8 @@ name: ตรวจขนาด prompt ของ workflow
 # ด่านนี้ทำให้มันไม่เงียบ
 
 on:
+  # pull_request ไม่กรอง base branch — PR ที่ซ้อนบนอีกใบต้องถูกตรวจด้วย (เหตุผลอยู่ที่ agent-guard.yml)
   pull_request:
-    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
