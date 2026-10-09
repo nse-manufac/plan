@@ -8,12 +8,14 @@
 // ไฟล์ทดสอบถูกประกอบขึ้นเองใน tests/fixtures.js — ห้ามเอาไฟล์ธุรกิจจริงเข้า repo (INVARIANTS F3)
 
 const { test, expect } = require('@playwright/test');
+const { readSaved, forgetSavedOnEveryLoad } = require('./app-state');
 const { planWorkbook, readWorkbook } = require('./fixtures');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
 
 async function openBlank(page) {
+  await forgetSavedOnEveryLoad(page);   // เปิดหน้าใหม่ทุกครั้งต้องว่างเหมือนเดิม (ของที่บันทึกแล้วอยู่ใน IndexedDB)
   await page.addInitScript(k => localStorage.removeItem(k), K_STATE);
   await page.goto(APP);
   await page.waitForSelector('.tab-btn[data-tab="entry"]');
@@ -22,8 +24,8 @@ async function openBlank(page) {
 const upload = (page, sel, buf, name) =>
   page.setInputFiles(sel, { name, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: buf });
 
-const orders = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)).orders, K_STATE);
-const records = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)).records, K_STATE);
+const orders = page => readSaved(page, K_STATE).then(s => s.orders);
+const records = page => readSaved(page, K_STATE).then(s => s.records);
 
 const PLAN_ROWS = [
   { pn: '2870327301', poNo: 'TM5267H179', orderDate: '2026-07-29', qty: 800,

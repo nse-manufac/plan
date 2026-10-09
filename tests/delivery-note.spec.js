@@ -11,6 +11,7 @@
 // ถ้ายอดคิดผิด Dashboard · การ์ด WIP · และยอดที่ส่งลูกค้าจะผิดตามกันหมดโดยไม่มีใครรู้
 
 const { test, expect } = require('@playwright/test');
+const { readSaved, forgetSavedOnEveryLoad } = require('./app-state');
 const fs = require('fs');
 const JSZip = require('jszip');
 const { appSource, fnSource } = require('./app-source');
@@ -35,6 +36,8 @@ const ORDERS = [
 ];
 
 async function open(page, orders = ORDERS, records = [], unit = 'TUE-U') {
+  // หว่านใหม่ทุกครั้งที่หน้าโหลด = ล้างของที่บันทึกไว้ด้วย (เดิม localStorage ทับให้เอง · ตอนนี้ของที่บันทึกอยู่ใน IndexedDB)
+  await forgetSavedOnEveryLoad(page);
   await page.addInitScript(([k, o, r]) => localStorage.setItem(k, JSON.stringify({
     version: 1, deviceName: 't',
     deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
@@ -59,7 +62,7 @@ async function alloc(page, orderId, value) {
   await i.fill(String(value)); await i.press('Tab'); await page.waitForTimeout(150);
 }
 
-const readState = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)), K_STATE);
+const readState = page => readSaved(page, K_STATE);   // อ่านจาก IndexedDB (tests/app-state.js)
 /** ค่าที่โปรแกรมเติมให้ในช่องกล่อง/เศษ */
 const boxOf = (page, pn, f) => page.inputValue(`#dnTable input.dn-pack[data-pn="${pn}"][data-f="${f}"]`);
 const leftCell = (page, pn) => page.locator(`#dnTable td[data-left="${pn}"]`).innerText();
@@ -402,6 +405,8 @@ test('P/N กับช่องบรรจุต้อง merge คร่อม
 
 /** เปิดหน้าใบส่งสินค้าพร้อมยอดของ Delta ที่เตรียมไว้ */
 async function openWithDelta(page, deltaWip, orders = ORDERS, records = []) {
+  // หว่านใหม่ทุกครั้งที่หน้าโหลด = ล้างของที่บันทึกไว้ด้วย (เดิม localStorage ทับให้เอง · ตอนนี้ของที่บันทึกอยู่ใน IndexedDB)
+  await forgetSavedOnEveryLoad(page);
   await page.addInitScript(([k, o, r, d]) => localStorage.setItem(k, JSON.stringify({
     version: 1, deviceName: 't',
     deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },

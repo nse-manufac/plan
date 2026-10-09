@@ -7,6 +7,7 @@
 // ด่านที่อยู่ฝั่งเซิร์ฟเวอร์ (ห้ามลบขั้น · ลำดับท้ายรายการ) จึงถูกทดสอบไปพร้อมกันทั้งเส้น
 
 const { test, expect } = require('@playwright/test');
+const { readSaved } = require('./app-state');
 const crypto = require('crypto');
 const { loadGs } = require('./fake-gs');
 
@@ -97,7 +98,7 @@ function answerDialogs(page, answers = []) {
 }
 
 const tab = async (page, name) => { await page.click(`.tab-btn[data-tab="${name}"]`); await page.waitForTimeout(200); };
-const readState = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)), K_STATE);
+const readState = page => readSaved(page, K_STATE);   // อ่านจาก IndexedDB (tests/app-state.js)
 const procButtonIds = page => page.locator('#procButtons button').evaluateAll(bs => bs.map(b => b.dataset.proc));
 
 async function unlock(page, pin = PIN) {

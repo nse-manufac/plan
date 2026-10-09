@@ -11,6 +11,7 @@
 // ⚠️ ไม่มีที่ไหนเก็บยอดคงเหลือไว้เป็นตัวเลข คิดสดจากสมุดทุกครั้ง (กฎเดียวกับ A1)
 
 const { test, expect } = require('@playwright/test');
+const { readSaved } = require('./app-state');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -338,7 +339,7 @@ test('นั่งค้างหน้า FG แล้วซิงค์ดึ�
   // ปล่อยข้อมูลหลังจากอยู่บนหน้า FG แล้ว แล้วเดินนาฬิกาให้ตัวจับเวลาซิงค์ทำงาน
   releaseData = true;
   await page.clock.runFor(21000);
-  await expect.poll(() => page.evaluate(k => JSON.parse(localStorage.getItem(k)).records.length, K_STATE),
+  await expect.poll(async () => (await readSaved(page, K_STATE)).records.length,
     { timeout: 5000 }).toBe(1);
   await page.waitForTimeout(200);
 

@@ -190,7 +190,7 @@ agent **ห้าม push ขึ้น `main` เด็ดขาด** ทุก�
 ## 3.1 กำลังแยกไฟล์อยู่ — อ่านก่อนเพิ่มโค้ดใหม่
 
 INVARIANTS F2 ฉบับ 19 ก.ย. 2026 อนุญาตให้แยกเป็นหลายไฟล์แล้ว งานนี้ทำทีละก้อน
-**ระบบที่พนักงานใช้ไม่เปลี่ยนเลย** — ยังเก็บใน localStorage key เดิม และยังซิงค์ผ่าน Apps Script ตัวเดิม
+**ระบบที่พนักงานใช้ไม่เปลี่ยนเลย** — ยังเก็บใต้คีย์เดิม (ย้ายไป IndexedDB แล้ว 9 ต.ค. 2026 ดู §5) และยังซิงค์ผ่าน Apps Script ตัวเดิม
 
 โครงที่กำลังเดินไปหา:
 
@@ -199,7 +199,7 @@ plan/
 ├── production_plan_tracker.html   ชื่อเดิม (บุ๊กมาร์กของพนักงานต้องไม่พัง)
 ├── app.js       ต่อสายอย่างเดียว
 ├── core/        กฎล้วน — ห้ามแตะ DOM · localStorage · fetch
-├── io/          storage.js (localStorage) · gs-api.js (Apps Script) · version.js
+├── io/          storage.js (IndexedDB) · gs-api.js (Apps Script) · version.js
 ├── excel/       อ่านไฟล์แผน · อ่าน Call In · กรอก FM-ST-07 · ออกรายงาน
 ├── ui/          หน้าจอแยกตามแท็บ
 └── lib/         ไลบรารีที่ vendor ไว้ — แตะไม่ได้ (F2)
@@ -281,7 +281,7 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 |---|---|
 | `Basic helpers` | `normalizeDateOnly` `fmtDateTH` `addDaysISO` `daysBetween` `escapeHtml` `uid` `toast` |
 | `Processes` / `รายการขั้นการผลิต` | `DEFAULT_PROCESSES` (ที่เดียวของรายการขั้น) → `PROCESSES` **`MAIN_PROCESSES`** `PREV_PROCESS` `ptext` `hasOrderAnomaly` · `ORDER_DATE_FIELDS` `RECORD_DATE_FIELDS` |
-| `State` | `STORAGE_KEY` `defaultState` `loadState` `saveState` `migrateCorruptedDates` |
+| `State` | `STORAGE_KEY` `defaultState` `loadState` `saveState` · `bootState` (IndexedDB + ย้ายจาก localStorage) · `prepareState` (ซ่อมวันที่ เดิมชื่อ `migrateCorruptedDates`) · `openState` (ลำดับการเปิดหน้า) |
 | `Google Sheets sync` | `gsApi` `cleanForPush` `doSync` และการ merge ตอน pull |
 | `แก้ไฟล์ Excel เฉพาะช่องที่ต้องแก้` | ตัวช่วยแก้ XML ในไฟล์ .xlsx ผ่าน JSZip |
 | `ทำให้ Excel คิดสูตรใหม่หลังเราแก้ช่องต้นทาง` | `clearCachedFormulaValues` `setFullCalcOnLoad` ← อ่านคอมเมนต์ก่อนแตะ |
@@ -345,12 +345,14 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 
 ## 5. โครงสร้างข้อมูล
 
-เก็บใน localStorage 2 key:
+| ที่เก็บ | key | เก็บอะไร |
+|---|---|---|
+| **IndexedDB** ฐาน `tue_order_tracker` store `kv` | `tue_order_tracker_v1` | `state` ทั้งก้อน เป็นข้อความ JSON |
+| IndexedDB (ที่เดียวกัน) | `tue_order_tracker_v1:localStorage` | สำเนาดิบของ localStorage ตอนย้าย — กู้ได้ถ้าย้ายพลาด |
+| localStorage | `tue_order_tracker_sync_v1` | การตั้งค่าเชื่อมต่อ Google Sheets |
 
-| key | เก็บอะไร |
-|---|---|
-| `tue_order_tracker_v1` | `state` ทั้งก้อน |
-| `tue_order_tracker_sync_v1` | การตั้งค่าเชื่อมต่อ Google Sheets |
+> ⚠️ **ย้ายจาก localStorage เมื่อ 9 ต.ค. 2026** เพราะเครื่องหน้างานเต็มเพดาน ~5 MB · กติกาอยู่ที่ INVARIANTS E1–E4
+> ก่อนโหลดเสร็จห้ามบันทึกและห้ามซิงค์ (`stateReady`) · เทสอ่าน state ผ่าน `tests/app-state.js` เท่านั้น
 
 **state**
 
@@ -398,7 +400,7 @@ grep -n "^/\* -\{5,\}" production_plan_tracker.html
 
 ## 7. หยุดแล้วถามเจ้าของก่อน เมื่อเจอกรณีเหล่านี้
 
-- ต้องเปลี่ยนโครงสร้าง `state` หรือ key ของ localStorage (INVARIANTS E1/E2)
+- ต้องเปลี่ยนโครงสร้าง `state` หรือ key / ที่เก็บของมัน (INVARIANTS E1–E4)
 - ต้องเพิ่ม / ลบ / สลับขั้นตอนการผลิต (INVARIANTS A3) — รวมถึงแก้ `DEFAULT_PROCESSES` หรือเปลี่ยน `id` ของขั้น
 - ต้องเปลี่ยนกุญแจ `orderId|process|date` (INVARIANTS A2)
 - ต้องเปลี่ยนวิธี sync หรือ contract กับ Apps Script
@@ -430,7 +432,7 @@ npm install && npx playwright install chromium && npm test
 > ตัวแอปยังเป็นไฟล์เดียวไม่มี build ไม่มี dependency เหมือนเดิม
 
 **เทสขับผ่าน DOM** เพราะโค้ดแอปห่ออยู่ใน IIFE จึงไม่มีฟังก์ชันไหนหลุดออกมาที่ global
-วิธีตรวจผลคืออ่าน `localStorage` และข้อความในตาราง ไม่ใช่เรียกฟังก์ชันตรง ๆ
+วิธีตรวจผลคืออ่านข้อมูลที่บันทึก (IndexedDB ผ่าน `tests/app-state.js`) และข้อความในตาราง ไม่ใช่เรียกฟังก์ชันตรง ๆ
 
 ### 8.2 ทดสอบด้วยมือเพิ่ม (สำหรับสิ่งที่เทสยังไม่ครอบคลุม)
 

@@ -5,6 +5,7 @@
 // จึงต้องพิสูจน์ก่อนว่า "ของเดิมที่มีอยู่ในเครื่องแล้วไม่พัง" ก่อนจะมีหน้าจอให้ใครกด
 
 const { test, expect } = require('@playwright/test');
+const { readSaved, forgetSavedOnEveryLoad } = require('./app-state');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -24,13 +25,15 @@ function oldState(extra = {}) {
 }
 
 async function open(page, st, init) {
+  // หว่านใหม่ทุกครั้งที่หน้าโหลด = ล้างของที่บันทึกไว้ด้วย (เดิม localStorage ทับให้เอง · ตอนนี้ของที่บันทึกอยู่ใน IndexedDB)
+  await forgetSavedOnEveryLoad(page);
   await page.addInitScript(([k, s]) => localStorage.setItem(k, JSON.stringify(s)), [K_STATE, st]);
   if (init) await page.addInitScript(init);
   await page.goto(APP);
   await page.waitForSelector('.tab-btn[data-tab="entry"]');
 }
 
-const readState = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)), K_STATE);
+const readState = page => readSaved(page, K_STATE);   // อ่านจาก IndexedDB (tests/app-state.js)
 
 /** แอปไม่เขียน localStorage กลับตอนเปิดถ้าไม่มีอะไรเปลี่ยน
  *  จะตรวจสิ่งที่ loadState() เติมให้ ต้องทำให้มีการบันทึกจริงเสียก่อน */
@@ -101,19 +104,8 @@ test('C2 — วันที่ของใบส่งที่เพี้ย�
   expect(st.deliveryNotes[0]._dirty, 'แถวที่ถูกซ่อมต้องถูกมาร์คให้ดันค่าที่ถูกกลับขึ้นไปทับ').toBe(true);
 });
 
-test('E3 — พื้นที่เก็บข้อมูลเต็ม ต้องบอกผู้ใช้ ไม่ใช่ตายเงียบหรือตายทั้งหน้า', async ({ page }) => {
-  // เดิม saveState() ไม่มี try/catch เลย ถ้า quota เต็มจะ throw ทะลุกลางฟังก์ชันที่เรียก
-  // แล้วบรรทัดถัดไปไม่ถูกรัน · ถ้าเกิดตอนบูตจะเปิดโปรแกรมไม่ขึ้นเลย
-  const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
-  await open(page, oldState(), () => {
-    const real = Storage.prototype.setItem;
-    Storage.prototype.setItem = function (k, v) {
-      if (k === 'tue_order_tracker_v1') { const e = new Error('quota'); e.name = 'QuotaExceededError'; throw e; }
-      return real.call(this, k, v);
-    };
-  });
-
+/** คีย์ยอดหนึ่งช่อง แล้วตรวจว่าแอปบอกผู้ใช้ว่าบันทึกไม่ได้ โดยไม่มี error หลุดจนหน้าค้าง */
+async function keyAndExpectStorageWarning(page, errors) {
   expect(errors, 'แอปต้องเปิดขึ้นได้แม้เขียนลงเครื่องไม่ได้').toEqual([]);
 
   await page.click('.tab-btn[data-tab="entry"]');
@@ -128,4 +120,40 @@ test('E3 — พื้นที่เก็บข้อมูลเต็ม ต
     'ต้องบอกตรง ๆ ว่าบันทึกไม่ได้ ไม่ใช่ปล่อยให้คนคีย์ต่อทั้งวันแล้วข้อมูลหายหมด')
     .toContainText('พื้นที่เก็บข้อมูล');
   expect(errors, 'และต้องไม่มี error หลุดออกมาจนหน้าจอค้าง').toEqual([]);
+}
+
+test('E3 — เขียน IndexedDB ไม่ได้ระหว่างใช้งาน (เช่นพื้นที่เต็ม) ต้องบอกผู้ใช้ ไม่ใช่ตายเงียบ', async ({ page }) => {
+  // ที่เก็บหลักเป็น IndexedDB ตั้งแต่ 9 ต.ค. 2026 · การบันทึกเป็นแบบไม่รอผล ความล้มเหลวจึงมาทีหลัง
+  // ถ้าไม่มีใครดักไว้ จะกลายเป็น error ที่ไม่มีคนจัดการ แล้วคนคีย์ต่อทั้งวันโดยไม่รู้ว่าไม่ได้บันทึก
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await open(page, oldState(), () => {
+    const real = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (v, k) {
+      // ปล่อยให้ตอนเปิดหน้าย้ายข้อมูลได้ตามปกติ แล้วค่อยเต็มระหว่างใช้งาน
+      if (document.documentElement.dataset.stateReady === '1') {
+        throw new DOMException('quota', 'QuotaExceededError');
+      }
+      return real.call(this, v, k);
+    };
+  });
+  await keyAndExpectStorageWarning(page, errors);
+});
+
+test('E3 — เปิด IndexedDB ไม่ได้ ต้องใช้ localStorage แบบเดิมต่อได้ และถ้าเต็มต้องบอกผู้ใช้', async ({ page }) => {
+  // ทางสำรองเมื่อเบราว์เซอร์ไม่ให้ใช้ IndexedDB · เดิม saveState() ไม่มี try/catch เลย
+  // ถ้า quota เต็มจะ throw ทะลุกลางฟังก์ชันที่เรียก แล้วบรรทัดถัดไปไม่ถูกรัน · ถ้าเกิดตอนบูตจะเปิดโปรแกรมไม่ขึ้นเลย
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await open(page, oldState(), () => {
+    IDBFactory.prototype.open = function () { throw new DOMException('ไม่ให้ใช้', 'InvalidStateError'); };
+    const real = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (k, v) {
+      if (k === 'tue_order_tracker_v1') { const e = new Error('quota'); e.name = 'QuotaExceededError'; throw e; }
+      return real.call(this, k, v);
+    };
+  });
+  // keyAndExpectStorageWarning คีย์ลงช่องของใบ O1 ซึ่งมาจากข้อมูลใน localStorage
+  // หาช่องเจอ = เปิดข้อมูลเดิมขึ้นมาได้จริงโดยไม่มี IndexedDB
+  await keyAndExpectStorageWarning(page, errors);
 });
