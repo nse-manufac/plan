@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-09.1">
+<meta name="app-version" content="2026-10-10.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1311,13 +1311,20 @@ async function openState(){
   }
   state = st;
   stateReady = true;
-  prepareState();
-  currentProcess = MAIN_PROCESSES[0];
-  renderProcessControls();
-  loadSettingsIntoForm();
-  renderAll();
-  renderSyncBadge();   // ตัวนับ "รอส่ง" ต้องนับจากข้อมูลจริง ไม่ใช่ state ว่างตอนเปิดหน้า
-  document.documentElement.dataset.stateReady = '1';   // ป้ายให้เทสรู้ว่าโหลด · วาดจอเสร็จแล้ว (tests/app-state.js)
+  try{
+    prepareState();
+    currentProcess = MAIN_PROCESSES[0];
+    renderProcessControls();
+    loadSettingsIntoForm();
+    renderAll();
+    renderSyncBadge();   // ตัวนับ "รอส่ง" ต้องนับจากข้อมูลจริง ไม่ใช่ state ว่างตอนเปิดหน้า
+  }catch(e){
+    toast('เปิดหน้าไม่สมบูรณ์ — บางส่วนอาจแสดงผิด กรุณาแจ้งหัวหน้า');
+    throw e;   // ปล่อยให้ error หลุดออกไปเหมือนเดิม — เทสที่ตรวจ "ต้องไม่มี error" ยังจับได้
+  }finally{
+    // ⚠️ ต้องปลดจอจางเสมอ แม้วาดจอพัง (ข้อมูลจริงมีค่าแปลก) — ไม่งั้นทั้งหน้ากดไม่ได้และไม่มีข้อความบอก (ผู้ตรวจ #99)
+    document.documentElement.dataset.stateReady = '1';   // ป้ายให้เทสรู้ว่าโหลด · วาดจอเสร็จแล้ว (tests/app-state.js)
+  }
   if(syncWaiting !== undefined) doSync(syncWaiting);
 }
 
