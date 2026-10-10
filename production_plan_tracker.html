@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-10.2">
+<meta name="app-version" content="2026-10-11.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -1466,10 +1466,14 @@ function renderSyncBadge(){
   const dot = document.getElementById('syncDot');
   const label = document.getElementById('syncLabel');
   if(!dot || !label) return;
+  // ⚠️ เพิ่มตารางที่ซิงค์แล้วต้องเติมที่นี่ด้วย ไม่มีด่านไหนคุมให้ — ต่างจากนาฬิกา lastPull*
+  //    ที่ tests/gs-server.spec.js กวาดชื่อจาก doSync มาเทียบอัตโนมัติ
+  //    ลืมเติม = ป้ายขึ้น "ซิงค์แล้ว" ทั้งที่ยังมีแถวค้างไม่ได้ส่ง (ผู้ตรวจทักไว้ใน #102)
   const pending = state.orders.filter(o=>o._dirty).length
                 + state.records.filter(r=>r._dirty).length
                 + state.deliveryNotes.filter(d=>d._dirty).length
-                + state.deltaWip.filter(d=>d._dirty).length;
+                + state.deltaWip.filter(d=>d._dirty).length
+                + state.deliveryLog.filter(d=>d._dirty).length;
   let cls='', text='';
   if(!syncCfg.url){ text = 'ยังไม่เชื่อมต่อ'; }
   else if(syncCfg.state==='busy'){ cls='busy'; text = 'กำลังซิงค์...'; }

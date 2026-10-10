@@ -72,6 +72,13 @@ var TIMESTAMP_COLS = {
   DeliveryLog: ['createdAt', 'updatedAt']
 };
 
+// คอลัมน์ที่ต้องคงเป็น "ข้อความ" ทั้งที่ไม่ใช่วันที่ — Sheets แปลงสตริงที่เป็นตัวเลขล้วนเป็นตัวเลขเอง
+// แล้ว "เลขศูนย์นำหน้าหายถาวร" โดยไม่มี error · ผู้ตรวจ #102 ยืนยันด้วยการรัน:
+//   push no:'0261010' → pull ได้ number 261010
+// no คือเลขที่ใบส่งของที่ไปถึงลูกค้า จึงห้ามให้เพี้ยนไม่ว่ารูปแบบเลขจะเปลี่ยนไปเป็นแบบไหนในอนาคต
+// ⚠️ ต้องกันที่นี่ตั้งแต่ใบวางท่อ เพราะแก้ทีหลัง = redeploy ทุกเครื่องอีกรอบ
+var TEXT_COLS = { DeliveryLog: ['no', 'week'] };
+
 // ═══════════ จุดเข้า ═══════════
 function doGet(e)  { return handle(e, {}); }
 function doPost(e) {
@@ -176,12 +183,13 @@ function fixTimestampCols(row, cols) {
   }
 }
 
-/** ตั้ง number format ของคอลัมน์วันที่เป็นข้อความ ('@') ก่อนเขียน กัน Sheets ตีความสตริงวันที่
- *  เป็นเซลล์ชนิดวันที่เองตอน setValues() — ครอบคลุมถึงแถวที่กำลังจะเพิ่มใหม่ด้วย (+buffer กันคลาด) */
-function ensureTextFormat(sheet, cols, dateFieldNames, incomingRowCount) {
-  if (!dateFieldNames.length) return;
+/** ตั้ง number format ของคอลัมน์ที่ต้องเป็นข้อความ ('@') ก่อนเขียน
+ *  กัน Sheets ตีความสตริงวันที่เป็นเซลล์ชนิดวันที่ และตีความสตริงตัวเลขล้วนเป็นตัวเลข (ดู TEXT_COLS)
+ *  ตอน setValues() — ครอบคลุมถึงแถวที่กำลังจะเพิ่มใหม่ด้วย (+buffer กันคลาด) */
+function ensureTextFormat(sheet, cols, textFieldNames, incomingRowCount) {
+  if (!textFieldNames.length) return;
   var rowSpan = Math.max(sheet.getLastRow(), 1) + incomingRowCount + 5;
-  dateFieldNames.forEach(function (name) {
+  textFieldNames.forEach(function (name) {
     var idx = cols.indexOf(name) + 1;
     if (idx > 0) sheet.getRange(2, idx, rowSpan, 1).setNumberFormat('@');
   });
@@ -272,7 +280,7 @@ function doPushRows(table, rows, device) {
     var sheet = sheetOf(table, cols);
     // บังคับคอลัมน์วันที่ให้เป็น format ข้อความก่อนเขียน กัน Sheets แปลงเป็นเซลล์ชนิดวันที่เอง
     // (ครอบคลุมแถวที่มีอยู่ + จำนวนแถวที่กำลังจะเขียนเผื่อไว้ ไม่ต้องกวาดทั้งคอลัมน์ทุกครั้ง)
-    ensureTextFormat(sheet, cols, DATE_ONLY_COLS[table] || [], rows.length);
+    ensureTextFormat(sheet, cols, (DATE_ONLY_COLS[table] || []).concat(TEXT_COLS[table] || []), rows.length);
     var last = sheet.getLastRow();
     var index = {};
     if (last >= 2) {
