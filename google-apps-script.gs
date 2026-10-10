@@ -34,6 +34,14 @@ const DELTAWIP_COLS = ['id','orderId','week','wip','fileName',
   'deviceName','createdAt','updatedAt','voided',
   'wipOverride','overrideNote','overrideBy','overrideAt'];
 
+// log การออกใบส่งสินค้า — หนึ่งแถว = หนึ่งครั้งที่กดออกใบสำเร็จ (เจ้าของสั่ง 10 ต.ค. 2026)
+// ตอบคำถามว่า "ใบของหน่วยนี้วันนี้ออกไปแล้วหรือยัง" ซึ่งดูจากตาราง DeliveryNotes ไม่ได้
+// เพราะที่นั่นบอกแค่ว่ามีคนคีย์ยอดบรรจุไว้ ไม่ได้บอกว่ากดออกใบแล้ว
+//   no    เลขที่ใบส่งของ คิดจากหน่วย+วัน จึง "ซ้ำได้" เมื่อออกใบเดิมซ้ำ — กุญแจของแถวคือ id
+//   qty   ยอดรวมทั้งใบ ณ ตอนกดออก · groups/lines จำนวนกลุ่ม P/N และบรรทัดบนกระดาษ
+const DELIVERYLOG_COLS = ['id','no','date','unit','week','groups','lines','qty',
+  'deviceName','createdAt','updatedAt','voided'];
+
 // คอลัมน์ที่ doPushRows ต้องคงค่าเดิมไว้ ถ้าแถวที่ส่งมาไม่มีช่องนั้นเลย (undefined)
 // ⚠️ เครื่องที่ยังใช้แอปรุ่นเก่าไม่รู้จักคอลัมน์ตัวแก้มือ cleanForPush ของมันจึงไม่ส่งช่องพวกนี้
 //    ถ้าไม่กันไว้ toRow จะเขียนค่าว่างทับ — ยอดที่หัวหน้าแก้มือไว้หายเงียบ ๆ ทุกครั้งที่เครื่องนั้นซิงค์แถวนั้น
@@ -44,14 +52,15 @@ var KEEP_IF_ABSENT = { DeltaWip: ['wipOverride', 'overrideNote', 'overrideBy', '
 //    ตกหล่นที่ไหนที่หนึ่งจะไม่มี error แต่ข้อมูลคอลัมน์นั้นจะหายเงียบ ๆ ทุกครั้งที่ซิงค์
 //    (planSupport เคยตกหล่นแบบนี้มาตั้งแต่ issue #17 จนถึง 30 ส.ค. 2026)
 var ROW_TABLES = { Orders: ORDER_COLS, Records: RECORD_COLS, DeliveryNotes: DELIVERY_COLS,
-                   DeltaWip: DELTAWIP_COLS };
+                   DeltaWip: DELTAWIP_COLS, DeliveryLog: DELIVERYLOG_COLS };
 
 // คอลัมน์ที่เก็บ "วันปฏิทินล้วน" (YYYY-MM-DD) — Sheets ชอบแปลงสตริงพวกนี้เป็นเซลล์ชนิดวันที่ให้เอง
 // ถ้าไม่กันไว้ พออ่านกลับด้วย getValues() จะได้ Date object แทนสตริง ทำให้ client คำนวณ deadline พัง
 var DATE_ONLY_COLS = {
   Orders: ['orderDate', 'planWinding', 'planAssembly', 'planSupport', 'planInspection'],
   Records: ['date'],
-  DeliveryNotes: ['date']
+  DeliveryNotes: ['date'],
+  DeliveryLog: ['date']
 };
 // เผื่อ Sheets แปลง timestamp เต็ม (เช่น updatedAt) เป็นเซลล์ชนิดวันที่-เวลาด้วยเช่นกัน — ต่างจาก
 // DATE_ONLY_COLS ตรงที่แปลงกลับด้วย toISOString() (คง เวลา+โซน ไว้) ไม่ใช่ 'yyyy-MM-dd'
@@ -59,8 +68,16 @@ var TIMESTAMP_COLS = {
   Orders: ['importedAt', 'updatedAt'],
   Records: ['createdAt', 'updatedAt'],
   DeliveryNotes: ['createdAt', 'updatedAt'],
-  DeltaWip: ['createdAt', 'updatedAt', 'overrideAt']
+  DeltaWip: ['createdAt', 'updatedAt', 'overrideAt'],
+  DeliveryLog: ['createdAt', 'updatedAt']
 };
+
+// คอลัมน์ที่ต้องคงเป็น "ข้อความ" ทั้งที่ไม่ใช่วันที่ — Sheets แปลงสตริงที่เป็นตัวเลขล้วนเป็นตัวเลขเอง
+// แล้ว "เลขศูนย์นำหน้าหายถาวร" โดยไม่มี error · ผู้ตรวจ #102 ยืนยันด้วยการรัน:
+//   push no:'0261010' → pull ได้ number 261010
+// no คือเลขที่ใบส่งของที่ไปถึงลูกค้า จึงห้ามให้เพี้ยนไม่ว่ารูปแบบเลขจะเปลี่ยนไปเป็นแบบไหนในอนาคต
+// ⚠️ ต้องกันที่นี่ตั้งแต่ใบวางท่อ เพราะแก้ทีหลัง = redeploy ทุกเครื่องอีกรอบ
+var TEXT_COLS = { DeliveryLog: ['no', 'week'] };
 
 // ═══════════ จุดเข้า ═══════════
 function doGet(e)  { return handle(e, {}); }
@@ -166,12 +183,13 @@ function fixTimestampCols(row, cols) {
   }
 }
 
-/** ตั้ง number format ของคอลัมน์วันที่เป็นข้อความ ('@') ก่อนเขียน กัน Sheets ตีความสตริงวันที่
- *  เป็นเซลล์ชนิดวันที่เองตอน setValues() — ครอบคลุมถึงแถวที่กำลังจะเพิ่มใหม่ด้วย (+buffer กันคลาด) */
-function ensureTextFormat(sheet, cols, dateFieldNames, incomingRowCount) {
-  if (!dateFieldNames.length) return;
+/** ตั้ง number format ของคอลัมน์ที่ต้องเป็นข้อความ ('@') ก่อนเขียน
+ *  กัน Sheets ตีความสตริงวันที่เป็นเซลล์ชนิดวันที่ และตีความสตริงตัวเลขล้วนเป็นตัวเลข (ดู TEXT_COLS)
+ *  ตอน setValues() — ครอบคลุมถึงแถวที่กำลังจะเพิ่มใหม่ด้วย (+buffer กันคลาด) */
+function ensureTextFormat(sheet, cols, textFieldNames, incomingRowCount) {
+  if (!textFieldNames.length) return;
   var rowSpan = Math.max(sheet.getLastRow(), 1) + incomingRowCount + 5;
-  dateFieldNames.forEach(function (name) {
+  textFieldNames.forEach(function (name) {
     var idx = cols.indexOf(name) + 1;
     if (idx > 0) sheet.getRange(2, idx, rowSpan, 1).setNumberFormat('@');
   });
@@ -262,7 +280,7 @@ function doPushRows(table, rows, device) {
     var sheet = sheetOf(table, cols);
     // บังคับคอลัมน์วันที่ให้เป็น format ข้อความก่อนเขียน กัน Sheets แปลงเป็นเซลล์ชนิดวันที่เอง
     // (ครอบคลุมแถวที่มีอยู่ + จำนวนแถวที่กำลังจะเขียนเผื่อไว้ ไม่ต้องกวาดทั้งคอลัมน์ทุกครั้ง)
-    ensureTextFormat(sheet, cols, DATE_ONLY_COLS[table] || [], rows.length);
+    ensureTextFormat(sheet, cols, (DATE_ONLY_COLS[table] || []).concat(TEXT_COLS[table] || []), rows.length);
     var last = sheet.getLastRow();
     var index = {};
     if (last >= 2) {
@@ -418,6 +436,7 @@ function setupSheets() {
   sheetOf('Records', RECORD_COLS);
   sheetOf('DeliveryNotes', DELIVERY_COLS);
   sheetOf('DeltaWip', DELTAWIP_COLS);
+  sheetOf('DeliveryLog', DELIVERYLOG_COLS);
   sheetOf('Meta', ['key', 'value']);
   SpreadsheetApp.getUi().alert('สร้างชีตครบแล้ว');
 }

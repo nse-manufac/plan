@@ -226,7 +226,9 @@ test('ห้ามล้างนาฬิกาซิงค์ที่อื�
  * ถ้าคอลัมน์กลายเป็นข้อความ (คนแก้ชีตมือ หรือ format เพี้ยน) สตริง 'FALSE' เป็น truthy ฝั่งแอป
  * → ทุกแถวของตารางนั้นกลายเป็นยกเลิกในทุกเครื่องหลังซิงค์ = จอว่างทั้งระบบ
  * (CTO เจอตอนประเมิน 7 ก.ย. 2026 · เจ้าของให้รวบไว้กับการ redeploy รอบถัดไป) */
-for (const table of ['Orders', 'Records', 'DeliveryNotes', 'DeltaWip']) {
+// ⚠️ เพิ่มตารางใหม่ใน ROW_TABLES แล้วต้องเติมชื่อที่นี่ด้วย — ด่านนี้ไล่ทีละตารางที่เขียนไว้
+//    ไม่ได้อ่านจาก .gs เอง · ตารางที่ไม่อยู่ในรายการนี้คือตารางที่ไม่มีใครคุม (ผู้ตรวจทักไว้ใน #102)
+for (const table of ['Orders', 'Records', 'DeliveryNotes', 'DeltaWip', 'DeliveryLog']) {
   test(`${table} — voided ที่เป็นข้อความในชีต ต้องกลับมาเป็น boolean`, async () => {
     const { api, book } = loadGs();
     api.doPushRows(table, [{ id: 'X1', voided: false }], 'A');
@@ -344,4 +346,59 @@ test('ข้อมูลรหัสหัวหน้า — เก็บแล
 test('ตั้งค่ากลาง — ล็อกไม่ว่างต้องไม่เขียนอะไรเลย', async () => {
   const busy = loadGs({ lockFree: false });
   expect(busy.api.doPushSettings({ processes: WITH_COATING }).ok).toBe(false);
+});
+
+/* ── log การออกใบส่งสินค้า — ตารางใหม่ 10 ต.ค. 2026 ────────────────────
+ *
+ * เจ้าของสั่งให้เก็บว่า "ใบของหน่วยนี้วันนี้ออกไปแล้วหรือยัง" และต้องเห็นทุกเครื่อง
+ * ตารางใหม่ต้องลงทะเบียนครบสี่ที่ใน .gs — ตกที่ไหนที่หนึ่งจะไม่มี error
+ * แต่คอลัมน์นั้นจะหายเงียบ ๆ ทุกครั้งที่ซิงค์ (เคยเกิดกับ planSupport มาแล้ว)
+ * sync-contract.spec.js จับได้แค่ "ชื่อไม่ตรง" — ข้อนี้จับ "พฤติกรรมผิด" */
+const DLOG = { id: 'DL1', no: 'TUEU-261010', date: '2026-10-10', unit: 'TUE-U', week: '41',
+  groups: 7, lines: 23, qty: 12400, deviceName: 'คอมฝ่ายวางแผน', voided: false,
+  createdAt: '2026-10-10T07:32:00.000Z' };
+
+test('DeliveryLog — push แล้ว pull กลับต้องได้ทุกคอลัมน์ครบ', async () => {
+  const { api } = loadGs();
+  const res = api.doPushRows('DeliveryLog', [DLOG], 'คอมฝ่ายวางแผน');
+  expect(res.ok, res.error).toBe(true);
+
+  const rows = api.doPullRows('DeliveryLog', '').rows;
+  expect(rows.length).toBe(1);
+  for(const k of ['no','date','unit','week','groups','lines','qty','deviceName']){
+    expect(String(rows[0][k]), `คอลัมน์ ${k} หายหรือเพี้ยนระหว่างซิงค์`).toBe(String(DLOG[k]));
+  }
+});
+
+test('DeliveryLog — วันที่ที่ชีตแปลงเป็นชนิดวันที่ ต้องกลับมาเป็น YYYY-MM-DD ไม่ใช่ Date', async () => {
+  // ถ้าลืมใส่ DeliveryLog ใน DATE_ONLY_COLS ข้อนี้จะได้ Date object กลับมา
+  // แล้ว client จะเอาไปเทียบกับสตริงไม่ได้ — log จะไม่เจอใบของวันนั้น (C1/C2)
+  const { api, book } = loadGs();
+  api.doPushRows('DeliveryLog', [DLOG], 'ทดสอบ');
+  const sheet = book.getSheetByName('DeliveryLog');
+  const col = sheet.rows[0].indexOf('date');
+  sheet.rows[1][col] = new Date('2026-10-10T00:00:00.000Z');     // จำลอง Sheets แปลงชนิดเอง
+  expect(api.doPullRows('DeliveryLog', '').rows[0].date).toBe('2026-10-10');
+});
+
+test('DeliveryLog — ออกใบเดิมซ้ำได้เลขเดิม แต่เป็นคนละแถว (กุญแจคือ id ไม่ใช่ no)', async () => {
+  const { api } = loadGs();
+  api.doPushRows('DeliveryLog', [DLOG], 'ทดสอบ');
+  api.doPushRows('DeliveryLog', [Object.assign({}, DLOG, { id: 'DL2',
+    createdAt: '2026-10-10T09:15:00.000Z' })], 'ทดสอบ');
+
+  const rows = api.doPullRows('DeliveryLog', '').rows;
+  expect(rows.length, 'ออกใบซ้ำต้องได้สองแถว ไม่ใช่ทับกัน').toBe(2);
+  expect(new Set(rows.map(r => r.no)).size, 'เลขที่ต้องเหมือนกันทั้งสองแถว').toBe(1);
+});
+
+test('DeliveryLog — เลขที่ใบที่เป็นตัวเลขล้วน ต้องไม่ถูกชีตแปลงเป็นตัวเลขจนศูนย์นำหน้าหาย', async () => {
+  /* ผู้ตรวจ #102 ยืนยันด้วยการรันว่า Sheets แปลงสตริงตัวเลขล้วนให้เป็นตัวเลขเอง
+   * เลขที่ใบส่งของเป็นเลขที่ไปถึงลูกค้า ต้องกลับมาเหมือนที่ส่งไปทุกตัวอักษร
+   * ไม่ว่ารูปแบบเลขจะเปลี่ยนไปเป็นแบบไหนในอนาคต (ใบนี้ยังไม่ได้เลือกรูปแบบสุดท้าย) */
+  const { api } = loadGs();
+  api.doPushRows('DeliveryLog', [Object.assign({}, DLOG, { no: '0261010', week: '04' })], 'ทดสอบ');
+  const row = api.doPullRows('DeliveryLog', '').rows[0];
+  expect(row.no, 'ศูนย์นำหน้าของเลขที่ใบหายไป').toBe('0261010');
+  expect(String(row.week), 'ศูนย์นำหน้าของเลขสัปดาห์หายไป').toBe('04');
 });
