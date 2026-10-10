@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-11.2">
+<meta name="app-version" content="2026-10-11.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -448,6 +448,22 @@
         <label>&nbsp;</label>
         <button class="btn primary" id="btnDnExport" disabled>📄 ออกใบส่งสินค้า</button>
       </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>ใบส่งสินค้าที่ออกไปแล้ว</h2>
+    <div class="desc">
+      บันทึกทุกครั้งที่กดออกใบสำเร็จ เรียงใหม่ไปเก่า · <b>เห็นตรงกันทุกเครื่องหลังซิงค์</b>
+      <br>
+      <b>กดที่เลขที่ใบเพื่อออกไฟล์ใบนั้นอีกครั้ง</b> — ระบบไม่ได้เก็บไฟล์ไว้ แต่สร้างใหม่จากยอดบรรจุของหน่วยและวันนั้น
+      จึงต้องเลือกไฟล์ฟอร์มไว้ก่อน เหมือนตอนออกใบครั้งแรก
+      <br>
+      ป้าย <span class="badge amber">ข้อมูลเปลี่ยนหลังออกใบ</span> แปลว่ามีคนแก้ยอดบรรจุหลังจากกดออกใบไปแล้ว
+      ไฟล์ที่ออกใหม่จะ<b>ไม่ตรงกับกระดาษใบเดิมที่ส่งไปแล้ว</b>
+    </div>
+    <div class="table-wrap">
+      <table id="dnLogTable"></table>
     </div>
   </div>
 </section>
@@ -4484,6 +4500,9 @@ function refreshDnGroup(pn){
     });
   }
   renderDnSummary();
+  // ⚠️ ต้องวาด log ใหม่ด้วย — แก้ยอดบรรจุหลังออกใบไปแล้ว ป้าย "ข้อมูลเปลี่ยนหลังออกใบ" ต้องโผล่ทันที
+  //    ไม่ใช่รอจนกว่าจะวาดทั้งหน้า ไม่งั้นคนกดออกไฟล์ซ้ำโดยไม่รู้ว่ามันจะไม่ตรงกับกระดาษที่ส่งไปแล้ว
+  renderDnLog();
 }
 
 /* ---------- ออกไฟล์ใบส่งสินค้า FM-ST-07 ---------- */
@@ -4511,6 +4530,116 @@ document.getElementById('dnTemplateInput').addEventListener('change', async (e)=
   }
   document.getElementById('btnDnExport').disabled = false;
   toast('อ่านเทมเพลตแล้ว — กดออกใบส่งสินค้าได้');
+});
+
+/** เลขที่ใบส่งสินค้า — คิดจากหน่วย+วัน ไม่ใช่เลขรัน (เจ้าของเลือก 10 ต.ค. 2026)
+ *
+ *  ⚠️ เลขรันที่นับจากข้อมูลในเครื่องตัวเอง **ชนกันได้** เมื่อสองเครื่องออกใบตอนยังไม่ได้ซิงค์
+ *     แล้วกระดาษถึงมือลูกค้าไปก่อนที่ใครจะรู้ ซึ่งแก้ย้อนหลังไม่ได้
+ *     แบบนี้ทุกเครื่องคำนวณได้เลขเดียวกันเสมอโดยไม่ต้องคุยกัน และออฟไลน์ได้เต็มที่ (F2)
+ *
+ *  TUE-U + 2026-10-11 → TUEU-261011 · ออกใบหน่วย+วันเดิมซ้ำจึงได้เลขเดิม ซึ่งตั้งใจ
+ *  เพราะในความจริงคือใบเดิมที่พิมพ์ใหม่ ไม่ใช่ใบใหม่ — กุญแจของแถว log คือ id ไม่ใช่ no */
+function deliveryNoteNo(unit, date){
+  const u = String(unit||'').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  const d = String(date||'').split('-');
+  return d.length===3 ? `${u}-${d[0].slice(2)}${d[1]}${d[2]}` : u;
+}
+
+/** ชื่อชีตของหน่วยนี้ในไฟล์ฟอร์ม — ชื่อจริงในไฟล์มีช่องว่างท้ายบ้าง จึงเทียบแบบตัดช่องว่าง */
+function dnSheetNameFor(unit){
+  return Object.keys(dnTemplate.sheetMap)
+    .find(n => n.trim().replace(/\s+/g,' ').toUpperCase().endsWith(unit.toUpperCase()));
+}
+
+/** สร้างไฟล์ใบส่งสินค้าแล้วดาวน์โหลด — ใช้ร่วมกันระหว่างปุ่มออกใบกับลิงก์ออกไฟล์ซ้ำ
+ *
+ *  ⚠️ ไม่เก็บไฟล์ไว้ที่ไหนเลย สร้างใหม่จากยอดบรรจุทุกครั้ง (วิธีเดียวกับ fbReissue ของ repo store)
+ *     จึงต้องมีไฟล์ฟอร์มอยู่ในมือเสมอ — plan แก้ไฟล์ของผู้ใช้ด้วย JSZip ไม่ได้เขียนฟอร์มขึ้นใหม่
+ *     เหมือน store เพราะ ExcelJS ตัด xl/drawings/ ทิ้งจนโลโก้บริษัทหายจากกระดาษ */
+async function writeDeliveryFile(unit, date, week, groups, sheetName){
+  const sheet = sheetName || dnSheetNameFor(unit);
+  if(!sheet) throw new Error(`ไม่พบชีตของหน่วย ${unit} ในฟอร์มนี้ — มีชีต: ${Object.keys(dnTemplate.sheetMap).join(', ')}`);
+  const blob = await fillDeliveryForm(dnTemplate.zip, dnTemplate.sheetMap[sheet], unit, date, groups, week);
+  downloadBlob(blob, `${deliveryNoteNo(unit, date)}.xlsx`,
+               'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+/** เขียนแถว log ว่ามีการออกใบ — เรียกหลังไฟล์ออกสำเร็จเท่านั้น
+ *  ออกใบซ้ำได้แถวใหม่เสมอ ไม่ทับของเดิม เพราะ log คือบันทึกว่า "เกิดอะไรขึ้นกี่ครั้ง" */
+function logDeliveryIssue(unit, date, week, groups){
+  const now = new Date().toISOString();
+  state.deliveryLog.push({
+    id: uid(), no: deliveryNoteNo(unit, date), date, unit, week: String(week||''),
+    groups: groups.length,
+    lines: groups.reduce((s,g)=> s + shippedOrders(g).length, 0),
+    qty: groups.reduce((s,g)=> s + (Number(g.qty)||0), 0),
+    deviceName: state.deviceName, createdAt: now, updatedAt: now, voided: false, _dirty: true
+  });
+  saveState();
+  doSync();
+  renderDnLog();
+}
+
+/** มีคนแก้ยอดบรรจุของหน่วย+วันนั้น หลังเวลาที่ออกใบไปแล้วหรือเปล่า
+ *  ถ้าใช่ ไฟล์ที่ออกซ้ำจะไม่ตรงกับกระดาษใบเดิมที่ส่งลูกค้าไปแล้ว — ต้องบอกก่อน ไม่ใช่ให้ไปเจอเอง
+ *  (repo store มีช่องนี้เหมือนกันแต่ไม่ได้กันไว้ · ของเราตรวจได้เพราะทุกบรรทัดมี updatedAt) */
+function dnLogStale(entry){
+  return state.deliveryNotes.some(d => !d.voided && d.unit===entry.unit && d.date===entry.date
+    && d.updatedAt && entry.createdAt && d.updatedAt > entry.createdAt);
+}
+
+function renderDnLog(){
+  const table = document.getElementById('dnLogTable');
+  if(!table) return;
+  const log = (state.deliveryLog||[]).filter(e=>!e.voided);
+  // "ครั้งที่ N" นับจากแถวที่เลขซ้ำกัน เรียงตามเวลาออกจริง — คิดสดตอนวาด ไม่เก็บลงฐานข้อมูล
+  const seqOfRow = {}, countOfNo = {};
+  log.slice().sort((a,b)=> String(a.createdAt).localeCompare(String(b.createdAt)))
+     .forEach(e=>{ seqOfRow[e.id] = countOfNo[e.no] = (countOfNo[e.no]||0) + 1; });
+
+  const rows = log.slice()
+    .sort((a,b)=> String(b.createdAt).localeCompare(String(a.createdAt)))
+    .map(e=>{
+      const again = seqOfRow[e.id] > 1 ? ` <span class="badge amber">ครั้งที่ ${seqOfRow[e.id]}</span>` : '';
+      const stale = dnLogStale(e)
+        ? ' <span class="badge amber" title="มีคนแก้ยอดบรรจุหลังจากกดออกใบไปแล้ว ไฟล์ที่ออกซ้ำจะไม่ตรงกับกระดาษใบเดิม">ข้อมูลเปลี่ยนหลังออกใบ</span>' : '';
+      return `<tr>
+        <td class="left"><a href="#" data-dn-reissue="${escapeHtml(e.id)}" title="ออกไฟล์ใบนี้อีกครั้ง">${escapeHtml(e.no)}</a>${again}${stale}</td>
+        <td>${e.createdAt ? new Date(e.createdAt).toLocaleString('th-TH') : ''}</td>
+        <td class="left">${escapeHtml(e.unit)}</td>
+        <td>${escapeHtml(String(e.week||''))}</td>
+        <td>${numFmt(Number(e.groups)||0)}</td>
+        <td>${numFmt(Number(e.lines)||0)}</td>
+        <td>${numFmt(Number(e.qty)||0)}</td>
+        <td class="left">${escapeHtml(e.deviceName||'')}</td>
+      </tr>`;
+    }).join('');
+
+  table.innerHTML =
+    `<thead><tr><th class="left">เลขที่</th><th>เวลาที่ออก</th><th class="left">หน่วย</th><th>WK</th>
+       <th>กลุ่ม P/N</th><th>บรรทัด</th><th>ยอดรวม</th><th class="left">เครื่อง</th></tr></thead>
+     <tbody>${rows || emptyRow(8,'ยังไม่มีใบส่งสินค้าที่ออกไป')}</tbody>`;
+}
+
+/* กดเลขที่ใบ = ออกไฟล์ใบนั้นอีกครั้ง · สร้างใหม่จากยอดบรรจุของหน่วย+วันนั้น ไม่ได้เก็บไฟล์ไว้ */
+document.getElementById('dnLogTable').addEventListener('click', async (e)=>{
+  const a = e.target.closest('[data-dn-reissue]');
+  if(!a) return;
+  e.preventDefault();
+  const entry = (state.deliveryLog||[]).find(x=>x.id===a.dataset.dnReissue);
+  if(!entry) return;
+  if(!dnTemplate){ toast('เลือกไฟล์ฟอร์ม FM-ST-07 ก่อนครับ — ระบบไม่ได้เก็บไฟล์ใบเก่าไว้ แต่สร้างใหม่ให้'); return; }
+
+  const groups = deliveryGroups(entry.date, entry.unit).filter(g => shippedOrders(g).length > 0);
+  if(!groups.length){ toast('ไม่เหลือยอดบรรจุของใบนี้แล้ว — ออกไฟล์ซ้ำไม่ได้'); return; }
+  if(dnLogStale(entry) && !confirm(`ยอดบรรจุของ ${entry.unit} วันที่ ${fmtDateTH(entry.date)} ถูกแก้หลังจากออกใบ ${entry.no} ไปแล้ว\n`
+      + 'ไฟล์ที่ได้จะไม่ตรงกับกระดาษใบเดิมที่ส่งไปแล้ว\n\nออกไฟล์ต่อหรือไม่?')) return;
+
+  try{
+    await writeDeliveryFile(entry.unit, entry.date, entry.week, groups);
+    toast(`ออกไฟล์ใบ ${entry.no} อีกครั้งแล้ว`);
+  }catch(err){ toast('ออกไฟล์ไม่สำเร็จ: '+err.message); }
 });
 
 document.getElementById('btnDnExport').addEventListener('click', async ()=>{
@@ -4548,10 +4677,8 @@ document.getElementById('btnDnExport').addEventListener('click', async ()=>{
   const btn = document.getElementById('btnDnExport');
   btn.disabled = true;
   try{
-    const blob = await fillDeliveryForm(dnTemplate.zip, dnTemplate.sheetMap[sheetName], unit, date, groups, dnWeek());
-    const base = dnTemplate.fileName.replace(/\.xlsx$/i, '');
-    downloadBlob(blob, `${base} (${unit} ${date}).xlsx`,
-                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    await writeDeliveryFile(unit, date, dnWeek(), groups, sheetName);
+    logDeliveryIssue(unit, date, dnWeek(), groups);
     toast(`ออกใบส่งสินค้าแล้ว ${groups.length} กลุ่ม P/N`);
   }catch(err){
     toast('ออกใบไม่สำเร็จ: '+err.message);
@@ -4619,6 +4746,8 @@ function renderAll(){
   // ถ้านั่งค้างหน้า FG ไว้แล้วซิงค์ดึงข้อมูลใหม่เข้ามา ตัวเลขต้องขยับตาม
   // ไม่ใช่ค้างของเก่าจนกว่าจะสลับแท็บ — เป็นหน้ายอดคงเหลือ คนจะจ้องมันแล้วเชื่อเลข
   if(document.getElementById('view-fg').classList.contains('active')) renderFg();
+  // log ใบส่งสินค้าซิงค์ข้ามเครื่อง — เครื่องที่นั่งค้างหน้านี้ไว้ต้องเห็นใบที่เครื่องอื่นเพิ่งออก
+  renderDnLog();
   renderSyncBadge();
 }
 
