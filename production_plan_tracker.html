@@ -1119,7 +1119,8 @@ function hasOrderAnomaly(c){
 const SYNC_DATE_COLS = {
   Orders: ['orderDate','planWinding','planAssembly','planSupport','planInspection'],
   Records: ['date'],
-  DeliveryNotes: ['date']
+  DeliveryNotes: ['date'],
+  DeliveryLog: ['date']
 };
 // ชื่อเดิมอ้างจากรายการเดียวข้างบน ไม่ใช่ประกาศซ้ำ — มีที่เดียวจึงหลุดจากกันไม่ได้
 const ORDER_DATE_FIELDS = SYNC_DATE_COLS.Orders;
@@ -1211,6 +1212,8 @@ function defaultState(){
     records:[],
     deliveryNotes:[],
     deltaWip:[],
+    // log การออกใบส่งสินค้า — ซิงค์ข้ามเครื่อง ต่างจาก importHistory ที่เป็นของเครื่องใครเครื่องมัน
+    deliveryLog:[],
     importHistory:[]
   };
 }
@@ -1228,6 +1231,7 @@ function loadState(raw){   // raw = ข้อความ JSON จาก Indexed
       records: Array.isArray(parsed.records)? parsed.records : [],
       deliveryNotes: Array.isArray(parsed.deliveryNotes)? parsed.deliveryNotes : [],
       deltaWip: Array.isArray(parsed.deltaWip)? parsed.deltaWip : [],
+      deliveryLog: Array.isArray(parsed.deliveryLog)? parsed.deliveryLog : [],
       importHistory: Array.isArray(parsed.importHistory)? parsed.importHistory : []
     });
   }catch(e){ console.error('loadState failed', e); return defaultState(); }
@@ -1292,6 +1296,7 @@ function prepareState(){
   state.records.forEach(r=>{ if(r._dirty===undefined) r._dirty=true; });
   state.deliveryNotes.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
   state.deltaWip.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
+  state.deliveryLog.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
 
   // ซ่อมข้อมูลที่เพี้ยนค้างอยู่แล้วจากบั๊กวันที่ของ Google Sheets (ดู normalizeDateOnly)
   // แถวที่ค่าเปลี่ยนจริงถูกมาร์ค _dirty เพื่อดันค่าที่ถูกต้องกลับขึ้นเซิร์ฟเวอร์ทับของเดิม
@@ -1299,6 +1304,7 @@ function prepareState(){
   state.orders.forEach(o=>{ if(normalizeRowDates(o, ORDER_DATE_FIELDS)){ o._dirty = true; fixed++; } });
   state.records.forEach(r=>{ if(normalizeRowDates(r, RECORD_DATE_FIELDS)){ r._dirty = true; fixed++; } });
   state.deliveryNotes.forEach(d=>{ if(normalizeRowDates(d, DELIVERY_DATE_FIELDS)){ d._dirty = true; fixed++; } });
+  state.deliveryLog.forEach(d=>{ if(normalizeRowDates(d, SYNC_DATE_COLS.DeliveryLog)){ d._dirty = true; fixed++; } });
   if(fixed){ saveState(); console.info(`ซ่อมวันที่ที่เพี้ยนจากการซิงค์ ${fixed} รายการ`); }
 }
 
@@ -1350,7 +1356,7 @@ function defaultSyncCfg(){
    *    ใช้มันอยู่ แต่ defaultSyncCfg ไม่เคยประกาศ ค่าจึงเป็น undefined บนเครื่องใหม่
    *    (ไม่ถึงกับข้อมูลหาย เพราะ since ที่เป็น undefined ทำให้ดึงมาทั้งตาราง
    *     แต่เป็นความไม่ตรงกันที่ไม่มีอะไรฟ้อง) · มีเทสคุมไว้แล้วใน gs-server.spec.js */
-  return {url:'', token:'', auto:true, lastPullOrders:'', lastPullRecords:'', lastPullDeliveryNotes:'',
+  return {url:'', token:'', auto:true, lastPullOrders:'', lastPullRecords:'', lastPullDeliveryNotes:'', lastPullDeliveryLog:'',
           lastPullDeltaWip:'', lastOkAt:'', state:'off', error:''};
 }
 function loadSyncCfg(){
@@ -1402,7 +1408,11 @@ const SYNC_COLS = {
   // override* = ตัวแก้มือเมื่อ Delta ทำ Wip bal. ผิด (15 ก.ย. 2026) · ใบนี้เพิ่มแค่คอลัมน์ หน้าจอแก้มืออยู่ใบถัดไป
   DeltaWip: ['id','orderId','week','wip','fileName',
              'deviceName','createdAt','updatedAt','voided',
-             'wipOverride','overrideNote','overrideBy','overrideAt']
+             'wipOverride','overrideNote','overrideBy','overrideAt'],
+  // log การออกใบส่งสินค้า — หนึ่งแถว = หนึ่งครั้งที่กดออกใบสำเร็จ (เจ้าของสั่ง 10 ต.ค. 2026)
+  // no (เลขที่ใบ) คิดจากหน่วย+วัน จึงซ้ำได้เมื่อออกใบเดิมซ้ำ — กุญแจของแถวคือ id
+  DeliveryLog: ['id','no','date','unit','week','groups','lines','qty',
+                'deviceName','createdAt','updatedAt','voided']
 };
 
 /** เอาเฉพาะคอลัมน์ที่ประกาศไว้ขึ้นไป — ฟิลด์ภายในเครื่องอย่าง _dirty ไม่ถูกส่ง (D2) */
@@ -1529,6 +1539,23 @@ async function doSync(silent = true){
       console.warn('ซิงค์ยอดของ Delta ไม่สำเร็จ — เซิร์ฟเวอร์อาจยังไม่ได้ re-deploy', e.message);
     }
 
+    // ── log การออกใบส่งสินค้า ──────────────────────────────────
+    // แยก try/catch ของตัวเองด้วยเหตุผลเดียวกับสองตารางข้างบน — ตารางนี้เพิ่งเพิ่ม
+    // เครื่องที่ยังไม่ได้ redeploy จะไม่รู้จัก ถ้าปล่อยให้ throw แผนงานกับยอดผลิตจะซิงค์ไม่ได้ตามไปด้วย
+    let rl = {added:0, updated:0};
+    try{
+      const dirtyLog = state.deliveryLog.filter(d=>d._dirty);
+      if(dirtyLog.length){
+        const res = await gsApi('pushRows', {table:'DeliveryLog', rows: dirtyLog.map(r=>cleanForPush(r, 'DeliveryLog'))});
+        dirtyLog.forEach(d=>{ d._dirty=false; if(res.serverTime) d.updatedAt=res.serverTime; });
+      }
+      const pulledLog = await gsApi('pullRows', {table:'DeliveryLog', since: syncCfg.lastPullDeliveryLog});
+      rl = mergeRowsInto(state.deliveryLog, pulledLog.rows||[], SYNC_DATE_COLS.DeliveryLog);
+      syncCfg.lastPullDeliveryLog = pulledLog.serverTime;
+    }catch(e){
+      console.warn('ซิงค์ log ใบส่งสินค้าไม่สำเร็จ — เซิร์ฟเวอร์อาจยังไม่ได้ re-deploy', e.message);
+    }
+
     const pulledOrders = await gsApi('pullRows', {table:'Orders', since: syncCfg.lastPullOrders});
     const ro = mergeRowsInto(state.orders, pulledOrders.rows||[], ORDER_DATE_FIELDS);
     syncCfg.lastPullOrders = pulledOrders.serverTime;
@@ -1549,7 +1576,7 @@ async function doSync(silent = true){
     saveState(); saveSyncCfg();
     syncCfg.state = 'ok'; syncCfg.lastOkAt = new Date().toISOString();
     renderSyncBadge();
-    const pulledCount = ro.added+ro.updated+rr.added+rr.updated+rd.added+rd.updated+rw.added+rw.updated;
+    const pulledCount = ro.added+ro.updated+rr.added+rr.updated+rd.added+rd.updated+rw.added+rw.updated+rl.added+rl.updated;
     if(pulledCount > 0 || processesChanged) renderAll();
     if(!silent) toast(`ซิงค์แล้ว · รับมา ${pulledCount}`);
   }catch(e){
