@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-09-20.4">
+<meta name="app-version" content="2026-10-09.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -198,6 +198,8 @@
     .rec-qty-input{border:none;background:none;padding:0;width:auto;appearance:textfield;-moz-appearance:textfield;}
     .rec-qty-input::-webkit-inner-spin-button, .rec-qty-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
   }
+  /* ระหว่างรอโหลดข้อมูล (openState) ห้ามกด — ของที่พิมพ์ช่วงนั้นไม่ถูกบันทึก แล้วจะถูกค่าจริงทับเงียบ ๆ */
+  html:not([data-state-ready]) main{pointer-events:none;opacity:.4;}
 </style>
 </head>
 <body>
@@ -1170,6 +1172,32 @@ function normalizeRowDates(row, fields){
 
 /* ---------- State ---------- */
 const STORAGE_KEY = 'tue_order_tracker_v1';
+/* ⚠️ ที่เก็บหลักคือ IndexedDB ตั้งแต่ 9 ต.ค. 2026 — localStorage ได้ราว 5 MB และเต็มจริงที่หน้างานแล้ว
+   เก็บเป็นข้อความ JSON ใต้คีย์เดิม (E1) เหมือน localStorage ทุกตัวอักษร ห้ามเก็บเป็นอ็อบเจ็กต์ตรง ๆ
+   ไม่งั้น Date ที่หลุดเข้า state จะรอดข้ามการรีโหลดเป็น Date แทนที่จะเป็นข้อความเหมือนเดิม (C1)
+   localStorage เหลือแค่: ต้นทางตอนย้ายครั้งแรก · ทางสำรองเมื่อเปิด IndexedDB ไม่ได้ · ค่าตั้งซิงค์ (SYNC_KEY) */
+const IDB_NAME = 'tue_order_tracker', IDB_STORE = 'kv';
+const LEGACY_COPY_KEY = STORAGE_KEY + ':localStorage';   // สำเนาดิบของ localStorage ตอนย้าย (ใน IndexedDB)
+const MOVED_KEY = STORAGE_KEY + ':moved';   // ธงใน localStorage: เครื่องนี้ย้ายเข้า IndexedDB แล้ว · localStorage ว่างแล้ว
+let stateDb = null;      // null = ใช้ localStorage แบบเดิม
+let stateReady = false;  // ก่อนโหลดเสร็จ ห้ามบันทึกและห้ามซิงค์ — ไม่งั้น state ว่างจะไปทับของจริง
+let syncWaiting;         // มีคนขอซิงค์ระหว่างรอโหลด · ค่าคือ silent ที่ขอ (false ชนะ) · ซิงค์ให้ใน openState
+function openStateDb(){
+  return new Promise((ok, fail)=>{
+    const r = indexedDB.open(IDB_NAME, 1);
+    r.onupgradeneeded = ()=>r.result.createObjectStore(IDB_STORE);
+    r.onsuccess = ()=>ok(r.result);
+    r.onerror = ()=>fail(r.error);
+  });
+}
+// fn ถูกเรียกทันที — put() คัดลอกค่า ณ ตอนเรียก และ transaction ทำงานตามลำดับที่สร้าง
+function idbTx(mode, fn){
+  return new Promise((ok, fail)=>{
+    const tx = stateDb.transaction(IDB_STORE, mode), req = fn(tx.objectStore(IDB_STORE));
+    tx.oncomplete = ()=>ok(req.result);
+    tx.onerror = tx.onabort = ()=>fail(tx.error);
+  });
+}
 function defaultState(){
   return {
     version:1,
@@ -1186,9 +1214,9 @@ function defaultState(){
     importHistory:[]
   };
 }
-function loadState(){
+function loadState(raw){   // raw = ข้อความ JSON จาก IndexedDB · ไม่ส่งมา = อ่าน localStorage แบบเดิม
   try{
-    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw === undefined) raw = localStorage.getItem(STORAGE_KEY);
     if(!raw) return defaultState();
     const parsed = JSON.parse(raw);
     const base = defaultState();
@@ -1209,6 +1237,14 @@ function loadState(){
  *  ไม่ถูกเรียก · ที่แย่กว่านั้นคือถ้าเกิดตอนบูตใน migrateCorruptedDates แอปจะเปิดไม่ขึ้นเลย
  *  ยอมให้ข้อมูลในหน่วยความจำเดินต่อและบอกคนใช้ ดีกว่าตายเงียบหรือตายทั้งหน้า */
 function saveState(){
+  if(!stateReady) return false;
+  if(stateDb){
+    idbTx('readwrite', s=>s.put(JSON.stringify(state), STORAGE_KEY)).catch(e=>{
+      console.error('saveState failed', e);
+      toast('บันทึกลงเครื่องไม่สำเร็จ — พื้นที่เก็บข้อมูลอาจเต็ม กรุณา Export ไฟล์ข้อมูลเก็บไว้แล้วแจ้งหัวหน้า');
+    });
+    return true;
+  }
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     return true;
@@ -1219,27 +1255,73 @@ function saveState(){
   }
 }
 
-let state = loadState();
-// รายการขั้นที่ได้มาครั้งล่าสุดต้องใช้ตั้งแต่ก่อนวาดจอครั้งแรก — เปิดแบบออฟไลน์ก็ยังได้ขั้นที่เพิ่มไว้
-applyProcessList(composeProcesses(state.processes));
-// Orders/records saved before this sync feature existed (or never successfully pushed) have
-// no _dirty flag at all — treat that as "needs push" so connecting Sheets for the first time
-// uploads everything already sitting on this machine. Items that synced successfully carry an
-// explicit _dirty:false, so this only catches genuinely never-synced data.
-state.orders.forEach(o=>{ if(o._dirty===undefined) o._dirty=true; });
-state.records.forEach(r=>{ if(r._dirty===undefined) r._dirty=true; });
-state.deliveryNotes.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
-state.deltaWip.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
+/** state จาก IndexedDB · ครั้งแรกของเครื่องนี้ย้ายจาก localStorage มาให้
+ *  ⚠️ ลบ localStorage เฉพาะเมื่ออ่านกลับจาก IndexedDB ได้ตรงทุกตัวอักษรแล้ว และเก็บสำเนาดิบไว้ใต้ ':localStorage'
+ *  ถ้ามีทั้งสองที่ (แท็บรุ่นเก่ายังเขียน localStorage อยู่) IndexedDB ชนะ ของ localStorage ไม่หาย อยู่ในสำเนาดิบ */
+async function bootState(){
+  try{
+    stateDb = await openStateDb();
+    const legacy = localStorage.getItem(STORAGE_KEY);
+    if(legacy) await idbTx('readwrite', s=>s.put(legacy, LEGACY_COPY_KEY));
+    const saved = await idbTx('readonly', s=>s.get(STORAGE_KEY));
+    if(saved){ if(legacy) localStorage.removeItem(STORAGE_KEY); markMoved(); return loadState(saved); }
+    const st = loadState(legacy), json = JSON.stringify(st);
+    await idbTx('readwrite', s=>s.put(json, STORAGE_KEY));
+    if(legacy && await idbTx('readonly', s=>s.get(STORAGE_KEY)) === json) localStorage.removeItem(STORAGE_KEY);
+    markMoved();
+    return st;
+  }catch(e){
+    stateDb = null;
+    // ย้ายไปแล้ว = localStorage ว่าง · ถ้าเปิดแบบเดิมจะได้หน้าว่างให้คีย์ทับ แล้วของที่คีย์หายตอนบูตครั้งถัดไป
+    if(localStorage.getItem(MOVED_KEY)){ console.error('เปิด IndexedDB ไม่ได้ ทั้งที่ข้อมูลย้ายไปอยู่ในนั้นแล้ว', e); return null; }
+    console.error('เปิด IndexedDB ไม่ได้ — ใช้ localStorage แบบเดิม', e);
+    return loadState();
+  }
+}
+function markMoved(){ try{ localStorage.setItem(MOVED_KEY, '1'); }catch(e){ console.error('ตั้งธงย้ายไม่ได้', e); } }
 
-// ซ่อมข้อมูลที่เพี้ยนค้างอยู่แล้วจากบั๊กวันที่ของ Google Sheets (ดู normalizeDateOnly)
-// แถวที่ค่าเปลี่ยนจริงถูกมาร์ค _dirty เพื่อดันค่าที่ถูกต้องกลับขึ้นเซิร์ฟเวอร์ทับของเดิม
-(function migrateCorruptedDates(){
+/** เตรียม state ที่เพิ่งโหลด — ต้องรันหลังโหลดเสร็จเท่านั้น (openState) */
+function prepareState(){
+  // รายการขั้นที่ได้มาครั้งล่าสุดต้องใช้ตั้งแต่ก่อนวาดจอครั้งแรก — เปิดแบบออฟไลน์ก็ยังได้ขั้นที่เพิ่มไว้
+  applyProcessList(composeProcesses(state.processes));
+  // Orders/records saved before this sync feature existed (or never successfully pushed) have
+  // no _dirty flag at all — treat that as "needs push" so connecting Sheets for the first time
+  // uploads everything already sitting on this machine. Items that synced successfully carry an
+  // explicit _dirty:false, so this only catches genuinely never-synced data.
+  state.orders.forEach(o=>{ if(o._dirty===undefined) o._dirty=true; });
+  state.records.forEach(r=>{ if(r._dirty===undefined) r._dirty=true; });
+  state.deliveryNotes.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
+  state.deltaWip.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
+
+  // ซ่อมข้อมูลที่เพี้ยนค้างอยู่แล้วจากบั๊กวันที่ของ Google Sheets (ดู normalizeDateOnly)
+  // แถวที่ค่าเปลี่ยนจริงถูกมาร์ค _dirty เพื่อดันค่าที่ถูกต้องกลับขึ้นเซิร์ฟเวอร์ทับของเดิม
   let fixed = 0;
   state.orders.forEach(o=>{ if(normalizeRowDates(o, ORDER_DATE_FIELDS)){ o._dirty = true; fixed++; } });
   state.records.forEach(r=>{ if(normalizeRowDates(r, RECORD_DATE_FIELDS)){ r._dirty = true; fixed++; } });
   state.deliveryNotes.forEach(d=>{ if(normalizeRowDates(d, DELIVERY_DATE_FIELDS)){ d._dirty = true; fixed++; } });
   if(fixed){ saveState(); console.info(`ซ่อมวันที่ที่เพี้ยนจากการซิงค์ ${fixed} รายการ`); }
-})();
+}
+
+/** เปิดหน้า: รอโหลดเสร็จก่อน แล้วค่อยเตรียม · วาดจอ · ซิงค์ที่มีคนขอไว้ระหว่างรอ */
+async function openState(){
+  const st = await bootState();
+  if(!st){   // stateReady ค้าง false = ห้ามบันทึก ห้ามซิงค์ · จอถูกบังไว้ ไม่ให้คีย์ลงหน้าว่าง
+    document.body.insertAdjacentHTML('afterbegin', '<div id="storageLocked" style="position:fixed;inset:0;z-index:9999;background:#fff;color:#b00;padding:40px;font-size:22px;line-height:1.6">⛔ เปิดที่เก็บข้อมูลของเครื่องนี้ไม่ได้ — <b>ห้ามคีย์ยอด</b><br>ปิดเบราว์เซอร์ทุกหน้าต่างแล้วเปิดใหม่ ถ้ายังขึ้นข้อความนี้ให้แจ้งหัวหน้า<br>(ข้อมูลยังอยู่ในเครื่อง ไม่หาย)</div>');
+    return;
+  }
+  state = st;
+  stateReady = true;
+  prepareState();
+  currentProcess = MAIN_PROCESSES[0];
+  renderProcessControls();
+  loadSettingsIntoForm();
+  renderAll();
+  renderSyncBadge();   // ตัวนับ "รอส่ง" ต้องนับจากข้อมูลจริง ไม่ใช่ state ว่างตอนเปิดหน้า
+  document.documentElement.dataset.stateReady = '1';   // ป้ายให้เทสรู้ว่าโหลด · วาดจอเสร็จแล้ว (tests/app-state.js)
+  if(syncWaiting !== undefined) doSync(syncWaiting);
+}
+
+let state = defaultState();   // ของจริงมาใน openState() ตอนท้ายไฟล์
 
 let workbookGlobal = null;
 let pendingImportItems = null;
@@ -1392,6 +1474,7 @@ function renderSyncBadge(){
 
 async function doSync(silent = true){
   if(!syncCfg.url || syncing) return;
+  if(!stateReady){ syncWaiting = syncWaiting === false ? false : silent; return; }
   syncing = true; syncCfg.state = 'busy'; syncCfg.error = ''; renderSyncBadge();
   try{
     const dirtyOrders = state.orders.filter(o=>o._dirty);
@@ -5254,6 +5337,7 @@ document.getElementById('btnClearAll').addEventListener('click', ()=>{
   if(!confirm('ยืนยันอีกครั้ง: ต้องการลบข้อมูลแผนงานและบันทึกทั้งหมดในเครื่องนี้จริงหรือไม่?')) return;
   state = defaultState();
   saveState();
+  if(stateDb) idbTx('readwrite', s=>s.delete(LEGACY_COPY_KEY)).catch(e=>console.error('ลบสำเนาตอนย้ายไม่ได้', e));   // สำเนาก็เป็นข้อมูลในเครื่อง
   /* ล้างเฉพาะข้อมูลในเครื่องนี้ ไม่แตะเซิร์ฟเวอร์ — ถ้าเคยต่อ Google Sheets ไว้ ให้รีเซ็ตเวลา
    * ดึงข้อมูลกลับไปเป็นค่าว่าง เพื่อให้ซิงค์รอบถัดไปดึงของทั้งหมดจากเซิร์ฟเวอร์กลับมาใหม่
    *
@@ -5342,9 +5426,6 @@ checkAppUpdate();
 /* ---------- Init ---------- */
 document.getElementById('entryDate').value = todayISO();
 document.getElementById('dnDate').value = todayISO();
-renderProcessControls();
-loadSettingsIntoForm();
-renderAll();
 
 // เครื่องใหม่เปิดผ่านลิงก์ตั้งค่า (#gsurl=...&gstoken=...) — ตั้งค่าและดึงข้อมูลให้อัตโนมัติ
 // แล้วลบรหัสออกจากแถบที่อยู่ทันทีเพื่อไม่ให้ค้างอยู่ในประวัติเบราว์เซอร์
@@ -5367,6 +5448,7 @@ document.getElementById('gsAuto').checked = syncCfg.auto;
 renderSyncBadge();
 if(syncCfg.url && syncCfg.auto){ doSync(); }
 syncIntervalId = setInterval(()=>{ if(syncCfg.url && syncCfg.auto) doSync(); }, 20000);
+openState();
 
 })();
 

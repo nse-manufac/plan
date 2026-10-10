@@ -14,6 +14,7 @@ const { test, expect } = require('@playwright/test');
 // ซอร์สของแอปอ่านผ่านตัวช่วยเท่านั้น — appHtml() สำหรับเรื่องของ HTML เอง (เลขรุ่น)
 // appSource() สำหรับ "ต้องมี/ต้องไม่มี X ในแอป" ซึ่งต้องเห็นทุกไฟล์ที่หน้าโหลด (CLAUDE.md §3.1 ข้อ 7)
 const { appHtml, appSource } = require('./app-source');
+const { readSaved, waitReady } = require('./app-state');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -68,7 +69,7 @@ test('ยกเลิกใบสั่ง — ต้องพิมพ์ค้
   await page.click('#orderVoidTable [data-void]');
   await page.waitForTimeout(200);
 
-  const orders = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).orders, K_STATE);
+  const orders = (await readSaved(page, K_STATE)).orders;
   expect(orders.length, 'B1 — แถวต้องยังอยู่ ไม่ใช่ splice ทิ้ง').toBe(2);
   const o1 = orders.find(o => o.id === 'O1');
   expect(o1.voided, 'ต้องถูกทำเครื่องหมายว่ายกเลิก').toBe(true);
@@ -150,6 +151,7 @@ async function openApp(page, records = [], orders = null) {
     localStorage.setItem(key, JSON.stringify(st));
   }, [K_STATE, seedState(records, orders)]);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForSelector('.tab-btn[data-tab="entry"]');
 }
 
@@ -226,6 +228,7 @@ test('D3 — ยอดที่คีย์ระหว่างซิงค์ 
       Object.assign(seedState([R1, R2], ORDERS), { deliveryNotes: [], deltaWip: [] })]);
 
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="entry"]');
   await page.fill('#entryDate', TEST_DATE);
   await page.waitForTimeout(150);
@@ -243,8 +246,8 @@ test('D3 — ยอดที่คีย์ระหว่างซิงค์ 
   releasePush();
 
   // รอจนแถวใหม่จากเซิร์ฟเวอร์โผล่ = merge ทำงานจบแล้วจริง ค่อยตรวจว่า R1 รอดไหม
-  await expect.poll(() => page.evaluate(k =>
-    JSON.parse(localStorage.getItem(k)).records.some(r => r.id === 'SV1'), K_STATE),
+  await expect.poll(async () =>
+    (await readSaved(page, K_STATE)).records.some(r => r.id === 'SV1'),
     { timeout: 5000, message: 'merge ต้องทำงานจริง ไม่งั้นเทสนี้ไม่ได้ตรวจอะไรเลย' }).toBe(true);
 
   const r1 = (await readRecords(page)).find(r => r.id === 'R1');
@@ -253,7 +256,7 @@ test('D3 — ยอดที่คีย์ระหว่างซิงค์ 
 });
 
 function readRecords(page) {
-  return page.evaluate(k => JSON.parse(localStorage.getItem(k)).records, K_STATE);
+  return readSaved(page, K_STATE).then(s => s.records);
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -404,6 +407,7 @@ test('E3 — ถ้าข้อมูลใน localStorage เสีย แอ�
 
   await page.addInitScript(k => localStorage.setItem(k, '{ นี่ไม่ใช่ JSON'), K_STATE);
   await page.goto(APP);
+  await waitReady(page);
 
   await expect(page.locator('.tab-btn[data-tab="entry"]')).toBeVisible();
   expect(errors, 'JSON เสียแล้วแอปต้อง fallback เป็น defaultState ไม่ใช่พังทั้งหน้า').toEqual([]);
@@ -787,7 +791,7 @@ test('A4 — ตั้งค่า Support (+วัน) แล้วกำหน
     .not.toContainText('ล่าช้า Support');
 
   await setOffsets('');
-  const off = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).deadlineOffsets, K_STATE);
+  const off = (await readSaved(page, K_STATE)).deadlineOffsets;
   expect(off.support, 'เว้นช่องว่างต้องเก็บเป็น null (ยังไม่กำหนด) ไม่ใช่ 0 ที่จะทำให้ทุกใบเลยกำหนดทันที')
     .toBeNull();
   await expect(page.locator('#dashTable tbody'),
@@ -1092,6 +1096,7 @@ test('A4 — ยังไม่ตั้งจำนวนวันกำหน�
     localStorage.setItem(key, JSON.stringify(s));
   }, [K_STATE, st]);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForSelector('.tab-btn[data-tab="entry"]');
   await gotoDashboard(page);
 

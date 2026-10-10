@@ -7,6 +7,7 @@
 // ⚠️ เทสกลุ่มท้ายไฟล์ไม่แทรกขั้น — คุมว่าหน้าตาของห้าขั้นเดิมยังเหมือนเดิมทุกตัวอักษร
 
 const { test, expect } = require('@playwright/test');
+const { readSaved, waitReady } = require('./app-state');
 const ExcelJS = require('exceljs');
 
 const { appSources, patchAppSource } = require('./app-source');
@@ -39,11 +40,12 @@ async function open(page, { extra = true, offsets = OFFSETS, records = RECORDS }
     orders: [o], records: r, deliveryNotes: [], deltaWip: [], importHistory: []
   })), [K_STATE, ORDER, records, offsets]);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForTimeout(300);
   if (patched) expect(patched(), 'หาแถว assembly ใน DEFAULT_PROCESSES ไม่เจอ — ไม่งั้นเทสนี้ทดสอบแอปที่ไม่ได้แทรกขั้น').toBe(1);
 }
 const tab = async (page, name) => { await page.click(`.tab-btn[data-tab="${name}"]`); await page.waitForTimeout(200); };
-const readState = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)), K_STATE);
+const readState = page => readSaved(page, K_STATE);   // อ่านจาก IndexedDB (tests/app-state.js)
 
 // ── แทรกขั้นทดสอบแล้วต้องโผล่ครบทุกที่ ─────────────────────────────
 

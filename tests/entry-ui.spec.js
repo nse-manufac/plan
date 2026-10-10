@@ -8,6 +8,7 @@
 //    ไปเมื่อ 4 ก.ย. 2026 — มีเทสคุมไว้ข้างล่างว่าตัวอักษรต้องไม่รั่วไปหน้านั้น
 
 const { test, expect } = require('@playwright/test');
+const { waitReady } = require('./app-state');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -38,6 +39,7 @@ async function openEntry(page, orders, records = [], width = 1400) {
     orders: o, records: r, deliveryNotes: [], deltaWip: [], importHistory: []
   })), [K_STATE, orders, records]);
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="entry"]');
   await page.waitForTimeout(250);
 }

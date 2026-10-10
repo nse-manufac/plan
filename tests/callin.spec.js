@@ -12,6 +12,7 @@
 //    การคุ้มกันแบบเดียวกันยังอยู่ครบใน delivery-note.spec.js ซึ่งยังเขียนไฟล์จริงอยู่
 
 const { test, expect } = require('@playwright/test');
+const { readSaved, waitReady } = require('./app-state');
 const { callInWorkbook } = require('./fixtures');
 
 const APP = '/production_plan_tracker.html';
@@ -34,6 +35,7 @@ async function openWith(page, orders, records = []) {
     chartPref: { mode: '14', from: '', to: '' }, orders: o, records: r, importHistory: []
   })), [K_STATE, orders, records]);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForSelector('.tab-btn[data-tab="data"]');
   await page.click('.tab-btn[data-tab="data"]');
 }
@@ -121,8 +123,7 @@ test('ใบที่ยกเลิกแล้ว — จอกับที่
 
   await page.click('#btnDeltaWipSave');
   await page.waitForTimeout(200);
-  const live = await page.evaluate(k =>
-    JSON.parse(localStorage.getItem(k)).deltaWip.filter(d => !d.voided).map(d => d.orderId), K_STATE);
+  const live = (await readSaved(page, K_STATE)).deltaWip.filter(d => !d.voided).map(d => d.orderId);
   expect(live, 'เก็บเฉพาะใบที่ยังใช้งานอยู่ ตรงกับที่จอบอก').toEqual(['PO-C041|9100000041']);
 });
 
@@ -160,11 +161,12 @@ test('PO QTY ไม่ตรงกัน ต้องเตือนแยกจ
 test('หน้านี้ต้องอ่านอย่างเดียว — ห้ามมีปุ่มที่เขียนไฟล์หรือแก้ข้อมูล', async ({ page }) => {
   // เจ้าของสั่งถอดตัวสร้างไฟล์ออก ถ้ามีใครใส่กลับมาโดยไม่ได้ถาม เทสข้อนี้จะจับได้
   await openWith(page, ORDERS, [shipped('S1', 'PO-C041|9100000041', 120)]);
-  const before = await page.evaluate(k => localStorage.getItem(k), K_STATE);
+  const before = await readSaved(page, K_STATE, { raw: true });
+  expect(before, 'ต้องอ่านข้อมูลที่บันทึกไว้ได้จริง ไม่งั้นข้อนี้ไม่ได้ตรวจอะไร').not.toBeNull();
   await scan(page, await callInWorkbook(ROWS));
 
   expect(await page.locator('#btnCallInApply').count(), 'ปุ่มกรอกไฟล์ต้องไม่มีแล้ว').toBe(0);
-  expect(await page.evaluate(k => localStorage.getItem(k), K_STATE),
+  expect(await readSaved(page, K_STATE, { raw: true }),
     'เทียบยอดแล้วข้อมูลในเครื่องต้องไม่เปลี่ยนแม้แต่ตัวอักษรเดียว').toBe(before);
 });
 
@@ -183,7 +185,7 @@ test('ช่อง Wip ที่ Delta เว้นว่าง แปลว่�
   await page.click('#btnDeltaWipSave');
   await page.waitForTimeout(200);
 
-  const kept = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).deltaWip, K_STATE);
+  const kept = (await readSaved(page, K_STATE)).deltaWip;
   expect(kept.map(d => d.orderId).sort(), 'ต้องเก็บทั้งสองใบ — ใบที่เว้นว่างก็อยู่ในไฟล์')
     .toEqual(['PO-C040|9100000040', 'PO-C041|9100000041']);
   expect(kept.find(d => d.orderId === 'PO-C041|9100000041').wip).toBe(180);
@@ -206,9 +208,8 @@ test('ช่อง Wip ที่ Delta เว้นว่าง แปลว่�
  *    ถ้าล้างทั้งหน่วย ใบ TUE-H ที่ปนมาใบเดียวจะพายอดของ TUE-H อีก 341 ใบหายไปด้วย */
 
 const orderIn = (poNo, pn, qty, subName) => Object.assign(order(poNo, pn, qty), { subName });
-const liveWip = page => page.evaluate(k =>
-  JSON.parse(localStorage.getItem(k)).deltaWip.filter(d => !d.voided)
-    .map(d => d.orderId + '=' + d.wip).sort(), K_STATE);
+const liveWip = async page => (await readSaved(page, K_STATE)).deltaWip.filter(d => !d.voided)
+    .map(d => d.orderId + '=' + d.wip).sort();
 
 test('#62 — อัปไฟล์ใหม่ที่ช่อง Wip bal. ว่าง ต้องลบยอดเดิมที่ผิดออก', async ({ page }) => {
   await openWith(page, [order('PO-C041', '9100000041', 300), order('PO-C040', '9100000040', 300)]);
@@ -255,9 +256,8 @@ test('#62 — ใบที่หายไปจากไฟล์รอบให
    *    แถวของ wk34 จึงยังค้างอยู่เป็นประวัติ — ที่ต้องเกิดขึ้นคือมันต้องไม่ถูกนับเป็นของงวดนี้
    *    การทำให้ใบนั้นหายจากจอเป็นงานของชั้นแสดงผล ซึ่งอยู่ในใบถัดไป (PR B)
    *    ใบนี้รับผิดชอบแค่ให้ข้อมูลถูก: ของงวดเก่ายังอยู่ ของงวดใหม่ทับถูกใบ */
-  const live = await page.evaluate(k =>
-    JSON.parse(localStorage.getItem(k)).deltaWip.filter(d => !d.voided)
-      .map(d => d.orderId + '@wk' + d.week + '=' + d.wip).sort(), K_STATE);
+  const live = (await readSaved(page, K_STATE)).deltaWip.filter(d => !d.voided)
+      .map(d => d.orderId + '@wk' + d.week + '=' + d.wip).sort();
   expect(live, 'ใบที่ Delta ตัดออก ต้องเหลือไว้เป็นแถวของงวดเก่า ไม่ใช่ของงวดล่าสุด')
     .toEqual(['PO-C040|9100000040@wk34=250', 'PO-C041|9100000041@wk35=90']);
 
@@ -352,7 +352,7 @@ test('#62 — ประวัติต้องเก็บไว้เป็น
   await page.click('#btnDeltaWipSave');
   await page.waitForTimeout(200);
 
-  const all = await page.evaluate(k => JSON.parse(localStorage.getItem(k)).deltaWip, K_STATE);
+  const all = (await readSaved(page, K_STATE)).deltaWip;
   expect(all.length, 'แถวเก่าต้องยังอยู่ใน array').toBe(2);
   expect(all.filter(d => d.voided).length, 'ของงวดเก่าต้องถูกยกเลิก ไม่ใช่หายไป').toBe(1);
   expect(all.filter(d => d.voided)[0].wip, 'และยอดเดิมต้องไม่ถูกแก้').toBe(180);
@@ -454,9 +454,8 @@ test('B5 — ไม่มีหัวตาราง PO QTY ต้องยั�
 
   await page.click('#btnDeltaWipSave');
   await page.waitForTimeout(200);
-  const live = await page.evaluate(k =>
-    JSON.parse(localStorage.getItem(k)).deltaWip.filter(d => !d.voided)
-      .map(d => d.orderId + '=' + d.wip).sort(), K_STATE);
+  const live = (await readSaved(page, K_STATE)).deltaWip.filter(d => !d.voided)
+      .map(d => d.orderId + '=' + d.wip).sort();
   expect(live, 'ของที่หน้านี้มีไว้เก็บจริง ๆ ต้องเก็บได้ครบ')
     .toEqual(['PO-C040|9100000040=250', 'PO-C041|9100000041=180']);
 });

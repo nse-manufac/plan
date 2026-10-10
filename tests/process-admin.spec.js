@@ -7,6 +7,7 @@
 // ด่านที่อยู่ฝั่งเซิร์ฟเวอร์ (ห้ามลบขั้น · ลำดับท้ายรายการ) จึงถูกทดสอบไปพร้อมกันทั้งเส้น
 
 const { test, expect } = require('@playwright/test');
+const { readSaved, waitReady } = require('./app-state');
 const crypto = require('crypto');
 const { loadGs } = require('./fake-gs');
 
@@ -80,6 +81,7 @@ async function open(page, gs, { records = [], sync = true } = {}) {
     orders: [ORDER], records, deliveryNotes: [], deltaWip: [], importHistory: []
   }, sync ? { url: 'https://example.test/exec', token: gs.api.TOKEN, auto: true } : null]);
   await page.goto(APP);
+  await waitReady(page);
   if (sync) await expect.poll(() => net.calls.some(c => c.action === 'pullSettings')).toBe(true);
   await page.waitForTimeout(300);
   return net;
@@ -97,7 +99,7 @@ function answerDialogs(page, answers = []) {
 }
 
 const tab = async (page, name) => { await page.click(`.tab-btn[data-tab="${name}"]`); await page.waitForTimeout(200); };
-const readState = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)), K_STATE);
+const readState = page => readSaved(page, K_STATE);   // อ่านจาก IndexedDB (tests/app-state.js)
 const procButtonIds = page => page.locator('#procButtons button').evaluateAll(bs => bs.map(b => b.dataset.proc));
 
 async function unlock(page, pin = PIN) {
@@ -238,6 +240,7 @@ test('เพิ่มขั้นระหว่าง Winding กับ Assembl
   // เปิดใหม่ตอนเน็ตหลุด — ขั้นที่เพิ่มต้องยังอยู่ ไม่งั้นยอดที่คีย์ลงขั้นนั้นหายจากจอจนกว่าเน็ตจะกลับ
   net.down = true;
   await page.reload();
+  await waitReady(page);
   await page.waitForTimeout(300);
   await tab(page, 'entry');
   await expect(page.locator('#procBtn-' + id)).toBeVisible();

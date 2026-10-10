@@ -8,22 +8,25 @@
 // ไฟล์ทดสอบถูกประกอบขึ้นเองใน tests/fixtures.js — ห้ามเอาไฟล์ธุรกิจจริงเข้า repo (INVARIANTS F3)
 
 const { test, expect } = require('@playwright/test');
+const { readSaved, forgetSavedOnEveryLoad, waitReady } = require('./app-state');
 const { planWorkbook, readWorkbook } = require('./fixtures');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
 
 async function openBlank(page) {
+  await forgetSavedOnEveryLoad(page);   // เปิดหน้าใหม่ทุกครั้งต้องว่างเหมือนเดิม (ของที่บันทึกแล้วอยู่ใน IndexedDB)
   await page.addInitScript(k => localStorage.removeItem(k), K_STATE);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForSelector('.tab-btn[data-tab="entry"]');
 }
 
 const upload = (page, sel, buf, name) =>
   page.setInputFiles(sel, { name, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: buf });
 
-const orders = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)).orders, K_STATE);
-const records = page => page.evaluate(k => JSON.parse(localStorage.getItem(k)).records, K_STATE);
+const orders = page => readSaved(page, K_STATE).then(s => s.orders);
+const records = page => readSaved(page, K_STATE).then(s => s.records);
 
 const PLAN_ROWS = [
   { pn: '2870327301', poNo: 'TM5267H179', orderDate: '2026-07-29', qty: 800,
@@ -341,6 +344,7 @@ test('ปุ่มคำนวณ Sub-Name ใหม่ — แก้ที่�
     ord('TM5267HU80', 'TUE-H')    // ตัดสินไม่ได้ -> ห้ามแตะ
   ]);
   await page.goto(APP);
+  await waitReady(page);
   await page.waitForSelector('.tab-btn[data-tab="data"]');
   await page.click('.tab-btn[data-tab="data"]');
   page.on('dialog', d => d.accept());
@@ -370,6 +374,7 @@ test('ปุ่มคำนวณ Sub-Name ใหม่ — แก้ที่�
 test('ไม่มีใบไหนต้องเปลี่ยน ต้องบอกแล้วจบ ไม่ไปแตะข้อมูล', async ({ page }) => {
   await seedOrders(page, [ord('TM5267H179', 'TUE-H'), ord('TM5267U176', 'TUE-U')]);
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="data"]');
   let asked = false;
   page.on('dialog', d => { asked = true; d.accept(); });
@@ -385,6 +390,7 @@ test('ไม่มีใบไหนต้องเปลี่ยน ต้อ�
 test('กดยกเลิกตอนถามยืนยัน ต้องไม่เปลี่ยนอะไรเลย', async ({ page }) => {
   await seedOrders(page, [ord('TM5267H179', 'TUE-U')]);
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="data"]');
   page.on('dialog', d => d.dismiss());
   await page.click('#btnRecalcSubName');

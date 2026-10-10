@@ -11,6 +11,7 @@
 // ⚠️ ไม่มีที่ไหนเก็บยอดคงเหลือไว้เป็นตัวเลข คิดสดจากสมุดทุกครั้ง (กฎเดียวกับ A1)
 
 const { test, expect } = require('@playwright/test');
+const { readSaved, waitReady } = require('./app-state');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -44,6 +45,7 @@ async function open(page, orders, records = [], deltaWip = []) {
     orders: o, records: r, deliveryNotes: [], deltaWip: d, importHistory: []
   })), [K_STATE, orders, records, deltaWip]);
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="fg"]');
   await page.waitForTimeout(200);
 }
@@ -331,6 +333,7 @@ test('นั่งค้างหน้า FG แล้วซิงค์ดึ�
   }, [K_STATE, 'tue_order_tracker_sync_v1', [order('PO-A1', PN_A, 5000)]]);
 
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="fg"]');
   await page.waitForTimeout(200);
   expect(await cellOf(page, PN_A, 'TUE-U', 2), 'ยังไม่มีของรับเข้าเลย').toBe('0');
@@ -338,7 +341,7 @@ test('นั่งค้างหน้า FG แล้วซิงค์ดึ�
   // ปล่อยข้อมูลหลังจากอยู่บนหน้า FG แล้ว แล้วเดินนาฬิกาให้ตัวจับเวลาซิงค์ทำงาน
   releaseData = true;
   await page.clock.runFor(21000);
-  await expect.poll(() => page.evaluate(k => JSON.parse(localStorage.getItem(k)).records.length, K_STATE),
+  await expect.poll(async () => (await readSaved(page, K_STATE)).records.length,
     { timeout: 5000 }).toBe(1);
   await page.waitForTimeout(200);
 
@@ -362,6 +365,7 @@ async function openDash(page, orders, records = []) {
     orders: o, records: r, deliveryNotes: [], deltaWip: [], importHistory: []
   })), [K_STATE, orders, records]);
   await page.goto(APP);
+  await waitReady(page);
   await page.click('.tab-btn[data-tab="dashboard"]');
   await page.waitForTimeout(250);
 }
