@@ -1570,3 +1570,142 @@ test('A1 — ใบที่ส่งครบแล้วต้องหาย�
   expect(await page.locator(`#dnTable input.dn-alloc[data-order="PO-B001|${PN_B}"]`).inputValue())
     .toBe('12000');
 });
+
+/* ── log การออกใบส่งสินค้า (เจ้าของสั่ง 10 ต.ค. 2026) ──────────────────
+ *
+ * ตอบคำถามว่า "ใบของหน่วยนี้วันนี้ออกไปแล้วหรือยัง" ซึ่ง deliveryNotes ตอบไม่ได้
+ * เพราะที่นั่นบอกแค่ว่ามีคนคีย์ยอดบรรจุไว้ ไม่ได้บอกว่ากดออกใบแล้ว
+ *
+ * เลขที่ใบคิดจากหน่วย+วัน ไม่ใช่เลขรัน — เลขรันที่นับจากข้อมูลในเครื่องตัวเองจะชนกัน
+ * เมื่อสองเครื่องออกใบตอนยังไม่ซิงค์ แล้วกระดาษถึงมือลูกค้าไปก่อนที่ใครจะรู้ */
+
+/** เตรียมยอดบรรจุให้ออกใบได้ แล้วใส่ไฟล์ฟอร์ม */
+async function readyToIssue(page) {
+  await alloc(page, 'PO-B001|' + PN_B, 100);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 2);
+  const src = await deliveryFormWorkbook(['TUE-U', 'TUE-H']);
+  await page.setInputFiles('#dnTemplateInput', { name: 'FM-ST-07.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: src });
+  await expect(page.locator('#btnDnExport')).toBeEnabled();
+}
+
+test('log ใบส่งสินค้า — กดออกใบสำเร็จแล้วต้องมีแถวขึ้น พร้อมเลขที่คิดจากหน่วย+วัน', async ({ page }) => {
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+
+  expect(await page.locator('#dnLogTable tbody tr').innerText()).toContain('ยังไม่มีใบส่งสินค้า');
+
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  expect((await dl).suggestedFilename(), 'ชื่อไฟล์ต้องเป็นเลขที่ใบ').toBe('TUEU-260829.xlsx');
+  await page.waitForTimeout(400);
+
+  const st = await readState(page);
+  expect(st.deliveryLog.length, 'ต้องมีแถว log หนึ่งแถว').toBe(1);
+  const e = st.deliveryLog[0];
+  expect(e.no).toBe('TUEU-260829');          // TUE-U + 2026-08-29
+  expect(e.unit).toBe('TUE-U');
+  expect(e.date).toBe(DATE);
+  expect(e.week, 'เลข WK ต้องเก็บเป็นสตริง ไม่ใช่ตัวเลข').toBe('34');
+  expect(e.qty).toBe(100);
+  expect(e._dirty, 'ต้องรอส่งขึ้นเซิร์ฟเวอร์').toBe(true);
+
+  const row = await page.locator('#dnLogTable tbody tr').first().innerText();
+  expect(row).toContain('TUEU-260829');
+  expect(row).toContain('TUE-U');
+});
+
+test('log ใบส่งสินค้า — ออกใบไม่ผ่านด่าน ต้องไม่มีแถว log', async ({ page }) => {
+  // ด่านกล่อง/เศษไม่ตรงยอด — ไฟล์ไม่ออก log จึงต้องไม่ขึ้นด้วย ไม่งั้น log โกหกว่าออกใบแล้ว
+  page.on('dialog', d => d.accept());
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await alloc(page, 'PO-B001|' + PN_B, 100);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 3);          // 150 ไม่ตรงกับ 100
+  const src = await deliveryFormWorkbook(['TUE-U', 'TUE-H']);
+  await page.setInputFiles('#dnTemplateInput', { name: 'FM-ST-07.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: src });
+  await page.click('#btnDnExport');
+  await page.waitForTimeout(400);
+
+  expect((await readState(page)).deliveryLog.length, 'ออกไฟล์ไม่สำเร็จต้องไม่บันทึก log').toBe(0);
+});
+
+test('log ใบส่งสินค้า — ออกใบหน่วย+วันเดิมซ้ำ ได้เลขเดิมแต่คนละแถว พร้อมป้ายครั้งที่ 2', async ({ page }) => {
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+
+  for (const _ of [1, 2]) {
+    const dl = page.waitForEvent('download');
+    await page.click('#btnDnExport');
+    await dl;
+    await page.waitForTimeout(400);
+  }
+
+  const st = await readState(page);
+  expect(st.deliveryLog.length, 'ออกซ้ำต้องได้สองแถว ไม่ใช่ทับกัน').toBe(2);
+  expect(new Set(st.deliveryLog.map(e => e.no)).size, 'เลขที่ต้องเหมือนกัน').toBe(1);
+  expect(new Set(st.deliveryLog.map(e => e.id)).size, 'id ต้องต่างกัน').toBe(2);
+  expect(await page.locator('#dnLogTable tbody').innerText()).toContain('ครั้งที่ 2');
+});
+
+test('log ใบส่งสินค้า — กดเลขที่ใบต้องออกไฟล์ใบนั้นอีกครั้ง โดยไม่เพิ่มแถว log', async ({ page }) => {
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const first = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await first;
+  await page.waitForTimeout(400);
+
+  const again = page.waitForEvent('download');
+  await page.click('#dnLogTable [data-dn-reissue]');
+  expect((await again).suggestedFilename()).toBe('TUEU-260829.xlsx');
+  await page.waitForTimeout(400);
+
+  expect((await readState(page)).deliveryLog.length,
+    'ออกไฟล์ซ้ำคือพิมพ์ใบเดิมใหม่ ไม่ใช่ออกใบใหม่ — ต้องไม่เพิ่มแถว').toBe(1);
+});
+
+test('log ใบส่งสินค้า — ยังไม่ได้เลือกไฟล์ฟอร์ม กดเลขที่ใบต้องบอกให้เลือกก่อน ไม่ใช่เงียบ', async ({ page }) => {
+  // ระบบไม่ได้เก็บไฟล์ใบเก่าไว้ แต่สร้างใหม่ จึงต้องมีฟอร์มในมือเสมอ
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await dl;
+  await page.waitForTimeout(400);
+
+  // ⚠️ ที่นี่ reload ไม่ได้ — harness ลบ IndexedDB ทุกครั้งที่หน้าโหลด (forgetSavedOnEveryLoad)
+  //    log จะหายไปด้วย · ถอดไฟล์ออกจากช่องเลือกแทน ซึ่งเป็นเส้นทางเดียวกับที่ dnTemplate กลายเป็น null
+  await page.setInputFiles('#dnTemplateInput', []);
+  await page.waitForTimeout(200);
+
+  await page.click('#dnLogTable [data-dn-reissue]');
+  await page.waitForTimeout(300);
+  expect(await page.locator('#toast').innerText()).toContain('เลือกไฟล์ฟอร์ม');
+});
+
+test('log ใบส่งสินค้า — แก้ยอดบรรจุหลังออกใบ ต้องขึ้นป้ายเตือนว่าไฟล์จะไม่ตรงกับกระดาษเดิม', async ({ page }) => {
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await dl;
+  await page.waitForTimeout(400);
+
+  expect(await page.locator('#dnLogTable tbody').innerText(),
+    'ยังไม่มีใครแก้ ต้องยังไม่ขึ้นป้าย').not.toContain('ข้อมูลเปลี่ยนหลังออกใบ');
+
+  await pack(page, PN_B, 'boxes', 1);          // แก้ยอดบรรจุหลังออกใบไปแล้ว
+  await alloc(page, 'PO-B001|' + PN_B, 50);
+  await page.waitForTimeout(300);
+
+  expect(await page.locator('#dnLogTable tbody').innerText()).toContain('ข้อมูลเปลี่ยนหลังออกใบ');
+});
