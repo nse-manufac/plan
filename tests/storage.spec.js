@@ -10,6 +10,7 @@
 
 const { test, expect } = require('@playwright/test');
 const { IDB_NAME, IDB_STORE, readSaved, waitReady } = require('./app-state');
+const { patchAppSource } = require('./app-source');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -171,4 +172,22 @@ test('ลบข้อมูลทั้งหมด ต้องลบสำเ�
 
   await expect.poll(() => readSaved(page, BACKUP, { raw: true }), { message: 'สำเนาดิบต้องถูกลบ' }).toBeNull();
   expect((await readSaved(page, K_STATE)).records, 'ข้อมูลหลักต้องว่าง').toEqual([]);
+});
+
+test('วาดจอตอนเปิดหน้าพัง (ข้อมูลจริงมีค่าแปลก) — จอต้องไม่ค้างจางกดไม่ได้ และต้องบอกผู้ใช้', async ({ page }) => {
+  // ระหว่างรอโหลด จอถูกทำให้จางและกดไม่ได้ · ถ้าวาดจอพังแล้วไม่มีใครปลด ทั้งหน้าจะค้างโดยไม่มีข้อความ (ผู้ตรวจ #99)
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  const patched = await patchAppSource(page, 'function renderAll(){',
+    "function renderAll(){ if(!window.__boomed){ window.__boomed = 1; throw new Error('จำลองวาดจอพัง'); }");
+  await seedOnce(page, legacy([rec('R1', 10)]));
+  await page.goto(APP);
+  await waitReady(page);
+
+  expect(patched(), 'หา renderAll ไม่เจอ — เทสนี้ไม่ได้จำลองอะไร').toBe(1);
+  expect(errors.join(), 'error ต้องยังหลุดออกมาให้เห็น ไม่ถูกกลืน').toContain('จำลองวาดจอพัง');
+  await expect(page.locator('#toast'), 'ต้องบอกผู้ใช้').toContainText('เปิดหน้าไม่สมบูรณ์');
+  expect(await page.locator('main').evaluate(m => getComputedStyle(m).pointerEvents), 'จอต้องกดได้').not.toBe('none');
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.click('#procBtn-winding');   // คลิกใน main ได้จริง
 });
