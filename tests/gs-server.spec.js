@@ -226,7 +226,9 @@ test('ห้ามล้างนาฬิกาซิงค์ที่อื�
  * ถ้าคอลัมน์กลายเป็นข้อความ (คนแก้ชีตมือ หรือ format เพี้ยน) สตริง 'FALSE' เป็น truthy ฝั่งแอป
  * → ทุกแถวของตารางนั้นกลายเป็นยกเลิกในทุกเครื่องหลังซิงค์ = จอว่างทั้งระบบ
  * (CTO เจอตอนประเมิน 7 ก.ย. 2026 · เจ้าของให้รวบไว้กับการ redeploy รอบถัดไป) */
-for (const table of ['Orders', 'Records', 'DeliveryNotes', 'DeltaWip']) {
+// ⚠️ เพิ่มตารางใหม่ใน ROW_TABLES แล้วต้องเติมชื่อที่นี่ด้วย — ด่านนี้ไล่ทีละตารางที่เขียนไว้
+//    ไม่ได้อ่านจาก .gs เอง · ตารางที่ไม่อยู่ในรายการนี้คือตารางที่ไม่มีใครคุม (ผู้ตรวจทักไว้ใน #102)
+for (const table of ['Orders', 'Records', 'DeliveryNotes', 'DeltaWip', 'DeliveryLog']) {
   test(`${table} — voided ที่เป็นข้อความในชีต ต้องกลับมาเป็น boolean`, async () => {
     const { api, book } = loadGs();
     api.doPushRows(table, [{ id: 'X1', voided: false }], 'A');
