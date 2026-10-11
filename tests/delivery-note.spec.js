@@ -1806,6 +1806,32 @@ test('log ใบส่งสินค้า — ยังไม่มีใบ�
   expect(await page.locator('#dnLogTable tbody tr').innerText()).toContain('ยังไม่มีใบส่งสินค้า');
 });
 
+test('log ใบส่งสินค้า — หน่วยที่ #101 เพิ่ม (TUE-T) ต้องได้เลขที่ของตัวเอง ไม่ใช่เลขของหน่วยอื่น', async ({ page }) => {
+  /* #101 เพิ่ม TUE-T กับ TUE-A เข้ามาหลังใบนี้เริ่มเขียน · เลขที่ใบคิดจาก 'ชื่อหน่วย + วัน'
+   * ถ้าใครย่อชื่อหน่วยให้สั้นลง หรือตัดเหลือตัวอักษรเดียว สองหน่วยจะได้เลขเดียวกัน
+   * แล้วไฟล์ของคนละหน่วยจะทับกันทั้งที่เป็นใบคนละใบ · ข้อนี้คู่กับข้อ TUE-U ด้านบน
+   * พอมีสองหน่วยถูกตรึงไว้ การยุบเลขให้สั้นลงจะทำข้อใดข้อหนึ่งแดงเสมอ */
+  await open(page, [order('PO-T001', PN_B, 5000, '2026-08-05', 'TUE-T')], [], 'TUE-T');
+  await page.fill('#dnWeek', '34');
+  await alloc(page, 'PO-T001|' + PN_B, 100);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 2);
+  const src = await deliveryFormWorkbook(['TUE-T']);
+  await page.setInputFiles('#dnTemplateInput', { name: 'FM-ST-07.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: src });
+  await expect(page.locator('#btnDnExport')).toBeEnabled();
+
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  expect((await dl).suggestedFilename(), 'ชื่อไฟล์ต้องเป็นเลขที่ใบของ TUE-T').toBe('TUET-260829.xlsx');
+  await page.waitForTimeout(400);
+
+  const e = (await readState(page)).deliveryLog[0];
+  expect(e.no).toBe('TUET-260829');
+  expect(e.unit).toBe('TUE-T');
+  await expect(page.locator('#dnLogTable tbody')).toContainText('TUET-260829');
+});
+
 test('D4 — ป้ายข้อมูลเปลี่ยนต้องไม่โผล่เองหลังซิงค์เขียน updatedAt ทับด้วย serverTime', async ({ page }) => {
   /* doSync() เขียน updatedAt ของบรรทัดทับด้วยเวลาเซิร์ฟเวอร์ (D4) ส่วน createdAt ของแถว log
    * เป็นนาฬิกาเครื่อง · ถ้าป้ายตัดสินด้วยการเทียบเวลาสองเรือนนี้ มันจะโผล่เองโดยไม่มีใครแก้อะไร */
