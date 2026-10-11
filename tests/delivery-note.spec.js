@@ -1254,6 +1254,43 @@ test('ไฟล์ของผู้ใช้ต้องไม่ถูกท�
   expect(out.length / src.length, 'ต้องยังบีบอัดอยู่').toBeLessThan(1.3);
 });
 
+test('ออกใบหน่วยที่สองจากฟอร์มชุดเดิม ต้องไม่พกชีตของหน่วยแรกที่กรอกไว้ติดไปด้วย', async ({ page }) => {
+  /* fillDeliveryForm() เขียนกลับเข้า object ของ JSZip ที่โหลดค้างไว้ใน dnTemplate
+   * ไม่ได้โหลดไฟล์ใหม่ทุกครั้ง · ออกใบ TUE-U แล้วออก TUE-H ต่อจากฟอร์มชุดเดิม
+   * ไฟล์ของ TUE-H จะมีชีต TUE-U ที่กรอกใบก่อนหน้าไว้ติดไปด้วย
+   *
+   * ชีตที่จะปริ้นของหน่วยนั้นถูกต้องเสมอ จึงไม่กระทบเลขบนกระดาษที่ลูกค้าได้
+   * แต่ไฟล์ที่ส่งต่อให้คนอื่นพกข้อมูลของอีกนิติบุคคลไปด้วย ซึ่งไม่ควรเกิด
+   * และลิงก์ออกไฟล์ซ้ำทำให้เกิดบ่อยขึ้นมาก เพราะออกหลายหน่วยจากฟอร์มชุดเดียวได้ง่าย */
+  await open(page);
+  await fillGroupB(page);
+  const { src, out: first } = await exportForm(page);
+
+  // หน่วยที่สอง — ไม่เลือกไฟล์ฟอร์มใหม่ ใช้ชุดที่โหลดค้างไว้
+  await page.selectOption('#dnUnit', 'TUE-H');
+  await page.waitForTimeout(150);
+  await alloc(page, 'PO-H070|9000000070', 100);
+  await pack(page, '9000000070', 'perBox', 50);
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#btnDnExport')]);
+  const second = fs.readFileSync(await dl.path());
+
+  const za = await JSZip.loadAsync(src), zb = await JSZip.loadAsync(second);
+  const names = Object.keys(za.files).filter(n => !za.files[n].dir).sort();
+  const changed = [];
+  for (const n of names) {
+    if (await za.file(n).async('string') !== await zb.file(n).async('string')) changed.push(n);
+  }
+  // sheet1 = TUE-U · sheet2 = TUE-H (ลำดับที่ deliveryFormWorkbook สร้าง)
+  expect(changed, 'ไฟล์ของ TUE-H ต้องต่างจากต้นฉบับแค่ชีตของ TUE-H กับ workbook.xml')
+    .toEqual(['xl/workbook.xml', 'xl/worksheets/sheet2.xml']);
+
+  /* ⚠️ กันเทสเปล่า — ถ้าใบแรกไม่ได้แตะ sheet1 จริง ข้อบนก็เขียวโดยไม่ได้พิสูจน์อะไร */
+  const zf = await JSZip.loadAsync(first);
+  expect(await zf.file('xl/worksheets/sheet1.xml').async('string'),
+    'ใบแรกต้องเขียนลงชีตของ TUE-U จริง ไม่งั้นเทสนี้ไม่ได้ทดสอบอะไร')
+    .not.toBe(await za.file('xl/worksheets/sheet1.xml').async('string'));
+});
+
 test('ยอดบรรจุต้องลงแถวแรกของกลุ่มเท่านั้น และ merge ข้ามแถวให้เหมือนที่ทำมือ', async ({ page }) => {
   await open(page);
   await fillGroupB(page);

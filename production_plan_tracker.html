@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-11.8">
+<meta name="app-version" content="2026-10-12.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -4533,7 +4533,16 @@ function refreshDnGroup(pn){
 
 /* ---------- ออกไฟล์ใบส่งสินค้า FM-ST-07 ---------- */
 
-let dnTemplate = null;   // {zip, sheetMap, fileName}
+/* ฟอร์ม FM-ST-07 ที่เจ้าของเลือกมา — เก็บ **ไบต์ดิบ** ไม่ใช่ object ของ JSZip
+ *
+ * ⚠️ ห้ามเก็บ zip ที่โหลดแล้วไว้ใช้ซ้ำ · fillDeliveryForm() เขียนกลับเข้า zip ที่ได้รับ
+ *    ถ้าเป็นตัวเดียวกันทุกครั้ง ชีตที่เขียนไว้รอบก่อนจะค้างอยู่แล้วติดไปในไฟล์รอบถัดไป
+ *    ออกใบ TUE-U แล้วออก TUE-H ต่อ ไฟล์ของ TUE-H จะพกใบของ TUE-U ไปด้วย
+ *    (ผู้ตรวจ #103 รันพบ · ชีตที่จะปริ้นถูกต้องเสมอ แต่ไฟล์พกข้อมูลของอีกนิติบุคคลไป)
+ *
+ *    plan ลอกวิธีของ bincard v2 ที่สร้างไฟล์ใหม่จากศูนย์ไม่ได้ — ExcelJS เขียนไฟล์ใหม่ทั้งไฟล์
+ *    แล้ว xl/drawings/ หายจนโลโก้บริษัทไม่ขึ้น · ทางที่เหลือคือโหลดใหม่จากไบต์ดิบทุกครั้ง */
+let dnTemplate = null;   // {buf, sheetMap, fileName}
 
 document.getElementById('dnTemplateInput').addEventListener('change', async (e)=>{
   const file = e.target.files[0];
@@ -4543,9 +4552,10 @@ document.getElementById('dnTemplateInput').addEventListener('change', async (e)=
   if(rejectLegacyXls(file)) return;
   toast('กำลังอ่านไฟล์...');
   try{
-    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const buf = await file.arrayBuffer();
+    const zip = await JSZip.loadAsync(buf);
     if(!zip.file('xl/workbook.xml')) throw new Error('ไม่ใช่ไฟล์ Excel (.xlsx)');
-    dnTemplate = {zip, sheetMap: await sheetPathMap(zip), fileName: file.name};
+    dnTemplate = {buf, sheetMap: await sheetPathMap(zip), fileName: file.name};
     // เลข WK เป็นสัปดาห์การผลิตของโรงงาน ไม่ตรงกับสัปดาห์ ISO ที่คำนวณเองได้
     // จึงอ่านจากฟอร์มที่เจ้าของเลือกมาเป็นค่าตั้งต้น แล้วให้แก้บนหน้าจอได้
     const wk = await weekFromTemplate(zip, await sheetPathMap(zip));
@@ -4595,7 +4605,10 @@ async function writeDeliveryFile(unit, date, week, groups, sheetName){
   }
   const sheet = sheetName || dnSheetNameFor(unit);
   if(!sheet) throw new Error(`ไม่พบชีตของหน่วย ${unit} ในฟอร์มนี้ — มีชีต: ${Object.keys(dnTemplate.sheetMap).join(', ')}`);
-  const blob = await fillDeliveryForm(dnTemplate.zip, dnTemplate.sheetMap[sheet], unit, date, groups, week);
+  /* โหลด zip ใหม่จากไบต์ดิบทุกครั้ง — ดูเหตุผลที่คอมเมนต์ของ dnTemplate
+   * ค่าใช้จ่ายต่ำ loadAsync อ่านแค่สารบัญของ zip ส่วนการแตะ XML ของชีตเกิดต่อครั้งอยู่แล้ว */
+  const zip = await JSZip.loadAsync(dnTemplate.buf);
+  const blob = await fillDeliveryForm(zip, dnTemplate.sheetMap[sheet], unit, date, groups, week);
   downloadBlob(blob, `${deliveryNoteNo(unit, date)}.xlsx`,
                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 }
