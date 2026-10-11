@@ -166,6 +166,14 @@ test('รหัส PO ที่ตัดสินหน่วยไม่ได�
 
   await expect(page.locator('#previewSummary'), 'ต้องบอกจำนวนแถวที่บอกหน่วยไม่ได้')
     .toContainText('2 รายการที่บอกหน่วยไม่ได้');
+
+  // ⚑ ข้อความต้องอธิบาย **กฎปัจจุบัน** ไม่ใช่กฎเก่า
+  //    เทสที่เช็กแค่จำนวน ปล่อยให้ข้อความดริฟไปบอกกฎที่เลิกใช้แล้วได้
+  //    ซึ่งเกิดขึ้นจริงใน PR #101 — ผู้ใช้เห็นข้อความที่ขัดกับตาตัวเอง
+  await expect(page.locator('#previewSummary'),
+    'ข้อความต้องบอกกฎปัจจุบัน (ตำแหน่งที่ 7)').toContainText('ตำแหน่งที่ 7');
+  await expect(page.locator('#previewSummary'),
+    'กฎเก่าห้ามกลับมา').not.toContainText('ต้องมีตัว U หรือ H');
   await expect(page.locator('#previewTable')).toContainText('หาไม่เจอ');
 
   await page.click('#btnConfirmImport');
