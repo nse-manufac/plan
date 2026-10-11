@@ -1650,7 +1650,8 @@ test('log ใบส่งสินค้า — ออกใบหน่วย+�
   expect(st.deliveryLog.length, 'ออกซ้ำต้องได้สองแถว ไม่ใช่ทับกัน').toBe(2);
   expect(new Set(st.deliveryLog.map(e => e.no)).size, 'เลขที่ต้องเหมือนกัน').toBe(1);
   expect(new Set(st.deliveryLog.map(e => e.id)).size, 'id ต้องต่างกัน').toBe(2);
-  expect(await page.locator('#dnLogTable tbody').innerText()).toContain('ครั้งที่ 2');
+  // รอเองจนข้อความโผล่ แทนการอ่านครั้งเดียวหลัง waitForTimeout — ไม่งั้นแดงเพราะจังหวะ ไม่ใช่เพราะโค้ด
+  await expect(page.locator('#dnLogTable tbody')).toContainText('ครั้งที่ 2');
 });
 
 test('log ใบส่งสินค้า — กดเลขที่ใบต้องออกไฟล์ใบนั้นอีกครั้ง โดยไม่เพิ่มแถว log', async ({ page }) => {
@@ -1697,7 +1698,7 @@ test('log ใบส่งสินค้า — ยังไม่ได้เ�
 
   await page.click('#dnLogTable [data-dn-reissue]');
   await page.waitForTimeout(300);
-  expect(await page.locator('#toast').innerText()).toContain('เลือกไฟล์ฟอร์ม');
+  await expect(page.locator('#toast')).toContainText('เลือกไฟล์ฟอร์ม');
 });
 
 test('log ใบส่งสินค้า — แก้ยอดบรรจุหลังออกใบ ต้องขึ้นป้ายเตือนว่าไฟล์จะไม่ตรงกับกระดาษเดิม', async ({ page }) => {
@@ -1716,7 +1717,7 @@ test('log ใบส่งสินค้า — แก้ยอดบรรจ�
   await alloc(page, 'PO-B001|' + PN_B, 50);
   await page.waitForTimeout(300);
 
-  expect(await page.locator('#dnLogTable tbody').innerText()).toContain('ข้อมูลเปลี่ยนหลังออกใบ');
+  await expect(page.locator('#dnLogTable tbody')).toContainText('ข้อมูลเปลี่ยนหลังออกใบ');
 });
 
 /* ── สามข้อที่ผู้ตรวจ #103 จับได้ — ทั้งหมดอยู่ที่ทางออกไฟล์ซ้ำ ───────── */
@@ -1741,7 +1742,7 @@ test('log — ออกไฟล์ซ้ำต้องผ่านด่าน
   await page.click('#dnLogTable [data-dn-reissue]');
   await page.waitForTimeout(600);
   expect(got, 'กล่อง/เศษไม่ตรงยอด ต้องไม่ได้ไฟล์ออกมา').toBe(false);
-  expect(await page.locator('#toast').innerText()).toContain('กล่องกับเศษไม่ตรง');
+  await expect(page.locator('#toast')).toContainText('กล่องกับเศษไม่ตรง');
 });
 
 test('log — ออกไฟล์ซ้ำต้องไม่ลากแถวที่ติ๊กไว้ของวันอื่นลงกระดาษ', async ({ page }) => {
