@@ -35,15 +35,15 @@ const ORDERS = [
   order('PO-H070', '9000000070', 200, '2026-07-20', 'TUE-H')
 ];
 
-async function open(page, orders = ORDERS, records = [], unit = 'TUE-U') {
+async function open(page, orders = ORDERS, records = [], unit = 'TUE-U', deliveryLog = []) {
   // หว่านใหม่ทุกครั้งที่หน้าโหลด = ล้างของที่บันทึกไว้ด้วย (เดิม localStorage ทับให้เอง · ตอนนี้ของที่บันทึกอยู่ใน IndexedDB)
   await forgetSavedOnEveryLoad(page);
-  await page.addInitScript(([k, o, r]) => localStorage.setItem(k, JSON.stringify({
+  await page.addInitScript(([k, o, r, dlog]) => localStorage.setItem(k, JSON.stringify({
     version: 1, deviceName: 't',
     deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
     chartPref: { mode: '14', from: '', to: '' },
-    orders: o, records: r, deliveryNotes: [], importHistory: []
-  })), [K_STATE, orders, records]);
+    orders: o, records: r, deliveryNotes: [], deliveryLog: dlog, importHistory: []
+  })), [K_STATE, orders, records, deliveryLog]);
   await page.goto(APP);
   await waitReady(page);
   await page.click('.tab-btn[data-tab="delivery"]');
@@ -1774,6 +1774,35 @@ test('log — ออกไฟล์ซ้ำต้องไม่ลากแถ
   const xml = await zip.file(Object.keys(zip.files).find(n => /sheet1\.xml$/.test(n))).async('string');
   expect(xml, 'ใบเดิมมีแต่ PO-B001 — PO-B055 ต้องไม่โผล่เพราะไปติ๊กไว้ในวันอื่น').not.toContain('PO-B055');
   expect(xml).toContain('PO-B001');
+});
+
+test('log ใบส่งสินค้า — ใบที่ซิงค์มาจากเครื่องอื่น ต้องขึ้นทันทีที่กดเข้าแท็บ', async ({ page }) => {
+  /* เส้นทางที่คนใช้จริงมากที่สุด และเป็นเหตุผลที่ใบนี้มีอยู่ — มาถึงโรงงาน เปิดโปรแกรม
+   * กดแท็บใบส่งสินค้า เพื่อดูว่า 'ใบของหน่วยนี้วันนี้ออกไปแล้วหรือยัง'
+   *
+   * ⚠️ renderAll() มีด่านเช็กแท็บ (วาด log เฉพาะเมื่อหน้านี้ active อยู่) ซึ่งถูกสำหรับรอบซิงค์
+   *    แต่ตอนเปิดหน้า renderAll() วิ่งขณะแท็บ import ยัง active · ถ้าตัวจับคลิกแท็บไม่วาดเอง
+   *    ตารางจะว่างทั้งหัวตาราง ซึ่งอ่านได้ว่า 'ยังไม่ออกใบ' แล้วคนจะออกกระดาษซ้ำ
+   *    (ผู้ตรวจ #103 รันเจอ regression นี้ตอนเพิ่มด่านเช็กแท็บเข้าไปรอบก่อน) */
+  const fromOther = [{
+    id: 'dl-sync-1', no: 'TUEU-260829', date: DATE, unit: 'TUE-U', week: '34',
+    groups: 1, lines: 1, qty: 100, deviceName: 'เครื่องห้องวางแผน',
+    createdAt: '2026-08-29T02:00:00.000Z', updatedAt: '2026-08-29T02:00:00.000Z', voided: false
+  }];
+  await open(page, ORDERS, [], 'TUE-U', fromOther);
+
+  const log = await page.locator('#dnLogTable').innerText();
+  expect(log, 'ตารางต้องไม่ว่างเปล่า — ว่างแปลว่าตอบคำถามว่าออกใบแล้วหรือยังไม่ได้').not.toBe('');
+  expect(log, 'หัวตารางต้องขึ้น').toContain('เลขที่');
+  expect(log, 'ใบที่เครื่องอื่นออกไว้ต้องเห็น').toContain('TUEU-260829');
+  expect(log).toContain('เครื่องห้องวางแผน');
+});
+
+test('log ใบส่งสินค้า — ยังไม่มีใบเลย ต้องขึ้นข้อความบอก ไม่ใช่ตารางว่างเปล่า', async ({ page }) => {
+  /* ตารางว่างกับ 'ยังไม่มีใบ' อ่านออกมาเหมือนกันสำหรับคน แต่ตัวแรกแยกไม่ออกว่าจอพังหรือไม่มีข้อมูล */
+  await open(page);
+  expect(await page.locator('#dnLogTable').innerText()).toContain('เลขที่');
+  expect(await page.locator('#dnLogTable tbody tr').innerText()).toContain('ยังไม่มีใบส่งสินค้า');
 });
 
 test('D4 — ป้ายข้อมูลเปลี่ยนต้องไม่โผล่เองหลังซิงค์เขียน updatedAt ทับด้วย serverTime', async ({ page }) => {

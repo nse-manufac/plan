@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-11.5">
+<meta name="app-version" content="2026-10-11.6">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -4809,7 +4809,10 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(tab==='entry'){ renderDashFilterOptions(); renderEntryTable(); renderRecordEditor(); }
     if(tab==='import'){ renderImportHistory(); renderOrderVoidTable(); }
     if(tab==='data'){ loadSettingsIntoForm(); }
-    if(tab==='delivery'){ renderDeliveryNote(); }
+    /* renderDnLog() ต้องอยู่ที่นี่ด้วย ไม่ใช่พึ่ง renderAll() ตอนเปิดหน้า —
+     * renderAll() มีด่านเช็กแท็บแล้ว (ดู 4796) ซึ่งตอนเปิดหน้าแท็บ import ยัง active อยู่
+     * ถ้าไม่วาดตอนกดเข้ามา ตารางจะว่างทั้งหัวตาราง อ่านได้ว่า 'ยังไม่ออกใบ' แล้วคนออกกระดาษซ้ำ */
+    if(tab==='delivery'){ renderDeliveryNote(); renderDnLog(); }
     if(tab==='fg'){ renderFg(); }
   });
 });
