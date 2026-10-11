@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-11.4">
+<meta name="app-version" content="2026-10-11.5">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -4665,8 +4665,19 @@ document.getElementById('dnLogTable').addEventListener('click', async (e)=>{
 
   const groups = dnReissueGroups(entry.date, entry.unit);
   if(!groups.length){ toast('ไม่เหลือยอดบรรจุของใบนี้แล้ว — ออกไฟล์ซ้ำไม่ได้'); return; }
-  if(dnLogStale(entry) && !confirm(`ยอดบรรจุของ ${entry.unit} วันที่ ${fmtDateTH(entry.date)} ถูกแก้หลังจากออกใบ ${entry.no} ไปแล้ว\n`
-      + 'ไฟล์ที่ได้จะไม่ตรงกับกระดาษใบเดิมที่ส่งไปแล้ว\n\nออกไฟล์ต่อหรือไม่?')) return;
+  /* ⚠️ ถามยืนยัน **ทุกครั้ง** ไม่ใช่เฉพาะตอนป้ายขึ้น
+   *    เพราะ dnLogStale() จับได้แค่ยอดรวมเปลี่ยน · ของที่มันจับไม่ได้แต่เปลี่ยนจริงมีอีกหลายอย่าง
+   *    ที่หนักสุดคือ **Wip bal. บนกระดาษ** ซึ่งมาจากไฟล์ Call In งวดล่าสุด —
+   *    นำเข้าไฟล์งวดใหม่ตามปกติทุกสัปดาห์ เลขบนกระดาษก็เปลี่ยนแล้วโดยไม่มีใครแตะยอดอะไรเลย
+   *    และนั่นคือเลขที่ Delta อ่าน (ผู้ตรวจ #103 รันพิสูจน์: งวด 34 ค้าง 5,000 → งวด 35 ได้ 3,000)
+   *    รวมถึงกลุ่มที่ขึ้นกระดาษเพราะติ๊กให้โผล่ (alloc = 0) ซึ่งจะหายไปจากไฟล์ที่ออกซ้ำ
+   *    บอกให้ชัดว่านี่คือ "สร้างใหม่จากข้อมูลวันนี้" ดีกว่าปล่อยให้เข้าใจว่าเป็นสำเนาของกระดาษใบเดิม */
+  const warn = dnLogStale(entry)
+    ? `\n\n⚠️ ยอดที่จะลงกระดาษตอนนี้ไม่เท่ากับตอนออกใบ (${numFmt(Number(entry.qty)||0)})` : '';
+  if(!confirm(`ออกไฟล์ใบ ${entry.no} (${entry.unit} ${fmtDateTH(entry.date)}) ใหม่\n\n`
+      + 'ไฟล์นี้สร้างใหม่จากข้อมูลวันนี้ ไม่ใช่สำเนาของกระดาษใบเดิม\n'
+      + 'ถ้ามีอะไรเปลี่ยนไปตั้งแต่วันที่ออกใบ — รวมถึง Wip bal. ที่มาจากไฟล์ Call In งวดล่าสุด —\n'
+      + 'เลขบนกระดาษจะไม่เท่ากับใบที่ส่งไปแล้ว' + warn + '\n\nออกไฟล์ต่อหรือไม่?')) return;
 
   try{
     await writeDeliveryFile(entry.unit, entry.date, entry.week, groups);
@@ -4778,8 +4789,11 @@ function renderAll(){
   // ถ้านั่งค้างหน้า FG ไว้แล้วซิงค์ดึงข้อมูลใหม่เข้ามา ตัวเลขต้องขยับตาม
   // ไม่ใช่ค้างของเก่าจนกว่าจะสลับแท็บ — เป็นหน้ายอดคงเหลือ คนจะจ้องมันแล้วเชื่อเลข
   if(document.getElementById('view-fg').classList.contains('active')) renderFg();
-  // log ใบส่งสินค้าซิงค์ข้ามเครื่อง — เครื่องที่นั่งค้างหน้านี้ไว้ต้องเห็นใบที่เครื่องอื่นเพิ่งออก
-  renderDnLog();
+  /* log ใบส่งสินค้าซิงค์ข้ามเครื่อง — เครื่องที่นั่งค้างหน้านี้ไว้ต้องเห็นใบที่เครื่องอื่นเพิ่งออก
+   * ⚠️ เช็กแท็บก่อนเหมือน renderFg() บรรทัดบน — ทุกแถว log เรียก deliveryGroups() ใหม่หนึ่งรอบ
+   *    ปล่อยให้วิ่งทุกครั้งที่ซิงค์ เครื่องที่นั่งอยู่หน้า Dashboard จะเสียเวลาฟรีทุกรอบ
+   *    (ผู้ตรวจ #103 วัดได้ 121 ms ที่ log 300 แถว / 4,000 record) */
+  if(document.getElementById('view-delivery').classList.contains('active')) renderDnLog();
   renderSyncBadge();
 }
 
