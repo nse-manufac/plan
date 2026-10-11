@@ -1709,3 +1709,90 @@ test('log ใบส่งสินค้า — แก้ยอดบรรจ�
 
   expect(await page.locator('#dnLogTable tbody').innerText()).toContain('ข้อมูลเปลี่ยนหลังออกใบ');
 });
+
+/* ── สามข้อที่ผู้ตรวจ #103 จับได้ — ทั้งหมดอยู่ที่ทางออกไฟล์ซ้ำ ───────── */
+
+test('log — ออกไฟล์ซ้ำต้องผ่านด่านกล่อง/เศษเหมือนปุ่มออกใบ ห้ามข้าม', async ({ page }) => {
+  // ด่านนี้คอมเมนต์ในโค้ดเขียนไว้เองว่า "ห้ามเป็นแค่คำถามให้กดผ่าน — ต้องกันจริง"
+  // ถ้าทางออกไฟล์ซ้ำข้ามไป กระดาษที่ส่งลูกค้าจะแจ้งจำนวนคนละตัวกับของที่ส่งจริง
+  page.on('dialog', d => d.accept());
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await dl;
+  await page.waitForTimeout(400);
+
+  await pack(page, PN_B, 'boxes', 1);          // 1×50 = 50 แต่คีย์ส่งไว้ 100
+  await page.waitForTimeout(300);
+
+  let got = false;
+  page.on('download', () => { got = true; });
+  await page.click('#dnLogTable [data-dn-reissue]');
+  await page.waitForTimeout(600);
+  expect(got, 'กล่อง/เศษไม่ตรงยอด ต้องไม่ได้ไฟล์ออกมา').toBe(false);
+  expect(await page.locator('#toast').innerText()).toContain('กล่องกับเศษไม่ตรง');
+});
+
+test('log — ออกไฟล์ซ้ำต้องไม่ลากแถวที่ติ๊กไว้ของวันอื่นลงกระดาษ', async ({ page }) => {
+  // ช่องติ๊ก (dnExtraRows) เป็นสถานะของวัน+หน่วยที่เลือกอยู่บนจอ ล้างเมื่อเปลี่ยนวัน
+  // แต่การออกไฟล์ซ้ำทำงานกับวันของแถว log ซึ่งมักไม่ใช่วันเดียวกัน
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await dl;
+  await page.waitForTimeout(400);
+
+  // เปลี่ยนวันบนจอ แล้วติ๊ก "PO-B055" ซึ่งไม่ได้อยู่ในใบเดิม ให้โผล่ในวันนั้น
+  // ⚠️ ต้องเจาะจงใบนี้ · ติ๊กใบแรกที่เจอจะได้ PO-B001 ซึ่งอยู่ในใบเดิมอยู่แล้ว แล้วเทสจะไม่จับอะไรเลย
+  await page.fill('#dnDate', '2026-08-30');
+  await page.waitForTimeout(250);
+  const extra = page.locator('#dnTable input.dn-include[data-order="PO-B055|' + PN_B + '"]');
+  await expect(extra, 'ต้องมีช่องติ๊กของ PO-B055 ให้ติ๊ก ไม่งั้นเทสนี้ไม่ได้ทดสอบอะไร').toHaveCount(1);
+  await extra.check();
+  await page.waitForTimeout(250);
+
+  const again = page.waitForEvent('download');
+  await page.click('#dnLogTable [data-dn-reissue]');
+  const buf = await (await again).createReadStream().then(s => new Promise(ok => {
+    const c = []; s.on('data', d => c.push(d)); s.on('end', () => ok(Buffer.concat(c)));
+  }));
+  const zip = await JSZip.loadAsync(buf);
+  const xml = await zip.file(Object.keys(zip.files).find(n => /sheet1\.xml$/.test(n))).async('string');
+  expect(xml, 'ใบเดิมมีแต่ PO-B001 — PO-B055 ต้องไม่โผล่เพราะไปติ๊กไว้ในวันอื่น').not.toContain('PO-B055');
+  expect(xml).toContain('PO-B001');
+});
+
+test('D4 — ป้ายข้อมูลเปลี่ยนต้องไม่โผล่เองหลังซิงค์เขียน updatedAt ทับด้วย serverTime', async ({ page }) => {
+  /* doSync() เขียน updatedAt ของบรรทัดทับด้วยเวลาเซิร์ฟเวอร์ (D4) ส่วน createdAt ของแถว log
+   * เป็นนาฬิกาเครื่อง · ถ้าป้ายตัดสินด้วยการเทียบเวลาสองเรือนนี้ มันจะโผล่เองโดยไม่มีใครแก้อะไร */
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await dl;
+  await page.waitForTimeout(400);
+
+  /* ⚠️ ที่นี่ reload ไม่ได้ — harness ลบ IndexedDB ทุกครั้งที่หน้าโหลด log จะหายไปด้วย
+   *    แล้วเทสจะเขียวเพราะไม่มีแถวให้ขึ้นป้าย ไม่ใช่เพราะโค้ดถูก
+   *    ใช้ savePacking() แทน — มันเขียน updatedAt: now ทุกครั้งไม่ว่าค่าจะเปลี่ยนหรือไม่
+   *    คีย์ค่าเดิมทับจึงได้ updatedAt ใหม่กว่า createdAt ของ log โดยยอดไม่ขยับเลย
+   *    ซึ่งเป็นรูปเดียวกับที่ซิงค์ทำตอนเขียน serverTime ทับ */
+  const before = (await readState(page)).deliveryLog[0].createdAt;
+  // ⚠️ คีย์ค่าเดิมทับเฉย ๆ ไม่ได้ — เบราว์เซอร์ไม่ยิง change ถ้าค่าไม่เปลี่ยน savePacking จึงไม่ถูกเรียก
+  //    เปลี่ยนไปแล้วเปลี่ยนกลับ ได้ updatedAt ใหม่สองรอบ โดยยอดที่ตัดเข้าใบ (g.qty) ไม่ขยับเลย
+  await pack(page, PN_B, 'perBox', 25);
+  await pack(page, PN_B, 'perBox', 50);
+  await page.waitForTimeout(300);
+
+  const notes = (await readState(page)).deliveryNotes.filter(d => !d.orderId);
+  expect(notes.some(d => d.updatedAt > before),
+    'เทสนี้ต้องทำให้ updatedAt ใหม่กว่า createdAt ของ log จริง ไม่งั้นไม่ได้ทดสอบอะไร').toBe(true);
+
+  expect(await page.locator('#dnLogTable tbody').innerText(),
+    'ยอดไม่ได้เปลี่ยน ป้ายต้องไม่ขึ้น แม้ updatedAt จะใหม่กว่า').not.toContain('ข้อมูลเปลี่ยนหลังออกใบ');
+});

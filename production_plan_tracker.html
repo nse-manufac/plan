@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-11.3">
+<meta name="app-version" content="2026-10-11.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -4558,6 +4558,15 @@ function dnSheetNameFor(unit){
  *     จึงต้องมีไฟล์ฟอร์มอยู่ในมือเสมอ — plan แก้ไฟล์ของผู้ใช้ด้วย JSZip ไม่ได้เขียนฟอร์มขึ้นใหม่
  *     เหมือน store เพราะ ExcelJS ตัด xl/drawings/ ทิ้งจนโลโก้บริษัทหายจากกระดาษ */
 async function writeDeliveryFile(unit, date, week, groups, sheetName){
+  /* ⚠️ ด่านกล่อง/เศษอยู่ที่นี่ ไม่ใช่ที่ปุ่ม — ทุกทางที่ออกไฟล์ต้องผ่านด่านเดียวกัน
+   *    ของเดิมด่านอยู่ในตัวจับคลิกของปุ่มอย่างเดียว พอมีทางที่สอง (ลิงก์ออกไฟล์ซ้ำ)
+   *    ทางนั้นข้ามด่านไปเลย แล้วกระดาษที่ส่งลูกค้าจะแจ้งจำนวนคนละตัวกับของที่ส่งจริง
+   *    (ผู้ตรวจ #103 รันพิสูจน์แล้วว่าออกไฟล์ซ้ำข้ามด่านได้จริง) */
+  const bad = groups.filter(g => g.packQty !== g.qty);
+  if(bad.length){
+    throw new Error(`กล่องกับเศษไม่ตรงกับยอดที่คีย์ ${bad.length} กลุ่ม — `
+      + bad.map(g=>`P/N ${g.pn} กระดาษจะพิมพ์ ${numFmt(g.packQty)} แต่คีย์ไว้ ${numFmt(g.qty)}`).join(' · '));
+  }
   const sheet = sheetName || dnSheetNameFor(unit);
   if(!sheet) throw new Error(`ไม่พบชีตของหน่วย ${unit} ในฟอร์มนี้ — มีชีต: ${Object.keys(dnTemplate.sheetMap).join(', ')}`);
   const blob = await fillDeliveryForm(dnTemplate.zip, dnTemplate.sheetMap[sheet], unit, date, groups, week);
@@ -4581,12 +4590,35 @@ function logDeliveryIssue(unit, date, week, groups){
   renderDnLog();
 }
 
-/** มีคนแก้ยอดบรรจุของหน่วย+วันนั้น หลังเวลาที่ออกใบไปแล้วหรือเปล่า
- *  ถ้าใช่ ไฟล์ที่ออกซ้ำจะไม่ตรงกับกระดาษใบเดิมที่ส่งลูกค้าไปแล้ว — ต้องบอกก่อน ไม่ใช่ให้ไปเจอเอง
- *  (repo store มีช่องนี้เหมือนกันแต่ไม่ได้กันไว้ · ของเราตรวจได้เพราะทุกบรรทัดมี updatedAt) */
+/** กลุ่มที่จะลงกระดาษตอน "ออกไฟล์ซ้ำ" — เอาเฉพาะใบที่มียอดตัดจริง
+ *
+ *  ⚠️ ห้ามใช้ shippedOrders() ตรง ๆ ที่นี่ · มันอ่าน dnExtraRows ซึ่งเป็นช่องติ๊กของ
+ *     "วันและหน่วยที่เลือกอยู่บนจอตอนนี้" (ล้างเมื่อเปลี่ยนวัน) ส่วนการออกไฟล์ซ้ำทำงานกับ
+ *     วันของแถว log ซึ่งมักไม่ใช่วันเดียวกัน — แถวที่ติ๊กไว้ของวันอื่นจะไหลลงกระดาษเงียบ ๆ
+ *     (ผู้ตรวจ #103 รันพิสูจน์แล้วว่าเกิดจริง)
+ *  ตัด orders ทิ้งตั้งแต่ตรงนี้ ไม่ใช่แค่กรองกลุ่ม เพราะ fillDeliveryForm เรียก shippedOrders() เองอีกชั้น */
+function dnReissueGroups(date, unit){
+  return deliveryGroups(date, unit)
+    .map(g => Object.assign({}, g, {orders: g.orders.filter(x => x.alloc > 0)}))
+    .filter(g => g.orders.length > 0);
+}
+
+/** ยอดที่จะลงกระดาษตอนนี้ ต่างจากตอนที่ออกใบไปแล้วหรือเปล่า
+ *  ถ้าต่าง ไฟล์ที่ออกซ้ำจะไม่ตรงกับกระดาษใบเดิมที่ส่งลูกค้าไปแล้ว — ต้องบอกก่อน ไม่ใช่ให้ไปเจอเอง
+ *
+ *  ⚠️ เทียบ "เนื้อข้อมูล" ไม่ใช่ "เวลา" · ของเดิมเทียบ updatedAt ของบรรทัดกับ createdAt ของแถว log
+ *     ซึ่งเป็นเวลาคนละเรือนนาฬิกา — doSync() เขียน updatedAt ทับด้วย serverTime หลัง push (D4)
+ *     แต่ createdAt ของ log เป็นนาฬิกาเครื่อง · ป้ายจึงโผล่เองหลังซิงค์ทั้งที่ไม่มีใครแก้อะไร
+ *     และกลับกัน ถ้านาฬิกาเครื่องล้ำกว่าเซิร์ฟเวอร์ ของที่ถูกแก้จริงจะไม่ขึ้นป้าย
+ *     นี่คืออาการที่ D4 เตือนไว้ตรง ๆ (ผู้ตรวจ #103 รันพิสูจน์ทั้งสองทาง)
+ *
+ *  เทียบด้วย qty รวมอย่างเดียว เพราะเป็นตัวเดียวที่ไม่ขึ้นกับช่องติ๊ก dnExtraRows
+ *  (ใบที่ติ๊กให้โผล่มี alloc = 0 จึงบวกยอดเป็นศูนย์) และเป็นเลขที่ผิดแล้วลูกค้าเสียหายจริง */
 function dnLogStale(entry){
-  return state.deliveryNotes.some(d => !d.voided && d.unit===entry.unit && d.date===entry.date
-    && d.updatedAt && entry.createdAt && d.updatedAt > entry.createdAt);
+  if(entry.qty == null) return false;
+  const now = dnReissueGroups(entry.date, entry.unit)
+    .reduce((s,g)=> s + (Number(g.qty)||0), 0);
+  return now !== (Number(entry.qty)||0);
 }
 
 function renderDnLog(){
@@ -4631,7 +4663,7 @@ document.getElementById('dnLogTable').addEventListener('click', async (e)=>{
   if(!entry) return;
   if(!dnTemplate){ toast('เลือกไฟล์ฟอร์ม FM-ST-07 ก่อนครับ — ระบบไม่ได้เก็บไฟล์ใบเก่าไว้ แต่สร้างใหม่ให้'); return; }
 
-  const groups = deliveryGroups(entry.date, entry.unit).filter(g => shippedOrders(g).length > 0);
+  const groups = dnReissueGroups(entry.date, entry.unit);
   if(!groups.length){ toast('ไม่เหลือยอดบรรจุของใบนี้แล้ว — ออกไฟล์ซ้ำไม่ได้'); return; }
   if(dnLogStale(entry) && !confirm(`ยอดบรรจุของ ${entry.unit} วันที่ ${fmtDateTH(entry.date)} ถูกแก้หลังจากออกใบ ${entry.no} ไปแล้ว\n`
       + 'ไฟล์ที่ได้จะไม่ตรงกับกระดาษใบเดิมที่ส่งไปแล้ว\n\nออกไฟล์ต่อหรือไม่?')) return;
