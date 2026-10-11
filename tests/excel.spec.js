@@ -174,6 +174,12 @@ test('รหัส PO ที่ตัดสินหน่วยไม่ได�
     'ข้อความต้องบอกกฎปัจจุบัน (ตำแหน่งที่ 7)').toContainText('ตำแหน่งที่ 7');
   await expect(page.locator('#previewSummary'),
     'กฎเก่าห้ามกลับมา').not.toContainText('ต้องมีตัว U หรือ H');
+
+  // และ title ของป้ายแดงด้วย — สองที่นี้คือสองจุดที่รอบแรกของ PR #101 จับได้
+  //    ด่านที่ดูแค่ช่องสรุปปิดได้ครึ่งเดียว — ผู้ตรวจรอบ 3 กลายพันธุ์ title
+  //    กลับเป็นกฎเก่าแล้วไม่มีเทสไหนแดงเลย
+  const tip = await page.locator('#previewTable .badge.red').first().getAttribute('title');
+  expect(tip, 'คำอธิบายบนป้ายแดงก็ต้องบอกกฎปัจจุบัน').toContain('ตำแหน่งที่ 7');
   await expect(page.locator('#previewTable')).toContainText('หาไม่เจอ');
 
   await page.click('#btnConfirmImport');
