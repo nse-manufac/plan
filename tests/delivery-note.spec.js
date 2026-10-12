@@ -1275,9 +1275,12 @@ test('ออกใบหน่วยที่สองจากฟอร์ม�
   const second = fs.readFileSync(await dl.path());
 
   const za = await JSZip.loadAsync(src), zb = await JSZip.loadAsync(second);
-  const names = Object.keys(za.files).filter(n => !za.files[n].dir).sort();
+  const names = z => Object.keys(z.files).filter(n => !z.files[n].dir).sort();
+  /* ⚠️ เทียบรายชื่อ entry ก่อน — ถ้าวนแต่ชื่อของต้นฉบับ entry ที่ 'เพิ่ม' จะเงียบ
+   *    (entry ที่หายพังเสียงดังเองเพราะ zb.file(n) เป็น null) · ผู้ตรวจ #106 ทัก */
+  expect(names(zb), 'ห้ามมีส่วนไหนของไฟล์หายไปหรือโผล่เพิ่ม').toEqual(names(za));
   const changed = [];
-  for (const n of names) {
+  for (const n of names(za)) {
     if (await za.file(n).async('string') !== await zb.file(n).async('string')) changed.push(n);
   }
   // sheet1 = TUE-U · sheet2 = TUE-H (ลำดับที่ deliveryFormWorkbook สร้าง)
