@@ -35,15 +35,15 @@ const ORDERS = [
   order('PO-H070', '9000000070', 200, '2026-07-20', 'TUE-H')
 ];
 
-async function open(page, orders = ORDERS, records = [], unit = 'TUE-U') {
+async function open(page, orders = ORDERS, records = [], unit = 'TUE-U', deliveryLog = []) {
   // หว่านใหม่ทุกครั้งที่หน้าโหลด = ล้างของที่บันทึกไว้ด้วย (เดิม localStorage ทับให้เอง · ตอนนี้ของที่บันทึกอยู่ใน IndexedDB)
   await forgetSavedOnEveryLoad(page);
-  await page.addInitScript(([k, o, r]) => localStorage.setItem(k, JSON.stringify({
+  await page.addInitScript(([k, o, r, dlog]) => localStorage.setItem(k, JSON.stringify({
     version: 1, deviceName: 't',
     deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
     chartPref: { mode: '14', from: '', to: '' },
-    orders: o, records: r, deliveryNotes: [], importHistory: []
-  })), [K_STATE, orders, records]);
+    orders: o, records: r, deliveryNotes: [], deliveryLog: dlog, importHistory: []
+  })), [K_STATE, orders, records, deliveryLog]);
   await page.goto(APP);
   await waitReady(page);
   await page.click('.tab-btn[data-tab="delivery"]');
@@ -1569,4 +1569,296 @@ test('A1 — ใบที่ส่งครบแล้วต้องหาย�
     'ส่งครบแล้วแต่เป็นบรรทัดของวันนี้ ต้องยังอยู่').toBe(1);
   expect(await page.locator(`#dnTable input.dn-alloc[data-order="PO-B001|${PN_B}"]`).inputValue())
     .toBe('12000');
+});
+
+/* ── log การออกใบส่งสินค้า (เจ้าของสั่ง 10 ต.ค. 2026) ──────────────────
+ *
+ * ตอบคำถามว่า "ใบของหน่วยนี้วันนี้ออกไปแล้วหรือยัง" ซึ่ง deliveryNotes ตอบไม่ได้
+ * เพราะที่นั่นบอกแค่ว่ามีคนคีย์ยอดบรรจุไว้ ไม่ได้บอกว่ากดออกใบแล้ว
+ *
+ * เลขที่ใบคิดจากหน่วย+วัน ไม่ใช่เลขรัน — เลขรันที่นับจากข้อมูลในเครื่องตัวเองจะชนกัน
+ * เมื่อสองเครื่องออกใบตอนยังไม่ซิงค์ แล้วกระดาษถึงมือลูกค้าไปก่อนที่ใครจะรู้ */
+
+/** เตรียมยอดบรรจุให้ออกใบได้ แล้วใส่ไฟล์ฟอร์ม */
+async function readyToIssue(page) {
+  await alloc(page, 'PO-B001|' + PN_B, 100);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 2);
+  const src = await deliveryFormWorkbook(['TUE-U', 'TUE-H']);
+  await page.setInputFiles('#dnTemplateInput', { name: 'FM-ST-07.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: src });
+  await expect(page.locator('#btnDnExport')).toBeEnabled();
+}
+
+test('log ใบส่งสินค้า — กดออกใบสำเร็จแล้วต้องมีแถวขึ้น พร้อมเลขที่คิดจากหน่วย+วัน', async ({ page }) => {
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+
+  expect(await page.locator('#dnLogTable tbody tr').innerText()).toContain('ยังไม่มีใบส่งสินค้า');
+
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  expect((await dl).suggestedFilename(), 'ชื่อไฟล์ต้องเป็นเลขที่ใบ').toBe('TUEU-260829.xlsx');
+  await page.waitForTimeout(400);
+
+  const st = await readState(page);
+  expect(st.deliveryLog.length, 'ต้องมีแถว log หนึ่งแถว').toBe(1);
+  const e = st.deliveryLog[0];
+  expect(e.no).toBe('TUEU-260829');          // TUE-U + 2026-08-29
+  expect(e.unit).toBe('TUE-U');
+  expect(e.date).toBe(DATE);
+  expect(e.week, 'เลข WK ต้องเก็บเป็นสตริง ไม่ใช่ตัวเลข').toBe('34');
+  expect(e.qty).toBe(100);
+  expect(e._dirty, 'ต้องรอส่งขึ้นเซิร์ฟเวอร์').toBe(true);
+
+  const row = await page.locator('#dnLogTable tbody tr').first().innerText();
+  expect(row).toContain('TUEU-260829');
+  expect(row).toContain('TUE-U');
+});
+
+test('log ใบส่งสินค้า — ออกใบไม่ผ่านด่าน ต้องไม่มีแถว log', async ({ page }) => {
+  // ด่านกล่อง/เศษไม่ตรงยอด — ไฟล์ไม่ออก log จึงต้องไม่ขึ้นด้วย ไม่งั้น log โกหกว่าออกใบแล้ว
+  page.on('dialog', d => d.accept());
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await alloc(page, 'PO-B001|' + PN_B, 100);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 3);          // 150 ไม่ตรงกับ 100
+  const src = await deliveryFormWorkbook(['TUE-U', 'TUE-H']);
+  await page.setInputFiles('#dnTemplateInput', { name: 'FM-ST-07.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: src });
+  await page.click('#btnDnExport');
+  await page.waitForTimeout(400);
+
+  expect((await readState(page)).deliveryLog.length, 'ออกไฟล์ไม่สำเร็จต้องไม่บันทึก log').toBe(0);
+});
+
+test('log ใบส่งสินค้า — ออกใบหน่วย+วันเดิมซ้ำ ได้เลขเดิมแต่คนละแถว พร้อมป้ายครั้งที่ 2', async ({ page }) => {
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+
+  for (const _ of [1, 2]) {
+    const dl = page.waitForEvent('download');
+    await page.click('#btnDnExport');
+    await dl;
+    await page.waitForTimeout(400);
+  }
+
+  const st = await readState(page);
+  expect(st.deliveryLog.length, 'ออกซ้ำต้องได้สองแถว ไม่ใช่ทับกัน').toBe(2);
+  expect(new Set(st.deliveryLog.map(e => e.no)).size, 'เลขที่ต้องเหมือนกัน').toBe(1);
+  expect(new Set(st.deliveryLog.map(e => e.id)).size, 'id ต้องต่างกัน').toBe(2);
+  // รอเองจนข้อความโผล่ แทนการอ่านครั้งเดียวหลัง waitForTimeout — ไม่งั้นแดงเพราะจังหวะ ไม่ใช่เพราะโค้ด
+  await expect(page.locator('#dnLogTable tbody')).toContainText('ครั้งที่ 2');
+});
+
+test('log ใบส่งสินค้า — กดเลขที่ใบต้องออกไฟล์ใบนั้นอีกครั้ง โดยไม่เพิ่มแถว log', async ({ page }) => {
+  const asked = [];
+  page.on('dialog', d => { asked.push(d.message()); d.accept(); });
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const first = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await first;
+  await page.waitForTimeout(400);
+
+  const again = page.waitForEvent('download');
+  await page.click('#dnLogTable [data-dn-reissue]');
+  expect((await again).suggestedFilename()).toBe('TUEU-260829.xlsx');
+  await page.waitForTimeout(400);
+
+  expect((await readState(page)).deliveryLog.length,
+    'ออกไฟล์ซ้ำคือพิมพ์ใบเดิมใหม่ ไม่ใช่ออกใบใหม่ — ต้องไม่เพิ่มแถว').toBe(1);
+
+  /* ⚠️ ต้องถามยืนยันทุกครั้ง แม้ยอดจะไม่เปลี่ยนเลย — dnLogStale() จับได้แค่ยอดรวม
+   * ของที่มันจับไม่ได้แต่เปลี่ยนจริงมีอีก ที่หนักสุดคือ Wip bal. ซึ่งมาจากไฟล์ Call In งวดล่าสุด
+   * นำเข้าไฟล์งวดใหม่ตามปกติ เลขบนกระดาษก็เปลี่ยนแล้วโดยไม่มีใครแตะยอดอะไร (ผู้ตรวจ #103) */
+  expect(asked.length, 'ต้องถามยืนยันก่อนออกไฟล์ซ้ำเสมอ').toBe(1);
+  expect(asked[0]).toContain('สร้างใหม่จากข้อมูลวันนี้ ไม่ใช่สำเนาของกระดาษใบเดิม');
+  expect(asked[0], 'ต้องบอกถึง Wip bal. ที่เปลี่ยนเองเมื่อนำเข้า Call In งวดใหม่').toContain('Wip bal.');
+});
+
+test('log ใบส่งสินค้า — ยังไม่ได้เลือกไฟล์ฟอร์ม กดเลขที่ใบต้องบอกให้เลือกก่อน ไม่ใช่เงียบ', async ({ page }) => {
+  // ระบบไม่ได้เก็บไฟล์ใบเก่าไว้ แต่สร้างใหม่ จึงต้องมีฟอร์มในมือเสมอ
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await dl;
+  await page.waitForTimeout(400);
+
+  // ⚠️ ที่นี่ reload ไม่ได้ — harness ลบ IndexedDB ทุกครั้งที่หน้าโหลด (forgetSavedOnEveryLoad)
+  //    log จะหายไปด้วย · ถอดไฟล์ออกจากช่องเลือกแทน ซึ่งเป็นเส้นทางเดียวกับที่ dnTemplate กลายเป็น null
+  await page.setInputFiles('#dnTemplateInput', []);
+  await page.waitForTimeout(200);
+
+  await page.click('#dnLogTable [data-dn-reissue]');
+  await page.waitForTimeout(300);
+  await expect(page.locator('#toast')).toContainText('เลือกไฟล์ฟอร์ม');
+});
+
+test('log ใบส่งสินค้า — แก้ยอดบรรจุหลังออกใบ ต้องขึ้นป้ายเตือนว่าไฟล์จะไม่ตรงกับกระดาษเดิม', async ({ page }) => {
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await dl;
+  await page.waitForTimeout(400);
+
+  expect(await page.locator('#dnLogTable tbody').innerText(),
+    'ยังไม่มีใครแก้ ต้องยังไม่ขึ้นป้าย').not.toContain('ข้อมูลเปลี่ยนหลังออกใบ');
+
+  await pack(page, PN_B, 'boxes', 1);          // แก้ยอดบรรจุหลังออกใบไปแล้ว
+  await alloc(page, 'PO-B001|' + PN_B, 50);
+  await page.waitForTimeout(300);
+
+  await expect(page.locator('#dnLogTable tbody')).toContainText('ข้อมูลเปลี่ยนหลังออกใบ');
+});
+
+/* ── สามข้อที่ผู้ตรวจ #103 จับได้ — ทั้งหมดอยู่ที่ทางออกไฟล์ซ้ำ ───────── */
+
+test('log — ออกไฟล์ซ้ำต้องผ่านด่านกล่อง/เศษเหมือนปุ่มออกใบ ห้ามข้าม', async ({ page }) => {
+  // ด่านนี้คอมเมนต์ในโค้ดเขียนไว้เองว่า "ห้ามเป็นแค่คำถามให้กดผ่าน — ต้องกันจริง"
+  // ถ้าทางออกไฟล์ซ้ำข้ามไป กระดาษที่ส่งลูกค้าจะแจ้งจำนวนคนละตัวกับของที่ส่งจริง
+  page.on('dialog', d => d.accept());
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await dl;
+  await page.waitForTimeout(400);
+
+  await pack(page, PN_B, 'boxes', 1);          // 1×50 = 50 แต่คีย์ส่งไว้ 100
+  await page.waitForTimeout(300);
+
+  let got = false;
+  page.on('download', () => { got = true; });
+  await page.click('#dnLogTable [data-dn-reissue]');
+  await page.waitForTimeout(600);
+  expect(got, 'กล่อง/เศษไม่ตรงยอด ต้องไม่ได้ไฟล์ออกมา').toBe(false);
+  await expect(page.locator('#toast')).toContainText('กล่องกับเศษไม่ตรง');
+});
+
+test('log — ออกไฟล์ซ้ำต้องไม่ลากแถวที่ติ๊กไว้ของวันอื่นลงกระดาษ', async ({ page }) => {
+  // ช่องติ๊ก (dnExtraRows) เป็นสถานะของวัน+หน่วยที่เลือกอยู่บนจอ ล้างเมื่อเปลี่ยนวัน
+  // แต่การออกไฟล์ซ้ำทำงานกับวันของแถว log ซึ่งมักไม่ใช่วันเดียวกัน
+  page.on('dialog', d => d.accept());
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await dl;
+  await page.waitForTimeout(400);
+
+  // เปลี่ยนวันบนจอ แล้วติ๊ก "PO-B055" ซึ่งไม่ได้อยู่ในใบเดิม ให้โผล่ในวันนั้น
+  // ⚠️ ต้องเจาะจงใบนี้ · ติ๊กใบแรกที่เจอจะได้ PO-B001 ซึ่งอยู่ในใบเดิมอยู่แล้ว แล้วเทสจะไม่จับอะไรเลย
+  await page.fill('#dnDate', '2026-08-30');
+  await page.waitForTimeout(250);
+  const extra = page.locator('#dnTable input.dn-include[data-order="PO-B055|' + PN_B + '"]');
+  await expect(extra, 'ต้องมีช่องติ๊กของ PO-B055 ให้ติ๊ก ไม่งั้นเทสนี้ไม่ได้ทดสอบอะไร').toHaveCount(1);
+  await extra.check();
+  await page.waitForTimeout(250);
+
+  const again = page.waitForEvent('download');
+  await page.click('#dnLogTable [data-dn-reissue]');
+  const buf = await (await again).createReadStream().then(s => new Promise(ok => {
+    const c = []; s.on('data', d => c.push(d)); s.on('end', () => ok(Buffer.concat(c)));
+  }));
+  const zip = await JSZip.loadAsync(buf);
+  const xml = await zip.file(Object.keys(zip.files).find(n => /sheet1\.xml$/.test(n))).async('string');
+  expect(xml, 'ใบเดิมมีแต่ PO-B001 — PO-B055 ต้องไม่โผล่เพราะไปติ๊กไว้ในวันอื่น').not.toContain('PO-B055');
+  expect(xml).toContain('PO-B001');
+});
+
+test('log ใบส่งสินค้า — ใบที่ซิงค์มาจากเครื่องอื่น ต้องขึ้นทันทีที่กดเข้าแท็บ', async ({ page }) => {
+  /* เส้นทางที่คนใช้จริงมากที่สุด และเป็นเหตุผลที่ใบนี้มีอยู่ — มาถึงโรงงาน เปิดโปรแกรม
+   * กดแท็บใบส่งสินค้า เพื่อดูว่า 'ใบของหน่วยนี้วันนี้ออกไปแล้วหรือยัง'
+   *
+   * ⚠️ renderAll() มีด่านเช็กแท็บ (วาด log เฉพาะเมื่อหน้านี้ active อยู่) ซึ่งถูกสำหรับรอบซิงค์
+   *    แต่ตอนเปิดหน้า renderAll() วิ่งขณะแท็บ import ยัง active · ถ้าตัวจับคลิกแท็บไม่วาดเอง
+   *    ตารางจะว่างทั้งหัวตาราง ซึ่งอ่านได้ว่า 'ยังไม่ออกใบ' แล้วคนจะออกกระดาษซ้ำ
+   *    (ผู้ตรวจ #103 รันเจอ regression นี้ตอนเพิ่มด่านเช็กแท็บเข้าไปรอบก่อน) */
+  const fromOther = [{
+    id: 'dl-sync-1', no: 'TUEU-260829', date: DATE, unit: 'TUE-U', week: '34',
+    groups: 1, lines: 1, qty: 100, deviceName: 'เครื่องห้องวางแผน',
+    createdAt: '2026-08-29T02:00:00.000Z', updatedAt: '2026-08-29T02:00:00.000Z', voided: false
+  }];
+  await open(page, ORDERS, [], 'TUE-U', fromOther);
+
+  const log = await page.locator('#dnLogTable').innerText();
+  expect(log, 'ตารางต้องไม่ว่างเปล่า — ว่างแปลว่าตอบคำถามว่าออกใบแล้วหรือยังไม่ได้').not.toBe('');
+  expect(log, 'หัวตารางต้องขึ้น').toContain('เลขที่');
+  expect(log, 'ใบที่เครื่องอื่นออกไว้ต้องเห็น').toContain('TUEU-260829');
+  expect(log).toContain('เครื่องห้องวางแผน');
+});
+
+test('log ใบส่งสินค้า — ยังไม่มีใบเลย ต้องขึ้นข้อความบอก ไม่ใช่ตารางว่างเปล่า', async ({ page }) => {
+  /* ตารางว่างกับ 'ยังไม่มีใบ' อ่านออกมาเหมือนกันสำหรับคน แต่ตัวแรกแยกไม่ออกว่าจอพังหรือไม่มีข้อมูล */
+  await open(page);
+  expect(await page.locator('#dnLogTable').innerText()).toContain('เลขที่');
+  expect(await page.locator('#dnLogTable tbody tr').innerText()).toContain('ยังไม่มีใบส่งสินค้า');
+});
+
+test('log ใบส่งสินค้า — หน่วยที่ #101 เพิ่ม (TUE-T) ต้องได้เลขที่ของตัวเอง ไม่ใช่เลขของหน่วยอื่น', async ({ page }) => {
+  /* #101 เพิ่ม TUE-T กับ TUE-A เข้ามาหลังใบนี้เริ่มเขียน · เลขที่ใบคิดจาก 'ชื่อหน่วย + วัน'
+   * ถ้าใครย่อชื่อหน่วยให้สั้นลง หรือตัดเหลือตัวอักษรเดียว สองหน่วยจะได้เลขเดียวกัน
+   * แล้วไฟล์ของคนละหน่วยจะทับกันทั้งที่เป็นใบคนละใบ · ข้อนี้คู่กับข้อ TUE-U ด้านบน
+   * พอมีสองหน่วยถูกตรึงไว้ การยุบเลขให้สั้นลงจะทำข้อใดข้อหนึ่งแดงเสมอ */
+  await open(page, [order('PO-T001', PN_B, 5000, '2026-08-05', 'TUE-T')], [], 'TUE-T');
+  await page.fill('#dnWeek', '34');
+  await alloc(page, 'PO-T001|' + PN_B, 100);
+  await pack(page, PN_B, 'perBox', 50);
+  await pack(page, PN_B, 'boxes', 2);
+  const src = await deliveryFormWorkbook(['TUE-T']);
+  await page.setInputFiles('#dnTemplateInput', { name: 'FM-ST-07.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: src });
+  await expect(page.locator('#btnDnExport')).toBeEnabled();
+
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  expect((await dl).suggestedFilename(), 'ชื่อไฟล์ต้องเป็นเลขที่ใบของ TUE-T').toBe('TUET-260829.xlsx');
+  await page.waitForTimeout(400);
+
+  const e = (await readState(page)).deliveryLog[0];
+  expect(e.no).toBe('TUET-260829');
+  expect(e.unit).toBe('TUE-T');
+  await expect(page.locator('#dnLogTable tbody')).toContainText('TUET-260829');
+});
+
+test('D4 — ป้ายข้อมูลเปลี่ยนต้องไม่โผล่เองหลังซิงค์เขียน updatedAt ทับด้วย serverTime', async ({ page }) => {
+  /* doSync() เขียน updatedAt ของบรรทัดทับด้วยเวลาเซิร์ฟเวอร์ (D4) ส่วน createdAt ของแถว log
+   * เป็นนาฬิกาเครื่อง · ถ้าป้ายตัดสินด้วยการเทียบเวลาสองเรือนนี้ มันจะโผล่เองโดยไม่มีใครแก้อะไร */
+  await open(page);
+  await page.fill('#dnWeek', '34');
+  await readyToIssue(page);
+  const dl = page.waitForEvent('download');
+  await page.click('#btnDnExport');
+  await dl;
+  await page.waitForTimeout(400);
+
+  /* ⚠️ ที่นี่ reload ไม่ได้ — harness ลบ IndexedDB ทุกครั้งที่หน้าโหลด log จะหายไปด้วย
+   *    แล้วเทสจะเขียวเพราะไม่มีแถวให้ขึ้นป้าย ไม่ใช่เพราะโค้ดถูก
+   *    ใช้ savePacking() แทน — มันเขียน updatedAt: now ทุกครั้งไม่ว่าค่าจะเปลี่ยนหรือไม่
+   *    คีย์ค่าเดิมทับจึงได้ updatedAt ใหม่กว่า createdAt ของ log โดยยอดไม่ขยับเลย
+   *    ซึ่งเป็นรูปเดียวกับที่ซิงค์ทำตอนเขียน serverTime ทับ */
+  const before = (await readState(page)).deliveryLog[0].createdAt;
+  // ⚠️ คีย์ค่าเดิมทับเฉย ๆ ไม่ได้ — เบราว์เซอร์ไม่ยิง change ถ้าค่าไม่เปลี่ยน savePacking จึงไม่ถูกเรียก
+  //    เปลี่ยนไปแล้วเปลี่ยนกลับ ได้ updatedAt ใหม่สองรอบ โดยยอดที่ตัดเข้าใบ (g.qty) ไม่ขยับเลย
+  await pack(page, PN_B, 'perBox', 25);
+  await pack(page, PN_B, 'perBox', 50);
+  await page.waitForTimeout(300);
+
+  const notes = (await readState(page)).deliveryNotes.filter(d => !d.orderId);
+  expect(notes.some(d => d.updatedAt > before),
+    'เทสนี้ต้องทำให้ updatedAt ใหม่กว่า createdAt ของ log จริง ไม่งั้นไม่ได้ทดสอบอะไร').toBe(true);
+
+  expect(await page.locator('#dnLogTable tbody').innerText(),
+    'ยอดไม่ได้เปลี่ยน ป้ายต้องไม่ขึ้น แม้ updatedAt จะใหม่กว่า').not.toContain('ข้อมูลเปลี่ยนหลังออกใบ');
 });
