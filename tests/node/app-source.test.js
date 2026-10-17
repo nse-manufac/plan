@@ -9,7 +9,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { ROOT, appHtml, appSources, appSource, fnSource } = require('../app-source');
+const { ROOT, appHtml, appSources, appSource, fnSource, scriptTags } = require('../app-source');
 
 const git = (...a) => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8' });
 
@@ -63,4 +63,15 @@ test('ไม่มีเทสไหนอ่านซอร์สจาก HTML
     if (/page\.route\(\s*\/production_plan_tracker/.test(src)) offenders.push(`${f} (ดักแก้เฉพาะ HTML → ใช้ patchAppSource)`);
   }
   assert.deepEqual(offenders, []);
+});
+
+test('F4 — ทุก <script src> ต้องต่อท้าย ?v= ด้วยเลขรุ่นเดียวกับ <meta name="app-version">', () => {
+  // ปุ่ม "มีรุ่นใหม่" บัสต์แคชได้แค่ HTML (?_v=) · ไฟล์ที่หน้าโหลดจะได้ของใหม่ก็ต่อเมื่อ URL เปลี่ยน
+  // ลืมบัมป์ ?v= = เครื่องที่ค้างไฟล์เก่าเห็นเลขรุ่นใหม่บนหัวจอแต่รันโค้ดเก่า — "เลขรุ่นที่โกหก" ที่ F4 ห้าม
+  const meta = /<meta name="app-version" content="([^"]*)">/.exec(appHtml());
+  assert.ok(meta, 'ไม่พบ <meta name="app-version">');
+  const tags = scriptTags();
+  assert.ok(tags.length > 0, 'ไม่พบแท็ก <script src> เลย — ตัวอ่านแท็กอาจพัง เทสนี้จะผ่านแบบไม่ได้ตรวจอะไร');
+  const wrong = tags.filter(t => t.v !== meta[1]).map(t => `${t.file}?v=${t.v ?? '(ไม่มี)'}`);
+  assert.deepEqual(wrong, [], `ทุกแท็กต้องเป็น ?v=${meta[1]}`);
 });

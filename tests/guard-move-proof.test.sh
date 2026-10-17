@@ -398,6 +398,44 @@ printf '!/evidence/x.js\n' >> .gitignore
 seal gap
 expect fail 'ย้ายถูก + ปลดล็อก evidence/x.js ใน .gitignore'
 
+# ═══════════════ แท็กโหลดไฟล์ต่อท้าย ?v=<เลขรุ่น> (INVARIANTS F4) ═══════════════
+# บัสต์แคชของไฟล์ที่หน้าโหลด — ทุกใบที่บัมป์เลขรุ่นจะเปลี่ยนแท็กเดิมทุกตัว ตัวพิสูจน์ต้องยอม
+# แต่ "แท็กหาย" ต้องมีแท็กของไฟล์เดียวกันกลับมาเสมอ ไม่งั้นโค้ดทั้งไฟล์หลุดจากหน้าโดยไม่มีอะไรหาย
+
+move_dates_tagged() {  # ย้าย addDays ไป core/dates.js พร้อมแท็กที่มี ?v=
+  local a b
+  a=$(line_of production_plan_tracker.html 'function addDays'); b=$(line_of production_plan_tracker.html 'function fmt')
+  { printf '"use strict";\n\n'; cut_lines production_plan_tracker.html "$a" $((b - 1)); } > core/dates.js
+  sed -i 's|^<script>$|<script src="core/dates.js?v=2026-01-01.2"></script>\n<script>|' production_plan_tracker.html
+  sed -i 's|content="2026-01-01.1"|content="2026-01-01.2"|' production_plan_tracker.html
+}
+
+scenario move-with-vtag
+move_dates_tagged
+seal move
+expect pass 'ย้ายแล้วแท็กโหลดไฟล์ต่อท้าย ?v=<เลขรุ่น>'
+
+# ฉากต่อจากนี้ต้องการ main ที่มีแท็กอยู่แล้ว — ทำ main ใหม่ให้เป็นสภาพหลังย้าย
+git checkout -q main
+move_dates_tagged
+seal 'base with tag'
+
+scenario bump-vtag
+sed -i 's|core/dates.js?v=2026-01-01.2|core/dates.js?v=2026-01-01.3|' production_plan_tracker.html
+sed -i 's|content="2026-01-01.2"|content="2026-01-01.3"|' production_plan_tracker.html
+seal bump
+expect pass 'บัมป์เลขรุ่นพร้อม ?v= ของแท็กเดิม (แท็กเก่าหาย แท็กของไฟล์เดียวกันกลับมา)'
+
+scenario drop-tag
+sed -i '/^<script src="core\/dates.js/d' production_plan_tracker.html
+seal gap
+expect fail 'เอาแท็กโหลดไฟล์ออกเฉย ๆ — โค้ดในไฟล์นั้นจะไม่ถูกโหลดอีก'
+
+scenario swap-tag
+sed -i 's|core/dates.js?v=2026-01-01.2|core/keep.js?v=2026-01-01.2|' production_plan_tracker.html
+seal gap
+expect fail 'เปลี่ยนแท็กให้ชี้ไฟล์อื่น — ไฟล์เดิมหลุดจากหน้า'
+
 # ── ต้องรอดใต้ `set -euo pipefail` แบบที่ workflow รันจริง และคืนค่าถูกทาง ──
 # (บทเรียนจาก app-files.sh: เทสเขียวแต่ของจริงตายเงียบเพราะเทสไม่ได้เปิด errexit)
 scenario under-errexit
