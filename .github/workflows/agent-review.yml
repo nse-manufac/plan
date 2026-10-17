@@ -176,9 +176,8 @@ jobs:
             ดู diff ด้วย `git diff origin/<base>...HEAD` แล้ว**อ่านไฟล์ที่เปลี่ยนจริง** ไม่ใช่อ่านแค่ diff
             (ใบที่ซ้อนบนใบอื่นมี base ไม่ใช่ main — ตรวจเฉพาะส่วนของใบนี้)
 
-            ⚠️ **ห้ามอ่านทั้งไฟล์เข้า context** — ~1,014 KB จาก ~1,409 KB เป็น ExcelJS + JSZip
-            ที่ vendor ไว้ใน 5 บรรทัด (บรรทัดละ 20,000–500,000 ตัวอักษร)
-            หาที่ต้องอ่านด้วย `grep -n "^/\* -\{5,\}" production_plan_tracker.html` แล้ว Read ด้วย offset+limit
+            ⚠️ **ห้ามอ่านไฟล์แอปทั้งไฟล์** และห้ามเปิด `lib/` (ExcelJS + JSZip ~1 MB) · โค้ดอยู่ใน `app.js` (หรือในไฟล์ HTML ถ้ายังไม่แยก)
+            หาที่ต้องอ่านด้วย `grep -n "^/\* -\{5,\}" app.js production_plan_tracker.html` แล้ว Read ด้วย offset+limit
 
             ## คุณเป็นตาคู่ที่สอง ไม่ใช่คู่สุดท้าย
 
