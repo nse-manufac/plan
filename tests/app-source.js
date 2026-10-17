@@ -64,6 +64,29 @@ function fnSource(name) {
 }
 
 /**
+ * ชื่อระดับบนสุดที่โค้ดของแอปประกาศ ทุกไฟล์ยกเว้น lib/ — [{name, file, line}]
+ *
+ * ตั้งแต่ใบ 02 ของการแยกไฟล์ (ถอดเปลือก IIFE) ทุกไฟล์ใช้ชื่อร่วมกันในที่เดียวคือ global ของหน้า
+ * ชื่อซ้ำข้ามไฟล์ = ตัวที่โหลดทีหลังทับตัวแรกเงียบ ๆ (ถ้าเป็น function) หรือหน้าพังทั้งหน้า (ถ้าเป็น const/let)
+ * ชื่อที่ซ้ำกับของเบราว์เซอร์ (เช่น print · status · close) = ทับของเบราว์เซอร์เงียบ ๆ
+ * tests/node/globals.test.js กับ tests/globals.spec.js ใช้ตัวนี้คุมทั้งสองเรื่อง
+ *
+ * นับเฉพาะบรรทัดชิดซ้าย — โค้ดแอปเขียนระดับบนสุดชิดซ้ายเสมอ (ข้อเดียวกับที่ด่านพิสูจน์ย้ายอย่างเดียวใช้)
+ * การประกาศแบบแยกส่วน (const {a, b} = ...) ตัวนี้มองไม่เห็น — ตรวจแล้วตอนใบ 02 ว่ายังไม่มีในแอป
+ */
+function topLevelNames() {
+  const out = [];
+  for (const { file, text } of appSources()) {
+    if (file.startsWith('lib/')) continue;
+    text.split(/\r?\n/).forEach((l, i) => {
+      const m = /^(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)|^(?:const|let|var|class)\s+([A-Za-z_$][\w$]*)/.exec(l);
+      if (m) out.push({ name: m[1] || m[2], file, line: i + 1 });
+    });
+  }
+  return out;
+}
+
+/**
  * แก้ซอร์สของแอประหว่างที่เบราว์เซอร์โหลด — แทนที่ anchor ด้วย replacement ในไฟล์ไหนก็ตามที่มันอยู่
  *
  * เดิมเทสดักเฉพาะ production_plan_tracker.html แล้วแทรกขั้นทดสอบเข้า DEFAULT_PROCESSES
@@ -84,4 +107,4 @@ async function patchAppSource(page, anchor, replacement) {
   return () => files.size;
 }
 
-module.exports = { ROOT, APP_FILE, appHtml, appSources, appSource, fnSource, patchAppSource };
+module.exports = { ROOT, APP_FILE, appHtml, appSources, appSource, fnSource, topLevelNames, patchAppSource };
