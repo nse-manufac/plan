@@ -4801,7 +4801,8 @@ document.getElementById('syncBadge').addEventListener('click', ()=>doSync(false)
 /* เครื่องในโรงงานเปิดโปรแกรมค้างไว้ทั้งวัน และเบราว์เซอร์ก็ cache ไฟล์เก่าไว้ได้
    เลขรุ่นบนหัวจอคือสิ่งเดียวที่ใช้ตัดสินทางโทรศัพท์ได้ว่าสองเครื่องใช้ของเดียวกันไหม
    วิธีเช็กรุ่นใหม่: fetch ไฟล์ตัวเองแบบข้าม cache แล้วอ่าน <meta> จากข้อความที่ได้มา
-   — ไม่ต้องเพิ่มไฟล์ใหม่ ยังเป็นไฟล์เดียวเหมือนเดิม (INVARIANTS F2/F4) */
+   ⚠️ ?_v= ข้าม cache ได้แค่ไฟล์ HTML — ไฟล์ที่หน้าโหลด (app.js · lib/) ข้ามได้เพราะแท็ก <script src>
+   ต่อท้าย ?v=<เลขรุ่น> ไว้ HTML ใหม่จึงชี้ URL ใหม่เสมอ · ด่านคุมให้เลขตรงกับ <meta> (INVARIANTS F4) */
 const APP_VERSION = (document.querySelector('meta[name="app-version"]')||{}).content || '';
 const APP_VERSION_RE = /<meta\s+name="app-version"\s+content="([^"]*)"/i;
 const UPDATE_CHECK_MS = 30*60*1000;   // ไฟล์เกือบ 1 MB — เช็กถี่กว่านี้เน็ตโรงงานรับไม่ไหว

@@ -46,7 +46,8 @@ import { execFileSync } from 'node:child_process';
 
 // บรรทัดที่ "โผล่มาใหม่ได้" โดยไม่ต้องมาจากของเดิม — เท่าที่การแยกไฟล์ต้องใช้จริงเท่านั้น
 // ⚠️ เพิ่มรายการที่นี่ = ขยายช่องให้โค้ดใหม่เข้ามาได้ ต้องมีเทสคุมทุกรายการ
-const SCRIPT_SRC = /^<script src="([^"]*)"><\/script>$/;
+// ต่อท้าย ?v=<เลขรุ่น> ได้ (INVARIANTS F4 — บัสต์แคชของไฟล์ที่หน้าโหลด) · กลุ่มที่ 1 คือ path ล้วนไม่รวม query
+const SCRIPT_SRC = /^<script src="([^"?]*)(?:\?v=[^"]*)?"><\/script>$/;
 const ALLOW_ADDED = [
   // แท็กโหลดไฟล์ — ต้องชี้ไปที่ "ไฟล์แอป" ที่มีอยู่จริงเท่านั้น (ตรวจเพิ่มใน checkSrc)
   // ไม่งั้นแท็กที่ชี้ไป tests/ หรือไฟล์ที่ไม่อยู่ใน diff จะพาโค้ดที่ไม่ผ่านการพิสูจน์เข้าไปรันในแอป
@@ -66,6 +67,9 @@ const ALLOW_REMOVED = [
   /^<script>$/,
   /^<\/script>$/,
   /^<meta name="app-version" content="[^"]*">$/,
+  // แท็กโหลดไฟล์ — หายได้เฉพาะเมื่อมีแท็กของไฟล์เดียวกันกลับมา (บัมป์ ?v=) ตรวจคู่กันใน main
+  // เอาแท็กออกเฉย ๆ = โค้ดในไฟล์นั้นไม่ถูกโหลดอีก ทั้งที่ตัวโค้ดไม่ได้หายจาก repo
+  SCRIPT_SRC,
 ];
 
 // ── ไฟล์นอกขอบเขตการพิสูจน์ ──────────────────────────────────────
@@ -154,7 +158,7 @@ function parseDiff(text) {
 }
 
 // ── แบ่งช่วงที่เปลี่ยนเป็นก้อน ──────────────────────────────────────
-function segment(run, file, fileLines, appFiles, problems) {
+function segment(run, file, fileLines, appFiles, problems, tags) {
   const side = run.side;
   const path = side === '-' ? file.oldPath : file.newPath;
   const allow = side === '-' ? ALLOW_REMOVED : ALLOW_ADDED;
@@ -170,8 +174,9 @@ function segment(run, file, fileLines, appFiles, problems) {
       if (u.lines.length > 1) {
         problems.push({ path, line: u.line, msg: `บรรทัดพิเศษ "${short(u.lines[0])}" ต้องอยู่เดี่ยว ๆ แต่มีบรรทัดอื่นห้อยอยู่ใต้มัน` });
       }
-      const src = side === '+' ? SCRIPT_SRC.exec(u.lines[0]) : null;
-      if (src && !appFiles.has(src[1])) {
+      const src = SCRIPT_SRC.exec(u.lines[0]);
+      if (src) (side === '+' ? tags.added : tags.removed).push({ src: src[1], path, line: u.line });
+      if (src && side === '+' && !appFiles.has(src[1])) {
         problems.push({ path, line: u.line, msg: `แท็กโหลดไฟล์ชี้ไปที่ "${src[1]}" ซึ่งไม่ใช่ไฟล์แอปใน repo นี้ — โค้ดในนั้นไม่ได้ผ่านการพิสูจน์` });
       }
     } else if (!u.fragment) {
@@ -254,6 +259,7 @@ function main(argv) {
   const removed = [], added = [];
   let special = 0;
   const outCount = new Map(), inCount = new Map();
+  const tags = { added: [], removed: [] };   // แท็ก <script src> ที่เพิ่ม/ลบ — ตรวจคู่กันหลังวน
 
   for (const f of files) {
     if (f.binary) {
@@ -262,7 +268,7 @@ function main(argv) {
     }
     for (const run of f.runs) {
       const fl = run.side === '-' ? linesAt(mb, f.oldPath) : linesAt('HEAD', f.newPath);
-      const r = segment(run, f, fl, appFiles, problems);
+      const r = segment(run, f, fl, appFiles, problems, tags);
       special += r.special;
       const bucket = run.side === '-' ? removed : added;
       const count = run.side === '-' ? outCount : inCount;
@@ -271,6 +277,15 @@ function main(argv) {
         count.set(u.path, (count.get(u.path) || 0) + 1);
       }
     }
+  }
+
+  // ── แท็กโหลดไฟล์ที่หายไป ต้องมีแท็กของไฟล์เดียวกันกลับมา (กรณีบัมป์ ?v=) ──
+  const back = new Map();
+  for (const t of tags.added) back.set(t.src, (back.get(t.src) || 0) + 1);
+  for (const t of tags.removed) {
+    const n = back.get(t.src) || 0;
+    if (n > 0) { back.set(t.src, n - 1); continue; }
+    problems.push({ path: t.path, line: t.line, msg: `เอาแท็กโหลด "${t.src}" ออก — โค้ดในไฟล์นั้นจะไม่ถูกโหลดอีก ทั้งที่ยังอยู่ใน repo` });
   }
 
   // ── เทียบก้อนสองฝั่ง ──
