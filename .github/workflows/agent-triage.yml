@@ -285,10 +285,9 @@ jobs:
             2. อ่าน issue: `gh issue view ${{ github.event.issue.number }}`
             3. ค้นโค้ดเท่าที่จำเป็นเพื่อยืนยันว่าเป็นบั๊กจริงไหม (Read/Grep/Glob เท่านั้น ห้ามแก้ไฟล์)
 
-               **ห้ามอ่านไฟล์แอปทั้งไฟล์** — `production_plan_tracker.html` หนัก 990 KB
-               และ ~800 KB เป็น SheetJS ที่ vendor ไว้ในบรรทัดยาว 30,000–75,000 ตัวอักษร
-               (ตอนนี้คือบรรทัด 426–445) **อ่านเข้าไปครั้งเดียวกินหลักแสน token**
-               ให้ `grep -n "^/\* -\{5,\}" production_plan_tracker.html` ดูแผนที่ section ก่อน
+               **ห้ามอ่านไฟล์แอปทั้งไฟล์ และห้ามเปิด `lib/`** (ExcelJS + JSZip ~1 MB **อ่านครั้งเดียวกินหลักแสน token**)
+               โค้ดอยู่ใน `app.js` (หรือในไฟล์ HTML ถ้ายังไม่แยก)
+               ให้ `grep -n "^/\* -\{5,\}" app.js production_plan_tracker.html` ดูแผนที่ section ก่อน
                (ตารางใน `CLAUDE.md` บอกว่าแต่ละ section มีอะไร) แล้ว `Read` เฉพาะช่วงด้วย offset + limit
             4. จัดกลุ่มตามนี้ แล้วทำตามที่กำหนด
 
