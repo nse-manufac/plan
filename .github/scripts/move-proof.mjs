@@ -67,7 +67,7 @@ const ALLOW_REMOVED = [
   /^<script>$/,
   /^<\/script>$/,
   /^<meta name="app-version" content="[^"]*">$/,
-  // แท็กโหลดไฟล์ — หายได้เฉพาะเมื่อมีแท็กของไฟล์เดียวกันกลับมา (บัมป์ ?v=) ตรวจคู่กันใน main
+  // แท็กโหลดไฟล์ — หายได้เฉพาะเมื่อแท็กของไฟล์เดียวกันกลับมาที่ลำดับเดิม (บัมป์ ?v=) ตรวจทั้งไฟล์ใน main
   // เอาแท็กออกเฉย ๆ = โค้ดในไฟล์นั้นไม่ถูกโหลดอีก ทั้งที่ตัวโค้ดไม่ได้หายจาก repo
   SCRIPT_SRC,
 ];
@@ -158,7 +158,7 @@ function parseDiff(text) {
 }
 
 // ── แบ่งช่วงที่เปลี่ยนเป็นก้อน ──────────────────────────────────────
-function segment(run, file, fileLines, appFiles, problems, tags) {
+function segment(run, file, fileLines, appFiles, problems) {
   const side = run.side;
   const path = side === '-' ? file.oldPath : file.newPath;
   const allow = side === '-' ? ALLOW_REMOVED : ALLOW_ADDED;
@@ -174,9 +174,8 @@ function segment(run, file, fileLines, appFiles, problems, tags) {
       if (u.lines.length > 1) {
         problems.push({ path, line: u.line, msg: `บรรทัดพิเศษ "${short(u.lines[0])}" ต้องอยู่เดี่ยว ๆ แต่มีบรรทัดอื่นห้อยอยู่ใต้มัน` });
       }
-      const src = SCRIPT_SRC.exec(u.lines[0]);
-      if (src) (side === '+' ? tags.added : tags.removed).push({ src: src[1], path, line: u.line });
-      if (src && side === '+' && !appFiles.has(src[1])) {
+      const src = side === '+' ? SCRIPT_SRC.exec(u.lines[0]) : null;
+      if (src && !appFiles.has(src[1])) {
         problems.push({ path, line: u.line, msg: `แท็กโหลดไฟล์ชี้ไปที่ "${src[1]}" ซึ่งไม่ใช่ไฟล์แอปใน repo นี้ — โค้ดในนั้นไม่ได้ผ่านการพิสูจน์` });
       }
     } else if (!u.fragment) {
@@ -259,7 +258,6 @@ function main(argv) {
   const removed = [], added = [];
   let special = 0;
   const outCount = new Map(), inCount = new Map();
-  const tags = { added: [], removed: [] };   // แท็ก <script src> ที่เพิ่ม/ลบ — ตรวจคู่กันหลังวน
 
   for (const f of files) {
     if (f.binary) {
@@ -268,7 +266,7 @@ function main(argv) {
     }
     for (const run of f.runs) {
       const fl = run.side === '-' ? linesAt(mb, f.oldPath) : linesAt('HEAD', f.newPath);
-      const r = segment(run, f, fl, appFiles, problems, tags);
+      const r = segment(run, f, fl, appFiles, problems);
       special += r.special;
       const bucket = run.side === '-' ? removed : added;
       const count = run.side === '-' ? outCount : inCount;
@@ -279,13 +277,24 @@ function main(argv) {
     }
   }
 
-  // ── แท็กโหลดไฟล์ที่หายไป ต้องมีแท็กของไฟล์เดียวกันกลับมา (กรณีบัมป์ ?v=) ──
-  const back = new Map();
-  for (const t of tags.added) back.set(t.src, (back.get(t.src) || 0) + 1);
-  for (const t of tags.removed) {
-    const n = back.get(t.src) || 0;
-    if (n > 0) { back.set(t.src, n - 1); continue; }
-    problems.push({ path: t.path, line: t.line, msg: `เอาแท็กโหลด "${t.src}" ออก — โค้ดในไฟล์นั้นจะไม่ถูกโหลดอีก ทั้งที่ยังอยู่ใน repo` });
+  // ── แท็กโหลดไฟล์: เทียบลำดับทั้งไฟล์ก่อน/หลัง ไม่ใช่แค่นับคู่ (ผู้ตรวจ #109) ──
+  // แท็กเดิมทุกตัวต้องยังอยู่ในไฟล์เดียวกัน และ **ลำดับเดิม** (ลำดับแท็ก = ลำดับการทำงาน)
+  // ใบย้ายเพิ่มแท็กใหม่แทรกได้ และบัมป์ ?v= ได้ · ถอดแท็ก / ย้ายไปไฟล์อื่น / สลับลำดับ = ตก
+  const srcList = lines => lines.map(s => SCRIPT_SRC.exec(s)).filter(Boolean).map(m => m[1]);
+  for (const f of files) {
+    if (f.binary || !f.oldPath || !f.newPath) continue;
+    const before = srcList(linesAt(mb, f.oldPath));
+    if (!before.length) continue;
+    const after = srcList(linesAt('HEAD', f.newPath));
+    const left = new Map();
+    for (const s of before) left.set(s, (left.get(s) || 0) + 1);
+    const kept = after.filter(s => { const n = left.get(s) || 0; if (!n) return false; left.set(s, n - 1); return true; });
+    for (const [s, n] of left) {
+      if (n > 0) problems.push({ path: f.newPath, line: 1, msg: `เอาแท็กโหลด "${s}" ออก — โค้ดในไฟล์นั้นจะไม่ถูกโหลดอีก ทั้งที่ยังอยู่ใน repo` });
+    }
+    if (kept.length === before.length && kept.some((s, k) => s !== before[k])) {
+      problems.push({ path: f.newPath, line: 1, msg: `สลับลำดับแท็กโหลดไฟล์ (เดิม ${before.join(' → ')} · ใหม่ ${kept.join(' → ')}) — ลำดับแท็กคือลำดับการทำงาน` });
+    }
   }
 
   // ── เทียบก้อนสองฝั่ง ──

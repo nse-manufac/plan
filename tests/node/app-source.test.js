@@ -8,6 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { ROOT, appHtml, appSources, appSource, fnSource, scriptTags } = require('../app-source');
 
@@ -65,13 +66,18 @@ test('ไม่มีเทสไหนอ่านซอร์สจาก HTML
   assert.deepEqual(offenders, []);
 });
 
-test('F4 — ทุก <script src> ต้องต่อท้าย ?v= ด้วยเลขรุ่นเดียวกับ <meta name="app-version">', () => {
+test('F4 — ทุก <script src> ต่อท้าย ?v= · ไฟล์แอป = เลขรุ่นใน <meta> · lib/ = แฮชของเนื้อไฟล์', () => {
   // ปุ่ม "มีรุ่นใหม่" บัสต์แคชได้แค่ HTML (?_v=) · ไฟล์ที่หน้าโหลดจะได้ของใหม่ก็ต่อเมื่อ URL เปลี่ยน
   // ลืมบัมป์ ?v= = เครื่องที่ค้างไฟล์เก่าเห็นเลขรุ่นใหม่บนหัวจอแต่รันโค้ดเก่า — "เลขรุ่นที่โกหก" ที่ F4 ห้าม
+  // lib/ ใช้แฮชของเนื้อไฟล์แทนเลขรุ่น (ผู้ตรวจ #109): ไลบรารี ~1 MB ไม่ต้องโหลดใหม่ทุกครั้งที่ออกรุ่น
+  // แต่เปลี่ยนเมื่อไฟล์เปลี่ยนจริงเสมอ · แฮชคิดหลังแปลง CRLF เป็น LF — Windows เช็กเอาต์เป็น CRLF แต่ CI เป็น LF
   const meta = /<meta name="app-version" content="([^"]*)">/.exec(appHtml());
   assert.ok(meta, 'ไม่พบ <meta name="app-version">');
   const tags = scriptTags();
   assert.ok(tags.length > 0, 'ไม่พบแท็ก <script src> เลย — ตัวอ่านแท็กอาจพัง เทสนี้จะผ่านแบบไม่ได้ตรวจอะไร');
-  const wrong = tags.filter(t => t.v !== meta[1]).map(t => `${t.file}?v=${t.v ?? '(ไม่มี)'}`);
-  assert.deepEqual(wrong, [], `ทุกแท็กต้องเป็น ?v=${meta[1]}`);
+  const want = file => file.startsWith('lib/')
+    ? crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, file), 'utf8').replace(/\r\n/g, '\n')).digest('hex').slice(0, 8)
+    : meta[1];
+  const wrong = tags.filter(t => t.v !== want(t.file)).map(t => `${t.file}?v=${t.v ?? '(ไม่มี)'} → ควรเป็น ?v=${want(t.file)}`);
+  assert.deepEqual(wrong, []);
 });

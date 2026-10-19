@@ -436,6 +436,25 @@ sed -i 's|core/dates.js?v=2026-01-01.2|core/keep.js?v=2026-01-01.2|' production_
 seal gap
 expect fail 'เปลี่ยนแท็กให้ชี้ไฟล์อื่น — ไฟล์เดิมหลุดจากหน้า'
 
+# ลำดับแท็ก = ลำดับการทำงาน — สลับแล้วทุกแท็กยังอยู่ครบ แต่ต้องตก (ผู้ตรวจ #109 รันแล้วเคยผ่าน)
+git checkout -q main
+sed -i 's|^<script src="core/dates.js?v=2026-01-01.2"></script>$|&\n<script src="core/keep.js?v=2026-01-01.2"></script>|' production_plan_tracker.html
+seal 'base with two tags'
+
+scenario reorder-tags
+a=$(line_of production_plan_tracker.html 'core/dates.js')
+sed -i "${a}{h;d};$((a + 1))G" production_plan_tracker.html
+seal gap
+expect fail 'สลับลำดับแท็กโหลดไฟล์ — ทุกแท็กยังอยู่ แต่ลำดับการทำงานเปลี่ยน'
+
+scenario insert-tag-between
+# ย้ายฟังก์ชันออกเป็นไฟล์ใหม่ แล้วแทรกแท็กของมันระหว่างแท็กเดิมสองตัว — แท็กเดิมยังครบและลำดับเดิม ต้องผ่าน
+a=$(line_of production_plan_tracker.html 'function fmt')
+{ printf '"use strict";\n\n'; cut_lines production_plan_tracker.html "$a" $((a + 2)); } > core/fmt.js
+sed -i 's|^<script src="core/dates.js?v=2026-01-01.2"></script>$|&\n<script src="core/fmt.js?v=2026-01-01.2"></script>|' production_plan_tracker.html
+seal move
+expect pass 'แทรกแท็กใหม่ระหว่างแท็กเดิม — แท็กเดิมครบและลำดับเดิม'
+
 # ── ต้องรอดใต้ `set -euo pipefail` แบบที่ workflow รันจริง และคืนค่าถูกทาง ──
 # (บทเรียนจาก app-files.sh: เทสเขียวแต่ของจริงตายเงียบเพราะเทสไม่ได้เปิด errexit)
 scenario under-errexit
