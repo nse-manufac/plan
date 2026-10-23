@@ -2079,6 +2079,11 @@ function renderEntryTable(){
   const recIndex = buildRecordIndex(state.records);
   const prevProc = PREV_PROCESS[currentProcess];
   const procLabel = PROCESS_LABELS[currentProcess];
+  /* ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (A2) — หน้านี้โชว์อย่างเดียว
+   * เจ้าของสั่งปิดช่องกรอกเมื่อ 23 ต.ค. 2026 · ก่อนหน้านี้เปิดไว้เป็นทางสำรองระหว่างเปลี่ยนผ่าน
+   * แล้วสองทางเขียนกุญแจ orderId|shipping|date เดียวกัน ทับกันเงียบ ๆ โดยไม่มีใครรู้ว่าอันไหนถูก */
+  const isShip = currentProcess === 'shipping';
+  document.getElementById('entryShipNote').hidden = !isShip;
 
   let orders = activeOrders().filter(o=>o.status!=='closed');
   if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
@@ -2117,13 +2122,15 @@ function renderEntryTable(){
       <td data-aging>${agingCell(aging, st.code)}</td>
       <td><span class="cum">${numFmt(cum)}</span>${warn?' <span class="badge amber" title="ยอดสะสมเกินขั้นตอนก่อนหน้า">⚠</span>':''}</td>
       <td class="rem">${numFmt(remaining)}</td>
-      <td><input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}"></td>
+      <td>${isShip
+        ? `<span class="ship-today">${todayVal!=null ? numFmt(todayVal) : '—'}</span>`
+        : `<input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}">`}</td>
     </tr>`;
   });
 
   document.getElementById('entryTable').innerHTML =
     `<thead><tr><th>#</th><th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Order Qty</th><th>Aging<br>(วัน)</th>
-     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนี้</th></tr></thead>
+     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>${isShip ? 'ยอดวันนี้<br>(จากใบส่งสินค้า)' : 'ยอดวันนี้'}</th></tr></thead>
      <tbody>${rowsHtml || emptyRow(9,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
 
   document.querySelectorAll('#entryTable input.row-input').forEach(inputEl=>{
@@ -2265,6 +2272,14 @@ function voidRecords(ids){
 }
 
 function saveEntryValue(orderId, rawVal, date){
+  /* ⚠️ ด่านนี้ไม่ใช่ของซ้ำกับการไม่วาดช่องกรอก — มันกันทางที่เหลือ
+   *    ยอดส่งของต้องมีทางเขียนทางเดียวคือ saveAllocation() ของหน้าใบส่งสินค้า (A2)
+   *    ถ้าวันหนึ่งมีใครวาดช่องกรอกกลับมา หรือเรียกฟังก์ชันนี้จากที่อื่น
+   *    กุญแจ orderId|shipping|date จะถูกเขียนจากสองที่แล้วทับกันเงียบ ๆ อีกรอบ */
+  if(currentProcess === 'shipping'){
+    toast('ยอดส่งของคีย์ที่หน้าใบส่งสินค้า — หน้านี้แสดงผลอย่างเดียว');
+    return;
+  }
   const idx = state.records.findIndex(r=>r.orderId===orderId && r.process===currentProcess && r.date===date);
   if(rawVal===''||rawVal==null){
     // เจตนาไม่ลบบันทึกเดิมเมื่อเคลียร์ช่องว่าง (ต่างจากเดิม) — เพื่อไม่ให้ขัดกับการซิงค์ข้าม
