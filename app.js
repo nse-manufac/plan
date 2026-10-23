@@ -112,6 +112,16 @@ function daysBetween(isoA, isoB){
   if(!a || !b) return null;
   return Math.round((b - a)/86400000);
 }
+/** วันที่ของใบสั่งที่เป็นไปไม่ได้ — ก่อนปี 2000 · เลยวันนี้ไปเกินหนึ่งปี · หรืออ่านเป็นวันที่ไม่ได้
+ *  ⚠️ เจอจริง ต.ค. 2026: เครื่องหนึ่งถือ orderDate ปี 1901 (= ยอดสั่งที่ถูกอ่านเป็นเลขวันที่ของ Excel)
+ *     Aging ขึ้นหลักหมื่นวันและทุกขั้นขึ้นล่าช้า ทั้งที่ชีตกับเครื่องอื่นเป็นปี 2026
+ *  ช่องว่างไม่นับ — "ไม่มีวันที่" เป็นอีกกรณีหนึ่งที่ computeStatus จัดการแยกไว้แล้ว */
+function implausibleDate(iso, refISO){
+  if(iso==null || iso==='') return false;
+  const s = normalizeDateOnly(iso);
+  if(typeof s !== 'string' || !dateFromISO(s)) return true;
+  return s < '2000-01-01' || s > addDaysISO(refISO, 366);
+}
 function fmtDateTH(iso){
   const s = normalizeDateOnly(iso);
   if(!s || typeof s !== 'string') return '-';
@@ -566,6 +576,7 @@ function saveSyncCfg(){
 }
 let syncCfg = loadSyncCfg();
 let syncing = false;
+let syncServerWins = false;   // ปุ่ม "ดึงข้อมูลใหม่ทั้งหมด" ขอไว้ · ใช้ในรอบซิงค์ถัดไปรอบเดียว (ดู mergeRowsInto)
 let syncIntervalId = null;
 
 /** คอลัมน์ที่ซิงค์ขึ้น Google Sheets — ต้องตรงกับ google-apps-script.gs ทุกตัว
@@ -629,15 +640,20 @@ async function gsApi(action, body){
 /** รวมแถวที่ดึงมาเข้ากับ array ในเครื่อง (ใช้ได้ทั้ง orders และ records) — id เป็นตัวจับคู่หลัก
  *  normalize ฟิลด์วันที่ก่อนเสมอ เพราะเซิร์ฟเวอร์อาจส่ง timestamp เต็มกลับมาแทน YYYY-MM-DD
  *  (ดู normalizeDateOnly) — ถ้าปล่อยผ่านจะทำให้ deadline คำนวณไม่ได้ทั้งกระดาน */
-function mergeRowsInto(listArr, incomingRows, dateFields){
+function mergeRowsInto(listArr, incomingRows, dateFields, serverWins){
   const byId = new Map(listArr.map(x=>[x.id, x]));
   let added=0, updated=0;
   for(const r of incomingRows){
     if(dateFields) normalizeRowDates(r, dateFields);
     const local = byId.get(r.id);
     if(!local){ listArr.push(Object.assign({}, r, {_dirty:false})); added++; continue; }
-    if(local._dirty) continue; // ของเรายังไม่ได้ส่งขึ้น อย่าเพิ่งทับ
-    if(String(r.updatedAt||'') > String(local.updatedAt||'')){
+    if(local._dirty) continue; // ของเรายังไม่ได้ส่งขึ้น อย่าเพิ่งทับ (D3 — ใช้กับ serverWins ด้วย)
+    /* serverWins = ปุ่ม "ดึงข้อมูลใหม่ทั้งหมด" · ทับทุกแถวที่ค่าไม่ตรงชีต ไม่ต้องรอให้เซิร์ฟเวอร์ใหม่กว่า
+     * ⚠️ เดิมปุ่มนี้แค่ล้างนาฬิกา แล้วยังเทียบ updatedAt แบบเดิม — แถวที่ค่าเพี้ยนแต่เวลาเท่ากับ
+     *    หรือใหม่กว่าเซิร์ฟเวอร์จึงซ่อมไม่ได้เลย ต.ค. 2026 เครื่องหนึ่งค้างวันที่ปี 1901 แบบนี้ กดแล้วไม่มีอะไรเกิดขึ้น
+     *    แถวที่ไม่ได้รอส่ง = ส่งขึ้นไปแล้ว ของบนชีตจึงเป็นของจริงเสมอ */
+    const differs = serverWins && Object.keys(r).some(k => String(r[k]) !== String(local[k]));
+    if(differs || String(r.updatedAt||'') > String(local.updatedAt||'')){
       Object.assign(local, r, {_dirty:false}); updated++;
     }
   }
@@ -679,8 +695,13 @@ async function doSync(silent = true){
   if(!syncCfg.url || syncing) return;
   if(!stateReady){ syncWaiting = syncWaiting === false ? false : silent; return; }
   syncing = true; syncCfg.state = 'busy'; syncCfg.error = ''; renderSyncBadge();
+  const serverWins = syncServerWins; syncServerWins = false;
   try{
-    const dirtyOrders = state.orders.filter(o=>o._dirty);
+    // ⚠️ ใบที่วันที่เป็นไปไม่ได้ไม่ส่งขึ้น — ส่งแล้วทุกเครื่องได้ค่าผิดตามไปหมด · ค้าง "รอส่ง" จนกว่าจะนำเข้าไฟล์ที่ถูกทับ
+    const badDate = o => ORDER_DATE_FIELDS.some(f => implausibleDate(o[f], todayISO()));
+    const heldOrders = state.orders.filter(o=>o._dirty && badDate(o));
+    if(heldOrders.length) console.warn('ไม่ส่งใบสั่งที่วันที่ผิดขึ้นเซิร์ฟเวอร์', heldOrders.map(o=>o.poNo));
+    const dirtyOrders = state.orders.filter(o=>o._dirty && !badDate(o));
     if(dirtyOrders.length){
       const res = await gsApi('pushRows', {table:'Orders', rows: dirtyOrders.map(r=>cleanForPush(r, 'Orders'))});
       dirtyOrders.forEach(o=>{ o._dirty=false; if(res.serverTime) o.updatedAt=res.serverTime; });
@@ -703,7 +724,7 @@ async function doSync(silent = true){
         dirtyNotes.forEach(d=>{ d._dirty=false; if(res.serverTime) d.updatedAt=res.serverTime; });
       }
       const pulledNotes = await gsApi('pullRows', {table:'DeliveryNotes', since: syncCfg.lastPullDeliveryNotes});
-      rd = mergeRowsInto(state.deliveryNotes, pulledNotes.rows||[], DELIVERY_DATE_FIELDS);
+      rd = mergeRowsInto(state.deliveryNotes, pulledNotes.rows||[], DELIVERY_DATE_FIELDS, serverWins);
       syncCfg.lastPullDeliveryNotes = pulledNotes.serverTime;
     }catch(e){
       console.warn('ซิงค์ใบส่งสินค้าไม่สำเร็จ — เซิร์ฟเวอร์อาจยังไม่ได้ re-deploy', e.message);
@@ -719,7 +740,7 @@ async function doSync(silent = true){
         dirtyWip.forEach(d=>{ d._dirty=false; if(res.serverTime) d.updatedAt=res.serverTime; });
       }
       const pulledWip = await gsApi('pullRows', {table:'DeltaWip', since: syncCfg.lastPullDeltaWip});
-      rw = mergeRowsInto(state.deltaWip, pulledWip.rows||[], null);
+      rw = mergeRowsInto(state.deltaWip, pulledWip.rows||[], null, serverWins);
       syncCfg.lastPullDeltaWip = pulledWip.serverTime;
     }catch(e){
       console.warn('ซิงค์ยอดของ Delta ไม่สำเร็จ — เซิร์ฟเวอร์อาจยังไม่ได้ re-deploy', e.message);
@@ -736,18 +757,18 @@ async function doSync(silent = true){
         dirtyLog.forEach(d=>{ d._dirty=false; if(res.serverTime) d.updatedAt=res.serverTime; });
       }
       const pulledLog = await gsApi('pullRows', {table:'DeliveryLog', since: syncCfg.lastPullDeliveryLog});
-      rl = mergeRowsInto(state.deliveryLog, pulledLog.rows||[], SYNC_DATE_COLS.DeliveryLog);
+      rl = mergeRowsInto(state.deliveryLog, pulledLog.rows||[], SYNC_DATE_COLS.DeliveryLog, serverWins);
       syncCfg.lastPullDeliveryLog = pulledLog.serverTime;
     }catch(e){
       console.warn('ซิงค์ log ใบส่งสินค้าไม่สำเร็จ — เซิร์ฟเวอร์อาจยังไม่ได้ re-deploy', e.message);
     }
 
     const pulledOrders = await gsApi('pullRows', {table:'Orders', since: syncCfg.lastPullOrders});
-    const ro = mergeRowsInto(state.orders, pulledOrders.rows||[], ORDER_DATE_FIELDS);
+    const ro = mergeRowsInto(state.orders, pulledOrders.rows||[], ORDER_DATE_FIELDS, serverWins);
     syncCfg.lastPullOrders = pulledOrders.serverTime;
 
     const pulledRecords = await gsApi('pullRows', {table:'Records', since: syncCfg.lastPullRecords});
-    const rr = mergeRowsInto(state.records, pulledRecords.rows||[], RECORD_DATE_FIELDS);
+    const rr = mergeRowsInto(state.records, pulledRecords.rows||[], RECORD_DATE_FIELDS, serverWins);
     syncCfg.lastPullRecords = pulledRecords.serverTime;
 
     let processesChanged = false;
@@ -764,8 +785,10 @@ async function doSync(silent = true){
     renderSyncBadge();
     const pulledCount = ro.added+ro.updated+rr.added+rr.updated+rd.added+rd.updated+rw.added+rw.updated+rl.added+rl.updated;
     if(pulledCount > 0 || processesChanged) renderAll();
-    if(!silent) toast(`ซิงค์แล้ว · รับมา ${pulledCount}`);
+    if(!silent) toast(`ซิงค์แล้ว · รับมา ${pulledCount}`
+      + (heldOrders.length ? ` · ⚠️ ไม่ส่ง ${heldOrders.length} ใบที่วันที่ผิด — นำเข้าไฟล์แผนที่ถูกทับ` : ''));
   }catch(e){
+    if(serverWins) syncServerWins = true;   // รอบนี้ล้ม ปุ่มที่กดไว้ต้องยังมีผลรอบหน้า
     syncCfg.state = 'error'; syncCfg.error = e.message;
     renderSyncBadge();
     if(!silent) toast('ซิงค์ไม่สำเร็จ: '+e.message);
@@ -815,8 +838,10 @@ function resetPullClocks(){
 }
 
 function gsResetPullClock(){
-  if(!confirm('ดึงรายการทั้งหมดใหม่ตั้งแต่ต้น? ใช้เมื่อสงสัยว่าข้อมูลไม่ครบ')) return;
+  if(!confirm('ดึงรายการทั้งหมดใหม่ตั้งแต่ต้น? ใช้เมื่อสงสัยว่าข้อมูลไม่ครบหรือไม่ตรงกับเครื่องอื่น'
+    + '\n\nข้อมูลในเครื่องที่ไม่ตรงกับ Google Sheets จะถูกแทนด้วยของในชีต (ยกเว้นที่ยังรอส่ง)')) return;
   resetPullClocks();
+  syncServerWins = true;
   saveSyncCfg(); doSync(false);
 }
 
@@ -1876,6 +1901,8 @@ function computeStatus(order, cum, dl, refISO){
   const done = cum.shipping >= order.orderQty;
   if(done) return {code:'done', label:'ส่งของครบแล้ว', color:'green'};
   if(!order.orderDate) return {code:'ok', label:'ไม่มีวันที่สั่งซื้อ', color:'gray'};
+  // วันที่สั่งเป็นไปไม่ได้ (เช่น ปี 1901) — ห้ามเอาไปตัดสินล่าช้า ไม่งั้นทุกขั้นแดงหมดและบังใบที่ช้าจริง
+  if(implausibleDate(order.orderDate, refISO)) return {code:'baddate', label:'วันที่สั่งผิด — ตรวจไฟล์แผน', color:'red'};
   /* ⚠️ A5 — รายงานขั้นปลายน้ำก่อนเสมอ จึงไล่จากขั้นท้ายสุดย้อนขึ้นไป ห้ามไล่จากต้นน้ำ
    * ⚠️ ไล่ MAIN_PROCESSES ไม่ใช่ PROCESSES — เกณฑ์ตรงนี้คือ "ยอดขั้นนั้นยังไม่ถึง orderQty"
    *    ซึ่งเป็นยอดของสายหลัก ขั้นนับแยกไม่มีทางถึง ถ้ารวมมาด้วยจะขึ้นล่าช้าทุกใบทันที
@@ -1904,6 +1931,7 @@ function emptyRow(colspan, msg){ return `<tr><td colspan="${colspan}" class="emp
 
 /* ---------- Render: Import tab ---------- */
 function renderPreview(parsed){
+  const today = todayISO();
   const existingIds = new Set(state.orders.map(o=>o.id));
   let newCount=0, updCount=0, sumQty=0;
   const rowsHtml = parsed.items.map(it=>{
@@ -1922,7 +1950,7 @@ function renderPreview(parsed){
       <td class="left">${escapeHtml(it.osc)}</td>
       <td class="left">${escapeHtml(it.pc)}</td>
       <td>${numFmt(it.orderQty)}</td>
-      <td>${fmtDateTH(it.orderDate)}</td>
+      <td>${implausibleDate(it.orderDate, today) ? `<span class="badge red">${escapeHtml(String(it.orderDate))}</span>` : fmtDateTH(it.orderDate)}</td>
     </tr>`;
   }).join('');
   document.getElementById('previewTable').innerHTML =
@@ -1938,6 +1966,13 @@ function renderPreview(parsed){
   if(noSub){
     summary += ` — ⚠️ มี ${numFmt(noSub)} รายการที่บอกหน่วยไม่ได้จากรหัส PO`
              + ` (ต้องขึ้นต้นด้วย TM และตัวอักษรตำแหน่งที่ 7 เป็น H U T หรือ A) รายการเหล่านี้จะไม่ขึ้นในหน้าใบส่งสินค้า`;
+  }
+  /* ⚠️ วันที่เป็นไปไม่ได้ (เช่น ปี 1901 = ตัวเลขที่ถูกอ่านเป็นวันที่) ต้องบอกก่อนกดยืนยัน
+   *    นำเข้าได้ แต่ใบพวกนี้จะไม่ถูกส่งขึ้น Google Sheets (doSync กันไว้) และขึ้น "วันที่ผิด" แทน Aging */
+  const badDate = parsed.items.filter(it => ORDER_DATE_FIELDS.some(f => implausibleDate(it[f], today))).length;
+  if(badDate){
+    summary += ` — ⚠️ มี ${numFmt(badDate)} รายการที่วันที่เป็นไปไม่ได้ (ก่อนปี 2000 หรือเลยไปเกินหนึ่งปี)`
+             + ` ตรวจไฟล์ก่อน · ถ้านำเข้า รายการเหล่านี้จะไม่ถูกส่งขึ้น Google Sheets จนกว่าจะนำเข้าไฟล์ที่ถูกทับ`;
   }
   if(parsed.reportedTotal!=null){
     const match = sumQty===parsed.reportedTotal;
@@ -2104,7 +2139,6 @@ function renderEntryTable(){
     const remaining = Math.max(0, o.orderQty - cum);
     // Aging นิยามและสีเดียวกับคอลัมน์ Aging บน Dashboard — ใช้ agingCell กับ computeStatus ตัวเดียวกัน
     // ⚠️ นับถึง "วันนี้" ไม่ใช่วันที่เลือกคีย์ย้อนหลัง ไม่งั้นสองหน้าจะขึ้นอายุงานของใบเดียวกันไม่ตรงกัน
-    const aging = daysBetween(o.orderDate, ref);
     const st = computeStatus(o, allCum[o.id] || emptyCum(), computeDeadlines(o), ref);
     n++;
     lastRenderedOrderIds.push(o.id);
@@ -2114,7 +2148,7 @@ function renderEntryTable(){
       <td class="left">${escapeHtml(o.poNo)}</td>
       <td class="left">${escapeHtml(o.pn)}</td>
       <td>${numFmt(o.orderQty)}</td>
-      <td data-aging>${agingCell(aging, st.code)}</td>
+      <td data-aging>${agingCell(o.orderDate, ref, st.code)}</td>
       <td><span class="cum">${numFmt(cum)}</span>${warn?' <span class="badge amber" title="ยอดสะสมเกินขั้นตอนก่อนหน้า">⚠</span>':''}</td>
       <td class="rem">${numFmt(remaining)}</td>
       <td><input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}"></td>
@@ -2722,7 +2756,10 @@ function progressCell(cum, split, qty){
  * เกณฑ์อ่านจาก deadlineOffsets.shipping เสมอ ห้าม hardcode (A4) และถ้ายังไม่กำหนด (null)
  * ห้ามเดาเป็น 0 → แสดงเป็นตัวเลขเปล่า ส่วน "เหลือ 3 วัน = ใกล้ครบกำหนด" ใช้เกณฑ์เดียวกับ
  * computeStatus เพื่อไม่ให้สีของสองคอลัมน์ขัดกันเอง */
-function agingCell(aging, statusCode){
+function agingCell(orderDate, ref, statusCode){
+  if(implausibleDate(orderDate, ref))
+    return `<span class="badge red" title="วันที่สั่ง ${escapeHtml(String(orderDate))} เป็นไปไม่ได้ — ตรวจไฟล์แผน แล้วกด &quot;ดึงข้อมูลใหม่ทั้งหมด&quot; ในหน้าข้อมูล &amp; แชร์">วันที่ผิด</span>`;
+  const aging = daysBetween(orderDate, ref);
   if(aging==null) return '—';
   const txt = numFmt(aging);
   const off = state.deadlineOffsets.shipping;
@@ -2777,7 +2814,6 @@ function renderDashTable(){
     const anomaly = hasOrderAnomaly(c);
     // อายุงาน = จำนวนวันนับจากวันสั่งถึงวันนี้ นิยามเดียวกับคอลัมน์ Aging ในใบส่งสินค้า FM-ST-07
     // ใช้ ref ตัวเดียวกับที่ computeStatus ใช้ตัดสินล่าช้า ตัวเลขบนจอจึงมาจากวันเดียวกันเสมอ
-    const aging = daysBetween(o.orderDate, ref);
     return `<tr>
       <td class="hint">${idx + 1}</td>
       <td class="left">${escapeHtml(o.week)}</td>
@@ -2786,7 +2822,7 @@ function renderDashTable(){
       <td class="left">${escapeHtml(o.subName)}</td>
       <td>${numFmt(o.orderQty)}</td>
       <td>${fmtDateTH(o.orderDate)}</td>
-      <td data-aging>${agingCell(aging, st.code)}</td>
+      <td data-aging>${agingCell(o.orderDate, ref, st.code)}</td>
       ${PROCESSES.map(p=>`<td>${progressCell(c[p]||0, split[p], o.orderQty)}</td>`).join('')}
       <td><span class="badge ${st.color}">${escapeHtml(st.label)}</span>${anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
     </tr>`;
