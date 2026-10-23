@@ -8,7 +8,7 @@
 //    ไปเมื่อ 4 ก.ย. 2026 — มีเทสคุมไว้ข้างล่างว่าตัวอักษรต้องไม่รั่วไปหน้านั้น
 
 const { test, expect } = require('@playwright/test');
-const { waitReady } = require('./app-state');
+const { waitReady, readSaved } = require('./app-state');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -24,6 +24,10 @@ const order = (poNo, qty, unit = 'TUE-U', orderDate = daysAgo(10)) => ({
   orderDate, status: 'active',
   importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false
 });
+/** record ของ "วันนี้" — ช่องยอดวันนี้อ่านจากวันที่ใน #entryDate ซึ่งตั้งต้นเป็นวันนี้
+ *  ถ้าใช้วันคงที่อย่าง rec() ช่องนั้นจะว่างเสมอ แล้วเทสจะผ่านโดยไม่ได้ทดสอบอะไร */
+const recToday = (id, orderId, process, qty) =>
+  Object.assign(rec(id, orderId, process, qty), { date: daysAgo(0) });
 const rec = (id, orderId, process, qty) => ({
   id, date: '2026-08-20', orderId, process, qty, note: '', deviceName: 't',
   createdAt: '2026-08-20T00:00:00.000Z', updatedAt: '2026-08-20T00:00:00.000Z',
@@ -47,7 +51,7 @@ async function openEntry(page, orders, records = [], width = 1400) {
 const ORDERS = [order('PO-1', 4000), order('PO-2', 5000, 'TUE-H')];
 const rowOf = (page, po) => page.locator('#entryTable tbody tr', { hasText: po });
 // ลำดับคอลัมน์ — # · สัปดาห์ · PO · P/N · Order Qty · Aging · สะสม · คงเหลือ · ยอดวันนี้
-const COL = { qty: 4, aging: 5, cum: 6, rem: 7 };
+const COL = { qty: 4, aging: 5, cum: 6, rem: 7, today: 8 };
 const cellOf = (page, po, col) => rowOf(page, po).locator('td').nth(COL[col]);
 const th = (page, col) => page.locator('#entryTable thead th').nth(COL[col]).innerText();
 
@@ -195,4 +199,75 @@ test('ตัวใหญ่ต้องไม่รั่วไปหน้า�
   await page.waitForTimeout(250);
   expect(await page.locator('#dnTable').evaluate(el => parseFloat(getComputedStyle(el).fontSize)),
     'ตารางใบส่งสินค้าต้องเท่าเดิม').toBeLessThanOrEqual(13);
+});
+
+// ── ขั้น "ส่งของ" — โชว์ยอดที่ตัดจากใบส่งสินค้า คีย์ที่นี่ไม่ได้ ────────
+//
+// เจ้าของสั่งเมื่อ 23 ต.ค. 2026 · ก่อนหน้านี้ช่องกรอกเปิดไว้เป็นทางสำรองระหว่างเปลี่ยนผ่าน
+// แล้วหน้าใบส่งสินค้ากับหน้านี้เขียนกุญแจ orderId|shipping|date เดียวกัน ทับกันเงียบ ๆ
+// โดยไม่มีใครรู้ว่าอันไหนถูก (CLAUDE.md จดความเสี่ยงนี้ไว้ตั้งแต่ 30 ส.ค. 2026)
+
+test('ขั้นส่งของ — ต้องโชว์ยอดที่ตัดเข้าใบของวันนี้ และไม่มีช่องให้กรอก', async ({ page }) => {
+  await openEntry(page, ORDERS, [recToday('s1', 'PO-1', 'shipping', 1200)]);
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(200);
+
+  expect(await cellOf(page, 'PO-1', 'today').innerText(),
+    'ยอดที่ตัดเข้าใบต้องโชว์ให้ตรวจทานได้').toBe('1,200');
+  expect(await rowOf(page, 'PO-1').locator('input.row-input').count(),
+    'ขั้นนี้ต้องไม่มีช่องกรอก — ยอดส่งของคีย์ที่หน้าใบส่งสินค้าทางเดียว').toBe(0);
+  expect(await th(page, 'today'), 'หัวคอลัมน์ต้องบอกที่มา').toContain('ใบส่งสินค้า');
+  await expect(page.locator('#entryShipNote'), 'ต้องบอกว่าไปแก้ที่ไหน').toBeVisible();
+  expect(await page.locator('#entryShipNote').innerText()).toContain('ใบส่งสินค้า');
+});
+
+test('วันที่ไม่มียอดตัดเข้าใบ ต้องขึ้นขีด ไม่ใช่ช่องว่างที่อ่านไม่ออกว่าหมายถึงอะไร', async ({ page }) => {
+  await openEntry(page, ORDERS, [recToday('s1', 'PO-1', 'shipping', 1200)]);
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(200);
+  expect(await cellOf(page, 'PO-2', 'today').innerText(), 'PO ที่ยังไม่ได้ส่งวันนี้').toBe('—');
+});
+
+test('ขั้นอื่นต้องยังคีย์ได้ปกติ และข้อความของขั้นส่งของต้องหายไป', async ({ page }) => {
+  /* ⚠️ กันการปิดเกินสั่ง — เจ้าของสั่งปิดเฉพาะขั้นส่งของ ไม่ใช่ปิดหน้าคีย์ยอดทั้งหน้า */
+  await openEntry(page, ORDERS, [recToday('s1', 'PO-1', 'shipping', 1200)]);
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(200);
+  await page.click('#procBtn-winding');
+  await page.waitForTimeout(200);
+
+  await expect(page.locator('#entryShipNote')).toBeHidden();
+  expect(await th(page, 'today'), 'ขั้นอื่นหัวคอลัมน์ต้องไม่อ้างใบส่งสินค้า').not.toContain('ใบส่งสินค้า');
+  const input = rowOf(page, 'PO-1').locator('input.row-input');
+  expect(await input.count(), 'ขั้นอื่นต้องยังมีช่องกรอก').toBe(1);
+  await input.fill('900');
+  await input.press('Tab');
+  await page.waitForTimeout(300);
+
+  const saved = await readSaved(page, K_STATE);
+  expect(saved.records.filter(r => r.process === 'winding' && !r.voided).map(r => r.qty),
+    'คีย์ขั้น winding ต้องบันทึกได้ตามปกติ').toEqual([900]);
+});
+
+test('A2 — ยอดส่งของต้องเขียนได้จากหน้าใบส่งสินค้าทางเดียว แม้มีคนเรียกตัวบันทึกของหน้านี้ตรง ๆ', async ({ page }) => {
+  /* ด่านใน saveEntryValue() ไม่ใช่ของซ้ำกับการไม่วาดช่องกรอก — มันกันทางที่เหลือ
+   * ถ้าวันหนึ่งมีใครวาดช่องกลับมา หรือเรียกฟังก์ชันนี้จากที่อื่น กุญแจเดียวกันจะถูกเขียนสองที่อีกรอบ
+   *
+   * ⚠️ ยัดช่องกรอกกลับเข้าแถวเองแล้วสั่ง change ไม่ได้ — ช่องที่สร้างทีหลังไม่มี listener ผูกอยู่
+   *    saveEntryValue() จะไม่ถูกเรียกเลย แล้วเทสจะเขียวโดยไม่ได้ทดสอบอะไร
+   *    เรียกฟังก์ชันตรง ๆ แทน — ทำได้ตั้งแต่ถอดเปลือก IIFE (ใบ 02 · ดู globals.spec.js) */
+  await openEntry(page, ORDERS, [recToday('s1', 'PO-1', 'shipping', 1200)]);
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(200);
+
+  expect(await page.evaluate(() => typeof saveEntryValue),
+    'เรียกฟังก์ชันตรงไม่ได้ = เทสนี้ไม่ได้ทดสอบด่าน ต้องแก้เทส ไม่ใช่ปล่อยเขียว').toBe('function');
+
+  await page.evaluate(d => saveEntryValue('PO-1', '77', d), daysAgo(0));
+  await page.waitForTimeout(300);
+
+  const saved = await readSaved(page, K_STATE);
+  const ships = saved.records.filter(r => r.process === 'shipping' && !r.voided);
+  expect(ships.map(r => r.qty), 'ยอดส่งของต้องยังเป็นของเดิมจากใบส่งสินค้า').toEqual([1200]);
+  expect(ships.length, 'ห้ามเกิดแถวใหม่ของขั้นส่งของจากหน้านี้').toBe(1);
 });
