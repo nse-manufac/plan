@@ -4053,7 +4053,10 @@ function dnPreviewHtml(entry){
       ออกเมื่อ ${escapeHtml(entry.createdAt ? new Date(entry.createdAt).toLocaleString('th-TH') : '—')}
       จากเครื่อง ${escapeHtml(entry.deviceName||'—')}</div>`;
 
-  const why = `<div class="desc">⚠️ <b>นี่คือข้อมูลของใบนี้ ณ วันนี้ ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว</b>
+  /* ⚠️ "ณ ตอนที่กดเปิด" ไม่ใช่ "ณ วันนี้" — กล่องนี้เป็นภาพนิ่ง ไม่มีกลไกวาดใหม่
+   *    แก้ยอดหรือซิงค์เข้ามาขณะกล่องเปิดอยู่ ตัวเลขในกล่องไม่ขยับ (ผู้ตรวจ #113 รอบ 6 รันแล้ว)
+   *    ถ้าวันหนึ่งทำให้มันวาดใหม่ได้ ให้แก้คำนี้ด้วย ไม่ใช่ปล่อยให้คำกับพฤติกรรมคลาดกัน */
+  const why = `<div class="desc">⚠️ <b>นี่คือข้อมูลของใบนี้ ณ ตอนที่กดเปิด ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว</b>
       — ระบบไม่ได้เก็บไฟล์หรือเนื้อของกระดาษไว้ แต่คิดใหม่จากยอดบรรจุของหน่วยและวันนั้นทุกครั้ง
       ถ้ามีอะไรเปลี่ยนไปหลังออกใบ ตัวเลขที่เห็นจะไม่เท่ากับกระดาษ โดยเฉพาะ <b>Wip bal.</b>
       ซึ่งเป็นยอดของ <b>งวดล่าสุดที่นำเข้าไว้ ไม่ใช่ของ WK ที่เขียนบนใบ</b>
@@ -4100,7 +4103,11 @@ function dnPreviewHtml(entry){
    * ⚠️ สาเหตุบอกแบบ "ที่พบบ่อยคือ" เท่านั้น — บรรทัดหายเพราะใบถูกยกเลิกหรือย้ายหน่วยก็ได้
    *    ซึ่งกรณีนั้นยอดรวมมักเปลี่ยนตามด้วย และหน้านี้แยกสาเหตุจากกันไม่ได้ */
   const nowLines = groups.reduce((s,g)=> s + shippedOrders(g).length, 0);
-  const keptLines = (entry.lines == null || entry.lines === '') ? null : Number(entry.lines);
+  /* ⚠️ ต้องเป็นตัวเลขจริงเท่านั้น · ค่าที่ซิงค์กลับมาเป็นสตริงว่างให้ 0 และสตริงอื่นให้ NaN
+   *    ซึ่ง NaN !== nowLines เสมอ → ป้ายขึ้นพร้อมเลข 0 ที่ไม่มีใครเคยออกใบด้วย (ผู้ตรวจ #113) */
+  const keptNum = Number(entry.lines);
+  const keptLines = (entry.lines == null || entry.lines === '' || !isFinite(keptNum))
+    ? null : keptNum;
   const lineCmp = (keptLines != null && keptLines !== nowLines)
     ? `<div class="desc"><span class="badge amber">จำนวนบรรทัดไม่เท่าตอนออกใบ</span>
         ตอนออกใบ <b>${numFmt(keptLines)}</b> บรรทัด · วันนี้ <b>${numFmt(nowLines)}</b> บรรทัด —

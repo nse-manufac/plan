@@ -337,4 +337,15 @@ test('จำนวนบรรทัดต่างจากตอนออก�
   await normalIssue(page);
   const body2 = await preview(page);
   await expect(body2, 'ไม่มีอะไรให้เทียบ ต้องไม่ขึ้นป้าย').not.toContainText('จำนวนบรรทัดไม่เท่า');
+
+  /* ⚠️ ค่าที่ซิงค์กลับมาอาจเป็นสตริง · สตริงว่างให้ 0 และสตริงอื่นให้ NaN ซึ่งไม่เท่ากับ
+   *    จำนวนบรรทัดวันนี้เสมอ → ป้ายจะขึ้นพร้อม "ตอนออกใบ 0 บรรทัด" ที่ไม่มีใครเคยออกใบด้วย
+   *    (ผู้ตรวจ #113 รอบ 6 ทักจากการอ่าน) */
+  for (const bad of ['', 'ไม่ทราบ']) {
+    await open(page, { log: [logRow({ lines: bad })] });
+    await normalIssue(page);
+    const b = await preview(page);
+    await expect(b, `lines = ${JSON.stringify(bad)} ต้องไม่ขึ้นป้าย`)
+      .not.toContainText('จำนวนบรรทัดไม่เท่า');
+  }
 });
