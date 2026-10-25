@@ -168,6 +168,9 @@
   .modal{background:#fff;border-radius:var(--radius);padding:20px 24px;max-width:560px;width:92%;max-height:80vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25);}
   .modal h3{margin-top:0;}
   .modal .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}
+  /* .desc มีสไตล์แค่ใน .panel กับ .gs-panel — ในกล่องจึงต้องประกาศเอง
+     ไม่งั้นย่อหน้าคำอธิบายของหน้ารายละเอียดใบส่งสินค้าจะติดกันหมด (ผู้ตรวจ #113) */
+  .modal .desc{color:var(--text-dim);font-size:12.5px;margin-bottom:10px;}
   .chart-wrap{overflow-x:auto;}
   .legend{display:flex;gap:16px;font-size:12.5px;margin-bottom:6px;align-items:center;}
   .legend span{display:inline-flex;align-items:center;gap:5px;}

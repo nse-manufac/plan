@@ -96,7 +96,7 @@ test('ดูรายละเอียดใบที่ออกไปแล�
   // ช่องเดียวกับบนกระดาษ FM-ST-07 ทุกช่อง
   await expect(body, 'P/N').toContainText(PN_B);
   await expect(body, 'PO No.').toContainText('PO-B001');
-  await expect(body, "Order Q'ty").toContainText('12,000');
+  await expect(body, 'PO QTY').toContainText('12,000');
   await expect(body, 'ยอดส่งงาน').toContainText('100');
   const cells = await body.locator('table#dnPreviewTable tbody tr').first()
     .locator('td').allInnerTexts();
@@ -197,4 +197,37 @@ test('ใบที่ติ๊กไว้ของวันอื่น ต้�
   const body = await preview(page);
   await expect(body, 'ใบเดิมมีแต่ PO-B001').toContainText('PO-B001');
   await expect(body, 'PO-B055 ติ๊กไว้ในวันอื่น ต้องไม่โผล่บนใบนี้').not.toContainText('PO-B055');
+});
+
+test('หัวคอลัมน์ต้องเป็นป้ายเดียวกับกระดาษ ไม่ใช่ป้ายของไฟล์แผนงาน', async ({ page }) => {
+  /* หน้านี้มีไว้ให้คนเทียบกับกระดาษ ป้ายจึงต้องตรงกับ DN_HEAD และกับตาราง #dnTable
+   * ที่พนักงานคีย์ทุกวัน · "Order Q'ty" เป็นป้ายของไฟล์แผนงานฝั่งลูกค้า (PLAN_HEAD)
+   * ซึ่งเป็นเอกสารคนละใบ ไม่มีใครในสายใบส่งสินค้าใช้คำนั้น (ผู้ตรวจ #113) */
+  await open(page);
+  await normalIssue(page);
+
+  const body = await preview(page);
+  const head = await body.locator('table#dnPreviewTable thead').innerText();
+  expect(head, 'ป้ายยอดสั่งต้องเป็น PO QTY').toContain('PO QTY');
+  expect(head, "ห้ามใช้ Order Q'ty ซึ่งเป็นป้ายของไฟล์แผนงาน").not.toContain("Order Q'ty");
+  // ป้ายอื่นต้องตรงกับกระดาษด้วย ไม่ใช่ตรวจแค่ช่องที่ผู้ตรวจทัก
+  for (const label of ['P/N', 'PO No.', 'Order Date', 'Wip bal.', 'ยอดส่งงาน',
+                       'ต่อกล่อง', 'กล่อง', 'เศษ', 'จำนวน/PCS', 'Remark']) {
+    expect(head, 'ป้าย ' + label).toContain(label);
+  }
+});
+
+test('ปิดกล่องได้ทั้งปุ่มปิดและคลิกฉากหลัง', async ({ page }) => {
+  // รูปแบบเดียวกับ mergeModal · ของเดิมมีแต่ปุ่ม (ผู้ตรวจ #113)
+  await open(page);
+  await normalIssue(page);
+
+  await preview(page);
+  await page.click('#dnPreviewCloseBtn');
+  await expect(page.locator('#dnPreviewModal'), 'ปุ่มปิดต้องปิดได้').toBeHidden();
+
+  await preview(page);
+  // คลิกมุมซ้ายบนของฉากหลัง — ตัวกล่องอยู่กลางจอ จึงไม่โดนกล่อง
+  await page.locator('#dnPreviewModal').click({ position: { x: 5, y: 5 } });
+  await expect(page.locator('#dnPreviewModal'), 'คลิกฉากหลังต้องปิดได้').toBeHidden();
 });

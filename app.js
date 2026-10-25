@@ -4032,10 +4032,12 @@ function dnLogStale(entry){
  *     (ตระกูลเดียวกับที่ผู้ตรวจ #103 รันเจอบนเส้นทางออกไฟล์ซ้ำ)
  *
  *  ช่องที่โชว์เรียงตามกระดาษ (ดู fillDeliveryForm) — ราย PO: P/N · PO No. · Order Date ·
- *  Order Q'ty · Wip bal. · ยอดส่งงาน · ของทั้งกลุ่ม: ต่อกล่อง · กล่อง · เศษ · จำนวน/PCS · Remark */
+ *  PO QTY · Wip bal. · ยอดส่งงาน · ของทั้งกลุ่ม: ต่อกล่อง · กล่อง · เศษ · จำนวน/PCS · Remark
+ *  ⚠️ ป้ายหัวคอลัมน์ต้องตรงกับ `DN_HEAD` (ป้ายบนกระดาษ) และกับตาราง `#dnTable`
+ *     ห้ามใช้ `Order Q'ty` ซึ่งเป็นป้ายของไฟล์แผนงานฝั่งลูกค้า (`PLAN_HEAD`) คนละใบกัน */
 function dnPreviewHtml(entry){
   const groups = dnReissueGroups(entry.date, entry.unit);
-  const head = `<div class="desc" style="margin-bottom:10px">
+  const head = `<div class="desc">
       หน่วย <b>${escapeHtml(entry.unit)}</b> · วันที่ <b>${fmtDateTH(entry.date)}</b>
       · WK <b>${escapeHtml(String(entry.week||'') || '—')}</b><br>
       ออกเมื่อ ${escapeHtml(entry.createdAt ? new Date(entry.createdAt).toLocaleString('th-TH') : '—')}
@@ -4100,7 +4102,7 @@ function dnPreviewHtml(entry){
 
   return head + why + cmp + warn + `<div class="table-wrap"><table id="dnPreviewTable">
     <thead><tr><th class="left">P/N</th><th class="left">PO No.</th><th>Order Date</th>
-      <th>Order Q'ty</th><th>Wip bal.</th><th>ยอดส่งงาน</th><th>ต่อกล่อง</th><th>กล่อง</th>
+      <th>PO QTY</th><th>Wip bal.</th><th>ยอดส่งงาน</th><th>ต่อกล่อง</th><th>กล่อง</th>
       <th>เศษ</th><th>จำนวน/PCS</th><th class="left">Remark</th></tr></thead>
     <tbody>${rows}</tbody></table></div>`;
 }
@@ -4191,6 +4193,11 @@ document.getElementById('dnLogTable').addEventListener('click', (e)=>{
 
 document.getElementById('dnPreviewCloseBtn').addEventListener('click', ()=>{
   document.getElementById('dnPreviewModal').classList.remove('show');
+});
+
+// คลิกฉากหลังก็ปิด — รูปแบบเดียวกับ mergeModal · ไม่มีอะไรต้องเก็บ จึงไม่ต้องล้างสถานะ
+document.getElementById('dnPreviewModal').addEventListener('click', (e)=>{
+  if(e.target.id==='dnPreviewModal') e.currentTarget.classList.remove('show');
 });
 
 document.getElementById('btnDnExport').addEventListener('click', async ()=>{
