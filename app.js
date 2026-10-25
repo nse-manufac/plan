@@ -4038,11 +4038,17 @@ function dnLogStale(entry){
  *     จอ `จำนวนที่ส่ง` · กระดาษ `จำนวนต่อกล่อง` จอ `ต่อกล่อง`) จึงไม่มีชุดคำที่ "ตรงทั้งคู่"
  *     ที่ห้ามคือคำที่ไม่มีใครในสายใบส่งสินค้าใช้ — เช่น `Order Q'ty` ซึ่งเป็นป้ายของ
  *     **ไฟล์แผนงานฝั่งลูกค้า** (`PLAN_HEAD`) คนละเอกสารกัน (ผู้ตรวจ #113 ทักทั้งสองรอบ)
- *     เทสบังคับกฎนี้ด้วยการอ่าน `DN_HEAD` กับหัวตาราง `#dnTable` มาเทียบ ไม่ใช่รายการที่พิมพ์ไว้เอง */
+ *     เทสบังคับกฎนี้ด้วยการอ่าน `DN_HEAD` กับหัวตาราง `#dnTable` มาเทียบ ไม่ใช่รายการที่พิมพ์ไว้เอง
+ *
+ *  ⚠️ **ทุกค่าที่ลง `innerHTML` ต้องผ่าน `escapeHtml()` รวมวันที่** (G3)
+ *     `fmtDateTH()` ไม่ใช่ตัวทำให้ปลอดภัย — `normalizeDateOnly()` คืนค่าเดิมให้สตริงที่ไม่ใช่รูปวันที่
+ *     ค่าเพี้ยนจากชีต `DeliveryLog` หรือจากไฟล์นำเข้าจึงไหลผ่าน `prepareState()` กับการ pull
+ *     มาถึง `innerHTML` ได้ครบ · ผู้ตรวจ #113 รันพิสูจน์แล้วว่าโค้ดเดิมของใบนี้รัน `onerror` ได้จริง
+ *     ใบนี้เป็นที่แรกที่วาด `deliveryLog.date` ลงจอ จึงเป็นรูที่ใบนี้สร้างเอง ไม่ใช่ของเดิม */
 function dnPreviewHtml(entry){
   const groups = dnReissueGroups(entry.date, entry.unit);
   const head = `<div class="desc">
-      หน่วย <b>${escapeHtml(entry.unit)}</b> · วันที่ <b>${fmtDateTH(entry.date)}</b>
+      หน่วย <b>${escapeHtml(entry.unit)}</b> · วันที่ <b>${escapeHtml(fmtDateTH(entry.date))}</b>
       · WK <b>${escapeHtml(String(entry.week||'') || '—')}</b><br>
       ออกเมื่อ ${escapeHtml(entry.createdAt ? new Date(entry.createdAt).toLocaleString('th-TH') : '—')}
       จากเครื่อง ${escapeHtml(entry.deviceName||'—')}</div>`;
@@ -4103,7 +4109,7 @@ function dnPreviewHtml(entry){
       return `<tr>
         <td class="left">${escapeHtml(g.pn)}</td>
         <td class="left">${escapeHtml(x.o.poNo)}</td>
-        <td>${x.o.orderDate ? fmtDateTH(x.o.orderDate) : '—'}</td>
+        <td>${x.o.orderDate ? escapeHtml(fmtDateTH(x.o.orderDate)) : '—'}</td>
         <td>${numFmt(Number(x.o.orderQty)||0)}</td>
         <td>${x.deltaWip == null ? '—' : numFmt(x.deltaWip)}</td>
         <td>${numFmt(Number(x.alloc)||0)}</td>${grp}

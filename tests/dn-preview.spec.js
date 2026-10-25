@@ -246,3 +246,61 @@ test('ปิดกล่องได้ทั้งปุ่มปิดแล�
   await page.locator('#dnPreviewModal').click({ position: { x: 5, y: 5 } });
   await expect(page.locator('#dnPreviewModal'), 'คลิกฉากหลังต้องปิดได้').toBeHidden();
 });
+
+/** ยัดค่าเพี้ยนลงข้อมูลแล้วเปิดหน้าใบส่งสินค้า — ใช้กับสองเทส G3 ข้างล่าง */
+async function openDirty(page, { orders, log }) {
+  await forgetSavedOnEveryLoad(page);
+  await page.addInitScript(([k, o, dlog]) => localStorage.setItem(k, JSON.stringify({
+    version: 1, deviceName: 't',
+    deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
+    chartPref: { mode: '14', from: '', to: '' },
+    orders: o, records: [], deliveryNotes: [], deltaWip: [], deliveryLog: dlog, importHistory: []
+  })), [K_STATE, orders, log]);
+  await page.goto(APP);
+  await waitReady(page);
+  await page.click('.tab-btn[data-tab="delivery"]');
+  await page.fill('#dnDate', DATE);
+  await page.waitForTimeout(150);
+  await page.selectOption('#dnUnit', 'TUE-U');
+  await page.waitForTimeout(150);
+}
+
+const PAYLOAD = '<img src=x onerror="window.__pwned=1">';
+
+test('G3 — วันที่ของแถว log ที่เพี้ยนมาจากการซิงค์ ต้องไม่กลายเป็น HTML ที่รันได้', async ({ page }) => {
+  /* ผู้ตรวจ #113 รอบ 3 รันพิสูจน์ว่าโค้ดเดิมของใบนี้รัน onerror ได้จริง
+   *
+   * ⚠️ fmtDateTH() ไม่ใช่ตัวทำให้ปลอดภัย — normalizeDateOnly() คืนค่าเดิมให้สตริงที่ไม่ใช่
+   *    รูปวันที่ ค่าเพี้ยนจากชีต DeliveryLog จึงไหลผ่าน prepareState() กับการ pull
+   *    มาถึง innerHTML ได้ครบ · ใบนี้เป็นที่แรกที่วาด deliveryLog.date ลงจอ จึงเป็นรูที่ใบนี้สร้างเอง
+   *
+   * ⚠️ ใบสั่งในเทสนี้ต้อง **สะอาด** · ถ้าใส่ค่าเพี้ยนใน orderDate ด้วย หน้าอื่นที่ยังไม่ escape
+   *    จะยิงตั้งแต่เปิดหน้า (วัดแล้ว: __pwned = 1 ตอนแท็บ import ยัง active โดยไม่ต้องกดอะไร)
+   *    แล้ว window.__pwned จะเลิกบอกอะไรเกี่ยวกับหน้านี้ — เทสจะแดงเพราะรูของคนอื่น */
+  await openDirty(page, { orders: ORDERS, log: [logRow({ date: PAYLOAD + "-08-29" })] });
+  await normalIssue(page);
+
+  const body = await preview(page);
+  await expect(body, 'ต้องวาดวันที่ของแถวนั้นออกมาจริง ไม่ใช่ข้ามไปเงียบ ๆ').toContainText('onerror');
+  expect(await page.evaluate(() => window.__pwned), 'ห้ามรันโค้ดจากค่าในข้อมูล').toBeUndefined();
+  expect(await body.locator('img').count(), 'ห้ามมี <img> หลุดเข้า DOM').toBe(0);
+});
+
+test('G3 — ช่อง Order Date ของแต่ละบรรทัดก็ต้อง escape', async ({ page }) => {
+  /* เส้นทางที่สองในฟังก์ชันเดียวกัน · ค่ามาจากไฟล์แผนงานที่นำเข้า
+   *
+   * ⚠️ ข้อนี้วัดด้วย window.__pwned ไม่ได้ เพราะ fmtDateTH() ลง innerHTML แบบไม่ escape
+   *    ยังมีอีก 6 จุดในหน้าอื่น (app.js:1930 1987 2244 2456 2848 3418) ซึ่งยิงตั้งแต่เปิดหน้า
+   *    เป็นรูเก่า ไม่ใช่ของใบนี้ และแยกเป็นงานของตัวเองแล้ว
+   *    จึงวัดที่ช่องของหน้านี้ตรง ๆ ว่าเนื้อถูก escape ไว้จริง */
+  const dirty = [Object.assign({}, ORDERS[0], { orderDate: PAYLOAD + "-08-03" }), ORDERS[1]];
+  await openDirty(page, { orders: dirty, log: [logRow()] });
+  await normalIssue(page);
+
+  const body = await preview(page);
+  const cell = body.locator('table#dnPreviewTable tbody tr').first().locator('td').nth(2);
+  const html = await cell.evaluate(el => el.innerHTML);
+  expect(html, 'ต้องเก็บไว้เป็นข้อความที่ถูก escape').toContain('&lt;img');
+  expect(html, 'ห้ามเหลือแท็กจริง').not.toContain('<img');
+  expect(await body.locator('img').count(), 'ห้ามมี <img> จากช่อง Order Date').toBe(0);
+});
