@@ -8,7 +8,7 @@
 // ข้อ "ไฟล์หลังรีโหลดต้องเท่ากันถึงระดับไบต์" ข้างล่างคือคำตอบที่พิสูจน์ด้วยการรัน ไม่ใช่ด้วยการอธิบาย
 
 const { test, expect } = require('@playwright/test');
-const { waitReady, IDB_NAME, IDB_STORE } = require('./app-state');
+const { waitReady, readSaved, IDB_NAME, IDB_STORE } = require('./app-state');
 const fs = require('fs');
 const JSZip = require('jszip');
 const { deliveryFormWorkbook } = require('./fixtures');
@@ -263,4 +263,9 @@ test('ล้างข้อมูลทั้งหมด ต้องไม่�
   await waitReady(page);
   await waitTpl(page);
   await expect(page.locator('#btnDnExport'), 'ฟอร์มที่จำไว้ต้องยังอยู่').toBeEnabled();
+
+  /* ⚠️ ข้อนี้ต้องยืนยันด้วยว่าปุ่ม "ลบข้อมูลทั้งหมด" ยังลบข้อมูลจริง
+   *    ถ้าล็อกแค่ว่าฟอร์มรอด วันที่ปุ่มพังเทสข้อนี้จะยังเขียว (ผู้ตรวจ #112 ทัก) */
+  const left = await readSaved(page, K_STATE);
+  expect(left.orders, 'ใบสั่งต้องถูกลบจริง').toEqual([]);
 });

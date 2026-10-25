@@ -3888,7 +3888,10 @@ document.getElementById('dnTemplateInput').addEventListener('change', async (e)=
 });
 
 document.getElementById('btnDnTplForget').addEventListener('click', async ()=>{
-  if(!confirm('ล้างฟอร์มที่จำไว้ในเครื่องนี้?\n\nครั้งหน้าที่เปิดโปรแกรมต้องเลือกไฟล์ฟอร์มใหม่')) return;
+  // ไม่ใช้ตัวขึ้นบรรทัดใหม่ตรง ๆ — กติกาเดียวกับที่อื่นในไฟล์ เคยถูกกลืนจนสตริงไม่ปิดมาแล้ว
+  if(!confirm('ล้างฟอร์มที่จำไว้ในเครื่องนี้?'
+    + String.fromCharCode(10) + String.fromCharCode(10)
+    + 'ครั้งหน้าที่เปิดโปรแกรมต้องเลือกไฟล์ฟอร์มใหม่')) return;
   try{ if(stateDb) await idbTx('readwrite', st => st.delete(DN_TPL_KEY)); }catch(e){}
   dnTemplate = null;
   document.getElementById('btnDnExport').disabled = true;
