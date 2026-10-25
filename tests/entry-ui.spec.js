@@ -334,6 +334,10 @@ test('ใบที่ Sub-Name ว่างแต่รหัส PO บอกห
   const txt = await page.locator('#entryShipNoUnit').innerText();
   expect(txt).toContain('TM5269H688');
   expect(txt, 'ต้องแนะปุ่ม').toContain('คำนวณ Sub-Name ใหม่');
+  /* ปุ่มนั้นเขียน subName ใหม่ให้ทุกใบที่รหัส PO ตัดสินได้ ไม่ใช่เฉพาะใบที่แถบชี้
+   * แถบส่งคนหน้างานไปกด จึงต้องบอกก่อนว่ากำลังจะกดอะไร (ผู้ตรวจ #110) */
+  expect(txt, 'ต้องบอกว่าปุ่มเป็นงานเหมา').toContain('ทุกใบ');
+  expect(txt, 'ต้องบอกว่าสรุปให้ดูก่อน').toContain('สรุปให้ดูก่อน');
   expect(txt, 'ใบพวกนี้ปุ่มช่วยได้ ห้ามบอกว่าช่วยไม่ได้').not.toContain('ช่วยไม่ได้');
 });
 
