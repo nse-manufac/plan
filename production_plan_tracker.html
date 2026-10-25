@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-17.3">
+<meta name="app-version" content="2026-10-25.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -134,12 +134,18 @@
   #entryTable th{font-size:14px;padding:11px 8px;}
   #entryTable td{padding:9px 8px;}
   #entryTable .row-input{font-size:19px;font-weight:700;width:130px;min-width:0;padding:10px 8px;}
+  /* ยอดส่งของโชว์แทนช่องกรอก — ต้องกินที่ "เท่าช่องกรอก" ไม่ใช่เท่าแค่ขนาดตัวอักษร
+     ⚠️ ขาด width กับ display คอลัมน์จะหุบตอนสลับไปขั้นส่งของแล้วกางกลับตอนสลับออก
+        (ผู้ตรวจ #110 วัดได้ 246px → 207px → 246px) · padding ของช่องกรอกอยู่ในกรอบ
+        จึงบวกเข้า width ด้วย box-sizing เดียวกัน */
+  #entryTable .ship-today{font-size:19px;font-weight:700;width:130px;display:inline-block;
+    box-sizing:border-box;padding:10px 8px;}
   /* บนมือถือบีบ "ระยะห่าง" คืน แต่ไม่แตะขนาดตัวอักษร
      ⚠️ คนที่ต้องใช้ตัวใหญ่คือคนกลุ่มเดียวกับที่ถือมือถือ ลดฟอนต์ตรงนี้เท่ากับยกเลิกสิ่งที่เพิ่งทำ
         ตารางเลื่อนแนวนอนในกรอบของตัวเอง (.table-wrap) ทั้งหน้าต้องไม่เลื่อนตาม */
   @media (max-width:600px){
     #entryTable th,#entryTable td{padding-left:5px;padding-right:5px;}
-    #entryTable .row-input{width:92px;}
+    #entryTable .row-input,#entryTable .ship-today{width:92px;}
   }
   .process-warn{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
     background:var(--red-light);border:1px solid var(--red);color:var(--red);border-radius:10px;
@@ -336,6 +342,17 @@
         <label>&nbsp;</label>
         <label style="font-weight:500;"><input type="checkbox" id="entryHideDone"> ซ่อนที่เสร็จ Process นี้แล้ว</label>
       </div>
+    </div>
+    <!-- ขึ้นเฉพาะตอนเลือกขั้น "ส่งของ" — renderEntryTable() เปิด/ปิดด้วย hidden
+         ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (INVARIANTS A2) หน้านี้แสดงผลอย่างเดียว
+         ⚠️ ต้องบอกด้วยว่าไปแก้ที่ไหน ไม่ใช่บอกแค่ว่าแก้ที่นี่ไม่ได้ -->
+    <div class="desc" id="entryShipNote" hidden>
+      🚚 <b>ยอดส่งของคีย์ที่หน้า &quot;ใบส่งสินค้า&quot; ทางเดียว</b> — ตารางนี้แสดงยอดที่ตัดเข้าใบ
+      ของวันที่เลือกไว้ เพื่อให้ตรวจทานคู่กับขั้นอื่นได้ · จะแก้ให้ไปที่หน้าใบส่งสินค้า
+      เลือกวันกับหน่วยเดียวกัน แล้วแก้ช่อง &quot;จำนวนที่ส่ง&quot; ของ PO นั้น
+      <!-- ใบที่บอกหน่วยไม่ได้จะไม่ขึ้นในหน้าใบส่งสินค้าของหน่วยไหนเลย = ส่งของไม่ได้
+           หน้าตรวจก่อนนำเข้าเตือนครั้งเดียวตอนกดยืนยันแล้วหายไป ตรงนี้เตือนทุกวันที่เปิดดู -->
+      <div id="entryShipNoUnit" hidden style="margin-top:8px"></div>
     </div>
     <div class="table-wrap">
       <table id="entryTable"></table>

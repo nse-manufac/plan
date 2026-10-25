@@ -2079,6 +2079,51 @@ function renderEntryTable(){
   const recIndex = buildRecordIndex(state.records);
   const prevProc = PREV_PROCESS[currentProcess];
   const procLabel = PROCESS_LABELS[currentProcess];
+  /* ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (A2) — หน้านี้โชว์อย่างเดียว
+   * เจ้าของสั่งปิดช่องกรอกเมื่อ 23 ต.ค. 2026 · ก่อนหน้านี้เปิดไว้เป็นทางสำรองระหว่างเปลี่ยนผ่าน
+   * แล้วสองทางเขียนกุญแจ orderId|shipping|date เดียวกัน ทับกันเงียบ ๆ โดยไม่มีใครรู้ว่าอันไหนถูก */
+  const isShip = currentProcess === 'shipping';
+  document.getElementById('entryShipNote').hidden = !isShip;
+  /* ใบที่บอกหน่วยไม่ได้จาก `subNameFromPo()` จะไม่ขึ้นในหน้าใบส่งสินค้าของหน่วยไหนเลย
+   * (`deliveryGroups()` กรอง `o.subName === unit` · `renderDnUnits()` ทิ้งค่าว่าง)
+   * = ส่งของใบนั้นไม่ได้ ยอดค้าง 0 ตลอดไป Dashboard ขึ้นล่าช้าถาวร FG ไม่ลด
+   *
+   * ⚠️ หน้าตรวจก่อนนำเข้าเตือนครั้งเดียวตอนกดยืนยันแล้วหายไป — ตรงนี้คือที่ที่คนจะมาหา
+   *    คำตอบว่า "ทำไมใบนี้ไม่มียอดส่งของ" จึงต้องเตือนทุกวันที่เปิดดู
+   *    ตรวจ 25 ต.ค. 2026 ของจริงมี 0 ใบ · ที่ต้องระวังคือตอนเพิ่มนิติบุคคลตัวถัดไป
+   *    แล้วลืมเติมตัวอักษรเข้า SUB_BY_LETTER — ทุกใบของหน่วยนั้นจะเงียบหายไปทั้งหน่วย */
+  if(isShip){
+    /* ⚠️ นับเฉพาะใบที่ยังมียอดค้างส่ง — ใบที่ส่งครบแล้วไม่ต้องใช้หน้าใบส่งสินค้าอีก
+     *    ถ้านับมันด้วย แถบจะติดค้างถาวรแล้วคนเลิกอ่าน ซึ่งตรงข้ามกับเหตุผลที่มีแถบนี้ */
+    const noUnit = activeOrders().filter(o=>
+      !String(o.subName==null?'':o.subName).trim() && wipBalance(o, allCum[o.id]) > 0);
+    /* ⚠️ สองพวกนี้แก้คนละทาง ห้ามรวมเป็นข้อความเดียว
+     *    ปุ่ม "คำนวณ Sub-Name ใหม่" **ข้ามใบที่รหัส PO ตัดสินไม่ได้** (ดู btnRecalcSubName)
+     *    แนะปุ่มให้พวกหลังคือส่งคนไปกดของที่ไม่เกิดอะไร แล้วเขาจะคิดว่าตัวเองทำผิด
+     *    (ผู้ตรวจ #110 รันพิสูจน์: กดแล้ว subName ยังว่างเหมือนเดิม) */
+    const byPo  = noUnit.filter(o=> subNameFromPo(o.poNo));
+    const stuck = noUnit.filter(o=> !subNameFromPo(o.poNo));
+    const box = document.getElementById('entryShipNoUnit');
+    box.hidden = !noUnit.length;
+    if(noUnit.length){
+      const list = a => escapeHtml(a.slice(0,5).map(o=>o.poNo).join(' · '))
+        + (a.length>5 ? ' และอีก ' + numFmt(a.length-5) + ' ใบ' : '');
+      const parts = [];
+      /* ⚠️ ต้องบอกว่าปุ่มนั้นเป็น "งานเหมา" — มันเขียน subName ใหม่ให้ทุกใบที่รหัส PO ตัดสินได้
+       *    รวมใบที่มีหน่วยอยู่แล้วแต่ไม่ตรงรหัส · กล่องยืนยันสรุปครบก่อนเปลี่ยน ไม่เงียบ
+       *    แต่แถบนี้ส่งคนหน้างานไปกด ไม่ใช่เจ้าของ จึงต้องรู้ก่อนว่ากำลังจะกดอะไร (ผู้ตรวจ #110) */
+      if(byPo.length) parts.push(`<b>${numFmt(byPo.length)} ใบ</b> ช่อง Sub-Name ว่าง `
+        + `แต่รหัส PO บอกหน่วยได้ (${list(byPo)}) — กดปุ่ม "คำนวณ Sub-Name ใหม่" `
+        + 'ที่หน้า "ข้อมูล \u0026 แชร์" · ปุ่มนั้นแก้ทุกใบที่รหัส PO ตัดสินได้พร้อมกัน '
+        + 'และสรุปให้ดูก่อนยืนยัน');
+      if(stuck.length) parts.push(`<b>${numFmt(stuck.length)} ใบ</b> รหัส PO บอกหน่วยไม่ได้ `
+        + `(${list(stuck)}) — <b>ปุ่มคำนวณ Sub-Name ใหม่ช่วยไม่ได้</b> `
+        + 'ถ้ารหัส PO พิมพ์ผิดให้แก้แล้วนำเข้าใหม่ · ถ้ารหัสถูกอยู่แล้ว '
+        + 'แปลว่ามีหน่วยใหม่ที่โปรแกรมยังไม่รู้จัก ต้องแจ้งผู้ดูแลให้เพิ่มตัวอักษรหน่วยเข้าโปรแกรม');
+      box.innerHTML = `<span class="badge red">ส่งของไม่ได้ ${numFmt(noUnit.length)} ใบ</span> `
+        + 'ไม่ขึ้นในหน้าใบส่งสินค้าของหน่วยไหนเลย<br>' + parts.join('<br>');
+    }
+  }
 
   let orders = activeOrders().filter(o=>o.status!=='closed');
   if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
@@ -2117,13 +2162,15 @@ function renderEntryTable(){
       <td data-aging>${agingCell(aging, st.code)}</td>
       <td><span class="cum">${numFmt(cum)}</span>${warn?' <span class="badge amber" title="ยอดสะสมเกินขั้นตอนก่อนหน้า">⚠</span>':''}</td>
       <td class="rem">${numFmt(remaining)}</td>
-      <td><input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}"></td>
+      <td>${isShip
+        ? `<span class="ship-today">${todayVal!=null ? numFmt(todayVal) : '—'}</span>`
+        : `<input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}">`}</td>
     </tr>`;
   });
 
   document.getElementById('entryTable').innerHTML =
     `<thead><tr><th>#</th><th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Order Qty</th><th>Aging<br>(วัน)</th>
-     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนี้</th></tr></thead>
+     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>${isShip ? 'ยอดวันนี้<br><span class="small">(แก้ที่ใบส่งสินค้า)</span>' : 'ยอดวันนี้'}</th></tr></thead>
      <tbody>${rowsHtml || emptyRow(9,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
 
   document.querySelectorAll('#entryTable input.row-input').forEach(inputEl=>{
@@ -2265,6 +2312,14 @@ function voidRecords(ids){
 }
 
 function saveEntryValue(orderId, rawVal, date){
+  /* ⚠️ ด่านนี้ไม่ใช่ของซ้ำกับการไม่วาดช่องกรอก — มันกันทางที่เหลือ
+   *    ยอดส่งของต้องมีทางเขียนทางเดียวคือ saveAllocation() ของหน้าใบส่งสินค้า (A2)
+   *    ถ้าวันหนึ่งมีใครวาดช่องกรอกกลับมา หรือเรียกฟังก์ชันนี้จากที่อื่น
+   *    กุญแจ orderId|shipping|date จะถูกเขียนจากสองที่แล้วทับกันเงียบ ๆ อีกรอบ */
+  if(currentProcess === 'shipping'){
+    toast('ยอดส่งของคีย์ที่หน้าใบส่งสินค้า — หน้านี้แสดงผลอย่างเดียว');
+    return;
+  }
   const idx = state.records.findIndex(r=>r.orderId===orderId && r.process===currentProcess && r.date===date);
   if(rawVal===''||rawVal==null){
     // เจตนาไม่ลบบันทึกเดิมเมื่อเคลียร์ช่องว่าง (ต่างจากเดิม) — เพื่อไม่ให้ขัดกับการซิงค์ข้าม
