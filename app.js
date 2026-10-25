@@ -3773,7 +3773,6 @@ async function useDnTemplate(buf, fileName, savedAt, fromMemory){
   const zip = await JSZip.loadAsync(buf);
   if(!zip.file('xl/workbook.xml')) throw new Error('ไม่ใช่ไฟล์ Excel (.xlsx)');
   const sheetMap = await sheetPathMap(zip);
-  dnTemplate = {buf, sheetMap, fileName, savedAt: savedAt || null};
   /* เลข WK เป็นสัปดาห์การผลิตของโรงงาน ไม่ตรงกับสัปดาห์ ISO ที่คำนวณเองได้
    * จึงอ่านจากฟอร์มที่เจ้าของ "เพิ่งเลือก" มาเป็นค่าตั้งต้น แล้วให้แก้บนหน้าจอได้
    *
@@ -3785,6 +3784,18 @@ async function useDnTemplate(buf, fileName, savedAt, fromMemory){
     const wk = await weekFromTemplate(zip, sheetMap);
     if(wk && !dnWeek()) document.getElementById('dnWeek').value = wk;
   }
+  /* ⚠️ **ตั้ง `dnTemplate` เป็นบรรทัดท้ายสุด** หลังงานที่โยนได้ทั้งหมด
+   *    ไฟล์ .xlsx ที่ผ่านด่าน xl/workbook.xml แต่พังทีหลัง (ขาด rels · โดนตัดครึ่ง)
+   *    เคยทิ้ง dnTemplate ที่ใช้ไม่ได้ไว้ก่อนโยน · แล้วด่านกันแข่งจังหวะใน
+   *    restoreDnTemplate() (`if(dnTemplate) return;`) เห็นว่ามีของอยู่แล้วเลยไม่กู้ของดีกลับมา
+   *
+   *    ผลคือเลือกไฟล์เสียมาทับครั้งเดียว แล้วออกใบไม่ได้ทั้งปุ่มหลักและลิงก์ออกไฟล์ซ้ำ
+   *    จนกว่าจะรีเฟรช — ลิงก์ใน log เช็กแค่ `if(!dnTemplate)` ซึ่งไม่ null แต่เป็นของพัง
+   *    จึงหลุดด่านไปตายข้างในแล้วได้ข้อความอังกฤษ (ผู้ตรวจ #112 รันเจอ)
+   *
+   *    ตั้งท้ายสุดแล้ว ด่านกันแข่งจังหวะยังทำงานเหมือนเดิม เพราะการเลือกไฟล์ที่สำเร็จ
+   *    ยังตั้งค่าให้ก่อนที่ restoreDnTemplate() จะอ่านฐานข้อมูลเสร็จอยู่ดี */
+  dnTemplate = {buf, sheetMap, fileName, savedAt: savedAt || null};
   document.getElementById('btnDnExport').disabled = false;
   renderDnTplInfo();
 }
@@ -3849,6 +3860,8 @@ async function restoreDnTemplate(){
      *    ไม่งั้นคนเลือกไฟล์ใหม่แล้วออกใบด้วยฟอร์มเก่าโดยไม่รู้ตัว ซึ่งเป็นบั๊กชนิดเดียว
      *    กับที่ใบนี้ตั้งใจกัน (ผู้ตรวจ #112 จดว่าเป็นมุมที่ยังไม่ได้ดู) */
     if(dnTemplate) return;
+    // แถวที่เขียนค้างครึ่ง ๆ (ไม่มี buf) ไม่มีประโยชน์และกู้ไม่ได้ — ล้างทิ้ง ไม่ปล่อยค้างถาวร
+    if(saved && !saved.buf){ try{ await idbTx('readwrite', st => st.delete(DN_TPL_KEY)); }catch(e){} }
     if(saved && saved.buf) await useDnTemplate(saved.buf, saved.fileName, saved.savedAt, true);
   }catch(err){
     /* ถึงตรงนี้แปลว่าไบต์ที่เก็บไว้เปิดเป็นไฟล์ Excel ไม่ได้จริง — เก็บไว้ก็ไม่มีประโยชน์ */

@@ -269,3 +269,40 @@ test('ล้างข้อมูลทั้งหมด ต้องไม่�
   const left = await readSaved(page, K_STATE);
   expect(left.orders, 'ใบสั่งต้องถูกลบจริง').toEqual([]);
 });
+
+test('ไฟล์ .xlsx ที่พังกลางทาง ต้องไม่ทิ้งของพังไว้ — ฟอร์มที่จำไว้ต้องกลับมา', async ({ page }) => {
+  /* ⚠️ ไฟล์ที่ **ผ่าน** ด่าน xl/workbook.xml แต่พังทีหลัง ต่างจาก .xls ที่ถูกปัดตั้งแต่ต้น
+   *    useDnTemplate() เคยตั้ง dnTemplate ก่อนจะโยน แล้วด่านกันแข่งจังหวะใน restoreDnTemplate()
+   *    เห็นว่ามีของอยู่แล้วเลยไม่กู้ของดีกลับมา — ด่านที่ใส่เพื่อกันบั๊ก กลับเปิดทางให้บั๊กเดิม
+   *
+   *    ของพังที่ค้างอยู่ยังทำให้ลิงก์ออกไฟล์ซ้ำใน log หลุดด่าน if(!dnTemplate) ไปตายข้างใน
+   *    แล้วพนักงานได้ข้อความอังกฤษ (ผู้ตรวจ #112 รันเจอ) */
+  await open(page);
+  await pickTemplate(page);
+
+  /* ⚠️ จุดที่พังต้องอยู่ **หลัง** sheetPathMap() ไม่งั้นเทสนี้เขียวทั้งก่อนและหลังแก้
+   *    (ผมเขียนผิดรอบแรก — ไฟล์ที่ขาด rels ทำให้ sheetPathMap โยน ซึ่งอยู่ก่อนการตั้งค่าอยู่แล้ว)
+   *
+   *    ไฟล์นี้มีทั้ง workbook.xml และ rels ที่ชี้ไปยังชีต — sheetPathMap() จึงสำเร็จ
+   *    แต่ **ชีตที่ชี้ไปไม่มีจริงในไฟล์** weekFromTemplate() จึงตายที่ zip.file(first).async()
+   *    ซึ่งเป็น error เดียวกับที่ผู้ตรวจรันเจอ */
+  const XL = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+  const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  const z = new JSZip();
+  z.file('[Content_Types].xml', '<Types/>');
+  z.file('xl/workbook.xml',
+    `<workbook xmlns="${XL}" xmlns:r="${R}"><sheets>`
+    + `<sheet name="ใบส่งงาน TUE-U" sheetId="1" r:id="rId1"/></sheets></workbook>`);
+  z.file('xl/_rels/workbook.xml.rels',
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
+    + `<Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>`);
+  // ไม่ใส่ xl/worksheets/sheet1.xml ลงไป — ตรงนี้คือจุดที่มันจะพัง
+  const broken = await z.generateAsync({ type: 'nodebuffer' });
+  await page.setInputFiles('#dnTemplateInput', { name: 'พังกลางทาง.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: broken });
+  await page.waitForTimeout(500);
+
+  await expect(page.locator('#btnDnExport'), 'ฟอร์มที่จำไว้ต้องถูกดึงกลับมา').toBeEnabled();
+  expect(await page.locator('#dnTplInfoText').innerText(),
+    'ต้องกลับไปเป็นฟอร์มที่จำไว้ ไม่ใช่ไฟล์ที่พัง').toContain('FM-ST-07.xlsx');
+});
