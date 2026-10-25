@@ -1731,10 +1731,17 @@ test('log ใบส่งสินค้า — ยังไม่ได้เ�
   await dl;
   await page.waitForTimeout(400);
 
-  // ⚠️ ที่นี่ reload ไม่ได้ — harness ลบ IndexedDB ทุกครั้งที่หน้าโหลด (forgetSavedOnEveryLoad)
-  //    log จะหายไปด้วย · ถอดไฟล์ออกจากช่องเลือกแทน ซึ่งเป็นเส้นทางเดียวกับที่ dnTemplate กลายเป็น null
-  await page.setInputFiles('#dnTemplateInput', []);
-  await page.waitForTimeout(200);
+  /* ⚠️ ที่นี่ reload ไม่ได้ — harness ลบ IndexedDB ทุกครั้งที่หน้าโหลด (forgetSavedOnEveryLoad)
+   *    log จะหายไปด้วย
+   *
+   * ⚠️ และ **ถอดไฟล์ออกจากช่องเลือกไม่ได้แปลว่าไม่มีเทมเพลตอีกแล้ว** ตั้งแต่เครื่องจำฟอร์มไว้ได้
+   *    (25 ต.ค. 2026) — ถอดออกแล้วแอปจะดึงฟอร์มที่จำไว้กลับมาให้ ซึ่งถูกแล้ว
+   *    ทางที่ทำให้ "ไม่มีฟอร์ม" จริง ๆ คือปุ่มล้างฟอร์มที่จำไว้ จึงต้องใช้ทางนั้น
+   *    ของเดิมใช้ setInputFiles([]) ซึ่งตอนนี้พาไปคนละสถานะกับที่เทสตั้งใจทดสอบ */
+  page.once('dialog', d => d.accept());
+  await page.click('#btnDnTplForget');
+  await page.waitForTimeout(300);
+  await expect(page.locator('#btnDnExport'), 'ล้างแล้วต้องไม่มีฟอร์มจริง ๆ').toBeDisabled();
 
   await page.click('#dnLogTable [data-dn-reissue]');
   await page.waitForTimeout(300);

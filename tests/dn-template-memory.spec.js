@@ -225,3 +225,19 @@ test('เครื่องที่จำฟอร์มให้ไม่ไ�
   await expect(page.locator('#btnDnTplForget'), 'ไม่มีอะไรให้ล้าง').toBeHidden();
   await expect(page.locator('#btnDnExport'), 'รอบนี้ยังออกใบได้ตามปกติ').toBeEnabled();
 });
+
+test('เลือกไฟล์ .xls มาทับ ต้องไม่ทำให้ฟอร์มที่จำไว้หายไปจากจอ', async ({ page }) => {
+  /* ผู้ตรวจ #112 ทักสองรอบติด — รอบแรกผมใส่ restoreDnTemplate() ไว้แค่ที่ catch ของการแกะ zip
+   * แต่ทาง .xls กับทาง "กดยกเลิกหน้าต่างเลือกไฟล์" ออกก่อนถึงตรงนั้น
+   * ของยังอยู่ในฐานข้อมูล แต่หายจากจอ แล้วคนต้องไปรีเฟรชเอง */
+  await open(page);
+  await pickTemplate(page);
+  await expect(page.locator('#btnDnExport')).toBeEnabled();
+
+  await page.setInputFiles('#dnTemplateInput', { name: 'เก่า.xls',
+    mimeType: 'application/vnd.ms-excel', buffer: Buffer.from('ไม่ใช่ xlsx') });
+  await page.waitForTimeout(400);
+
+  await expect(page.locator('#btnDnExport'), 'ฟอร์มที่จำไว้ต้องถูกดึงกลับมา').toBeEnabled();
+  expect(await page.locator('#dnTplInfoText').innerText()).toContain('FM-ST-07.xlsx');
+});

@@ -3844,6 +3844,11 @@ async function restoreDnTemplate(){
     if(stateDb) saved = await idbTx('readonly', st => st.get(DN_TPL_KEY));
   }catch(err){ saved = null; }   // อ่านพลาดชั่วคราว — ห้ามลบของที่จำไว้ทิ้ง
   try{
+    /* ⚠️ restoreDnTemplate() ถูกเรียกแบบไม่ await ตอนเปิดหน้า — ถ้ามีคนเลือกไฟล์แทรกเข้ามา
+     *    ระหว่างที่กำลังอ่านฐานข้อมูล **ของใหม่ต้องชนะ** ห้ามเอาฟอร์มเก่าทับ
+     *    ไม่งั้นคนเลือกไฟล์ใหม่แล้วออกใบด้วยฟอร์มเก่าโดยไม่รู้ตัว ซึ่งเป็นบั๊กชนิดเดียว
+     *    กับที่ใบนี้ตั้งใจกัน (ผู้ตรวจ #112 จดว่าเป็นมุมที่ยังไม่ได้ดู) */
+    if(dnTemplate) return;
     if(saved && saved.buf) await useDnTemplate(saved.buf, saved.fileName, saved.savedAt, true);
   }catch(err){
     /* ถึงตรงนี้แปลว่าไบต์ที่เก็บไว้เปิดเป็นไฟล์ Excel ไม่ได้จริง — เก็บไว้ก็ไม่มีประโยชน์ */
@@ -3861,8 +3866,10 @@ document.getElementById('dnTemplateInput').addEventListener('change', async (e)=
   dnTemplate = null;
   document.getElementById('btnDnExport').disabled = true;
   renderDnTplInfo();
-  if(!file) return;
-  if(rejectLegacyXls(file)) return;
+  /* ⚠️ **ทุกทางออก**ของตัวจับนี้ต้องกู้ฟอร์มที่จำไว้กลับมา ไม่ใช่เฉพาะทางที่แกะ zip ไม่ผ่าน
+   *    เลือก .xls มาทับ หรือกดยกเลิกหน้าต่างเลือกไฟล์ ก็ไม่ควรทำให้ของที่จำไว้หายไปจากจอ
+   *    ทั้งที่ยังอยู่ในฐานข้อมูล แล้วต้องให้คนไปรีเฟรชเอง (ผู้ตรวจ #112 รันเจอ สองรอบติด) */
+  if(!file || rejectLegacyXls(file)){ await restoreDnTemplate(); return; }
   toast('กำลังอ่านไฟล์...');
   try{
     await useDnTemplate(await file.arrayBuffer(), file.name, null, false);
