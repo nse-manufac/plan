@@ -362,6 +362,10 @@ const STORAGE_KEY = 'tue_order_tracker_v1';
 const IDB_NAME = 'tue_order_tracker', IDB_STORE = 'kv';
 const LEGACY_COPY_KEY = STORAGE_KEY + ':localStorage';   // สำเนาดิบของ localStorage ตอนย้าย (ใน IndexedDB)
 const MOVED_KEY = STORAGE_KEY + ':moved';   // ธงใน localStorage: เครื่องนี้ย้ายเข้า IndexedDB แล้ว · localStorage ว่างแล้ว
+/* ฟอร์ม FM-ST-07 ที่เครื่องนี้จำไว้ — **คีย์ของตัวเอง ไม่ปนกับ state**
+ * ถ้าไปอยู่ใน state ก้อนที่เขียนทุกครั้งที่คีย์ยอดจะโตขึ้นเป็นเมกะ แล้วชนเพดานพื้นที่
+ * ซึ่งเคยเกิดมาแล้วตอนยังใช้ localStorage · และมันเป็นไฟล์ของเครื่องใครเครื่องมัน ห้ามซิงค์ */
+const DN_TPL_KEY = STORAGE_KEY + ':dnTemplate';
 let stateDb = null;      // null = ใช้ localStorage แบบเดิม
 let stateReady = false;  // ก่อนโหลดเสร็จ ห้ามบันทึกและห้ามซิงค์ — ไม่งั้น state ว่างจะไปทับของจริง
 let syncWaiting;         // มีคนขอซิงค์ระหว่างรอโหลด · ค่าคือ silent ที่ขอ (false ชนะ) · ซิงค์ให้ใน openState
@@ -506,6 +510,7 @@ async function openState(){
     loadSettingsIntoForm();
     renderAll();
     renderSyncBadge();   // ตัวนับ "รอส่ง" ต้องนับจากข้อมูลจริง ไม่ใช่ state ว่างตอนเปิดหน้า
+    restoreDnTemplate(); // ไม่ await — ฟอร์มที่จำไว้ไม่ควรถ่วงการเปิดหน้า และพังแล้วต้องไม่ลากหน้าไปด้วย
   }catch(e){
     toast('เปิดหน้าไม่สมบูรณ์ — บางส่วนอาจแสดงผิด กรุณาแจ้งหัวหน้า');
     throw e;   // ปล่อยให้ error หลุดออกไปเหมือนเดิม — เทสที่ตรวจ "ต้องไม่มี error" ยังจับได้
@@ -3756,30 +3761,98 @@ function refreshDnGroup(pn){
  *
  *    plan ลอกวิธีของ bincard v2 ที่สร้างไฟล์ใหม่จากศูนย์ไม่ได้ — ExcelJS เขียนไฟล์ใหม่ทั้งไฟล์
  *    แล้ว xl/drawings/ หายจนโลโก้บริษัทไม่ขึ้น · ทางที่เหลือคือโหลดใหม่จากไบต์ดิบทุกครั้ง */
-let dnTemplate = null;   // {buf, sheetMap, fileName}
+let dnTemplate = null;   // {buf, sheetMap, fileName, savedAt}
+
+/** รับไบต์ของฟอร์มเข้ามาเป็นเทมเพลตที่ใช้งานอยู่
+ *  ใช้ร่วมกันระหว่าง "เลือกไฟล์" กับ "กู้คืนของที่จำไว้" — ต้องเป็นเส้นทางเดียวกัน
+ *  ไม่งั้นฟอร์มที่กู้คืนมาอาจผ่านด่านคนละชุดกับฟอร์มที่เพิ่งเลือก
+ *
+ *  ⚠️ ไม่เก็บ sheetMap ลงฐานข้อมูล — คิดใหม่จากไบต์ทุกครั้ง
+ *     กติกาเดียวกับกล่อง/เศษ: ห้ามเก็บของที่คิดได้ ไม่งั้นมันค้างไม่ตรงกับไฟล์จริง */
+async function useDnTemplate(buf, fileName, savedAt){
+  const zip = await JSZip.loadAsync(buf);
+  if(!zip.file('xl/workbook.xml')) throw new Error('ไม่ใช่ไฟล์ Excel (.xlsx)');
+  const sheetMap = await sheetPathMap(zip);
+  dnTemplate = {buf, sheetMap, fileName, savedAt};
+  // เลข WK เป็นสัปดาห์การผลิตของโรงงาน ไม่ตรงกับสัปดาห์ ISO ที่คำนวณเองได้
+  // จึงอ่านจากฟอร์มที่เจ้าของเลือกมาเป็นค่าตั้งต้น แล้วให้แก้บนหน้าจอได้
+  const wk = await weekFromTemplate(zip, sheetMap);
+  if(wk && !dnWeek()) document.getElementById('dnWeek').value = wk;
+  document.getElementById('btnDnExport').disabled = false;
+  renderDnTplInfo();
+}
+
+/** บอกบนจอว่าเครื่องนี้จำฟอร์มไหนไว้ และจำไว้เมื่อไหร่
+ *  ⚠️ ห้ามจำเงียบ ๆ — บริษัทแก้ฟอร์มเมื่อไหร่ เครื่องที่ยังใช้ของเก่าจะออกใบด้วยผังเก่า
+ *     โดยไม่มีอะไรฟ้องเลย · ชื่อไฟล์กับวันที่คือสิ่งเดียวที่ทำให้คนสังเกตได้ */
+function renderDnTplInfo(){
+  const box = document.getElementById('dnTplInfo');
+  box.hidden = !(dnTemplate && dnTemplate.savedAt);
+  if(box.hidden) return;
+  document.getElementById('dnTplInfoText').textContent =
+    `จำฟอร์มไว้แล้ว: ${dnTemplate.fileName} (เลือกเมื่อ ${fmtDateTH(String(dnTemplate.savedAt).slice(0,10))})`
+    + ' — ไม่ต้องเลือกไฟล์ใหม่ทุกครั้ง · ถ้าบริษัทแก้ฟอร์ม ให้เลือกไฟล์ใหม่ทับ';
+}
+
+/** จำไว้ในเครื่องนี้ — ล้มเหลวได้โดยไม่พังอะไร เทมเพลตยังใช้ได้ในรอบนี้อยู่ดี
+ *  ⚠️ ไม่มี IndexedDB = ไม่จำ · ห้ามยัด ArrayBuffer ลง localStorage เด็ดขาด
+ *     มันเก็บได้แต่ข้อความ ต้องแปลงเป็น base64 ซึ่งโตขึ้นหนึ่งในสามและชนเพดานทันที */
+async function rememberDnTemplate(){
+  if(!stateDb || !dnTemplate) return false;
+  try{
+    await idbTx('readwrite', st => st.put(
+      {buf: dnTemplate.buf, fileName: dnTemplate.fileName, savedAt: dnTemplate.savedAt}, DN_TPL_KEY));
+    return true;
+  }catch(err){
+    toast('จำฟอร์มไว้ไม่ได้ (พื้นที่เก็บข้อมูลอาจเต็ม) — รอบนี้ยังออกใบได้ตามปกติ');
+    return false;
+  }
+}
+
+/** กู้ฟอร์มที่จำไว้ตอนเปิดโปรแกรม
+ *  ⚠️ ห้ามให้ตัวนี้ถ่วงหรือทำให้การเปิดหน้าพัง — ฟอร์มเสียต้องแค่ "ไม่มีฟอร์ม" ไม่ใช่เปิดโปรแกรมไม่ได้
+ *     (กฎเดียวกับ #100 ที่วาดจอพังแล้วห้ามทำทั้งหน้าค้างจาง) */
+async function restoreDnTemplate(){
+  try{
+    if(!stateDb) return;
+    const saved = await idbTx('readonly', st => st.get(DN_TPL_KEY));
+    if(saved && saved.buf) await useDnTemplate(saved.buf, saved.fileName, saved.savedAt);
+  }catch(err){
+    dnTemplate = null;
+    try{ await idbTx('readwrite', st => st.delete(DN_TPL_KEY)); }catch(e){}
+    toast('ฟอร์มที่จำไว้เปิดไม่ได้ — กรุณาเลือกไฟล์ฟอร์มใหม่');
+  }finally{
+    document.documentElement.dataset.dnTplReady = '1';   // ป้ายให้เทสรู้ว่าลองกู้คืนจบแล้ว (ได้หรือไม่ได้ก็ตาม)
+  }
+}
 
 document.getElementById('dnTemplateInput').addEventListener('change', async (e)=>{
   const file = e.target.files[0];
   dnTemplate = null;
   document.getElementById('btnDnExport').disabled = true;
+  renderDnTplInfo();
   if(!file) return;
   if(rejectLegacyXls(file)) return;
   toast('กำลังอ่านไฟล์...');
   try{
-    const buf = await file.arrayBuffer();
-    const zip = await JSZip.loadAsync(buf);
-    if(!zip.file('xl/workbook.xml')) throw new Error('ไม่ใช่ไฟล์ Excel (.xlsx)');
-    dnTemplate = {buf, sheetMap: await sheetPathMap(zip), fileName: file.name};
-    // เลข WK เป็นสัปดาห์การผลิตของโรงงาน ไม่ตรงกับสัปดาห์ ISO ที่คำนวณเองได้
-    // จึงอ่านจากฟอร์มที่เจ้าของเลือกมาเป็นค่าตั้งต้น แล้วให้แก้บนหน้าจอได้
-    const wk = await weekFromTemplate(zip, await sheetPathMap(zip));
-    if(wk && !dnWeek()) document.getElementById('dnWeek').value = wk;
+    await useDnTemplate(await file.arrayBuffer(), file.name, new Date().toISOString());
   }catch(err){
     toast('เปิดไฟล์ไม่สำเร็จ: '+err.message);
     return;
   }
-  document.getElementById('btnDnExport').disabled = false;
-  toast('อ่านเทมเพลตแล้ว — กดออกใบส่งสินค้าได้');
+  const kept = await rememberDnTemplate();
+  toast(kept ? 'อ่านเทมเพลตแล้ว และจำไว้ให้ — ครั้งหน้าไม่ต้องเลือกไฟล์อีก'
+             : 'อ่านเทมเพลตแล้ว — กดออกใบส่งสินค้าได้');
+});
+
+document.getElementById('btnDnTplForget').addEventListener('click', async ()=>{
+  if(!confirm('ล้างฟอร์มที่จำไว้ในเครื่องนี้?\n\nครั้งหน้าที่เปิดโปรแกรมต้องเลือกไฟล์ฟอร์มใหม่')) return;
+  try{ if(stateDb) await idbTx('readwrite', st => st.delete(DN_TPL_KEY)); }catch(e){}
+  dnTemplate = null;
+  document.getElementById('btnDnExport').disabled = true;
+  document.getElementById('dnTemplateInput').value = '';
+  renderDnTplInfo();
+  toast('ล้างฟอร์มที่จำไว้แล้ว');
 });
 
 /** เลขที่ใบส่งสินค้า — คิดจากหน่วย+วัน ไม่ใช่เลขรัน (เจ้าของเลือก 10 ต.ค. 2026)
