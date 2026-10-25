@@ -3859,9 +3859,9 @@ async function restoreDnTemplate(){
      *    ระหว่างที่กำลังอ่านฐานข้อมูล **ของใหม่ต้องชนะ** ห้ามเอาฟอร์มเก่าทับ
      *    ไม่งั้นคนเลือกไฟล์ใหม่แล้วออกใบด้วยฟอร์มเก่าโดยไม่รู้ตัว ซึ่งเป็นบั๊กชนิดเดียว
      *    กับที่ใบนี้ตั้งใจกัน (ผู้ตรวจ #112 จดว่าเป็นมุมที่ยังไม่ได้ดู) */
-    if(dnTemplate) return;
     // แถวที่เขียนค้างครึ่ง ๆ (ไม่มี buf) ไม่มีประโยชน์และกู้ไม่ได้ — ล้างทิ้ง ไม่ปล่อยค้างถาวร
     if(saved && !saved.buf){ try{ await idbTx('readwrite', st => st.delete(DN_TPL_KEY)); }catch(e){} }
+    if(dnTemplate) return;
     if(saved && saved.buf) await useDnTemplate(saved.buf, saved.fileName, saved.savedAt, true);
   }catch(err){
     /* ถึงตรงนี้แปลว่าไบต์ที่เก็บไว้เปิดเป็นไฟล์ Excel ไม่ได้จริง — เก็บไว้ก็ไม่มีประโยชน์ */

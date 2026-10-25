@@ -47,8 +47,25 @@ async function open(page) {
   await page.waitForTimeout(150);
 }
 
+/** ไฟล์ฟอร์มที่ใช้ทดสอบ — เติมส่วนที่เจ้าของถามถึงเข้าไปเอง
+ *
+ *  ⚠️ fixture เปล่า ๆ **ไม่มี `xl/drawings` และไม่มีส่วนที่เป็นไบนารีเลย** (ผู้ตรวจ #112 แกะดู)
+ *     เทียบไฟล์แล้วเขียวจึงพิสูจน์แค่ว่า entry ที่ *มีอยู่* ไม่เพี้ยน — ไม่ได้พิสูจน์
+ *     คำถามที่เจ้าของถามจริง ๆ คือ "โลโก้กับขนาด cell เหมือนเดิมไหม"
+ *
+ *     ไบนารีคือจุดที่เสี่ยงที่สุด ถ้าวันหนึ่งมีใครเปลี่ยนไปเก็บเทมเพลตเป็นข้อความ/base64
+ *     ส่วนที่เป็น XML อาจรอด แต่ไฟล์รูปจะเพี้ยนก่อนเพื่อน */
+async function templateBytes() {
+  const base = await deliveryFormWorkbook(['TUE-U', 'TUE-H']);
+  const z = await JSZip.loadAsync(base);
+  // โลโก้จำลอง — ไบต์ที่ไม่ใช่ข้อความ รวม 0x00 กับ 0xFF ซึ่งพังง่ายที่สุดถ้ามีการแปลงเป็นข้อความ
+  z.file('xl/media/logo.png', Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00,0xFF,0xFE,0x01]));
+  z.file('xl/drawings/drawing1.xml', '<xdr:wsDr xmlns:xdr="d"><xdr:pic/></xdr:wsDr>');
+  return z.generateAsync({ type: 'nodebuffer' });
+}
+
 async function pickTemplate(page) {
-  const src = await deliveryFormWorkbook(['TUE-U', 'TUE-H']);
+  const src = await templateBytes();
   await page.setInputFiles('#dnTemplateInput', {
     name: 'FM-ST-07.xlsx',
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: src });
@@ -132,9 +149,12 @@ test('ไฟล์ที่ออกหลังรีเฟรช ต้อง�
   }
   expect(diff, 'ทุกส่วนของไฟล์ต้องเหมือนเดิม รวม xl/drawings (โลโก้) และความกว้างคอลัมน์').toEqual([]);
 
-  // กันเทสเปล่า — ไฟล์ต้องมีโลโก้กับผังคอลัมน์ให้เทียบจริง ไม่ใช่ zip เปล่าสองอัน
+  /* กันเทสเปล่า — ไฟล์ต้องมีของที่เจ้าของถามถึงอยู่จริง ไม่ใช่ zip เปล่าสองอัน
+   * ถ้าวันหนึ่งมีใครถอดสองส่วนนี้ออกจาก fixture ข้อความของเทสจะเกินจริงทันที */
   expect(names(za).length, 'ไฟล์ต้องมีหลายส่วนให้เทียบ').toBeGreaterThan(3);
   expect(names(za).some(n => n.startsWith('xl/worksheets/')), 'ต้องมีชีตอยู่จริง').toBe(true);
+  expect(names(za), 'ต้องมีส่วนที่เป็นไบนารี (โลโก้) ให้เทียบ').toContain('xl/media/logo.png');
+  expect(names(za), 'ต้องมีส่วนรูปวาดให้เทียบ').toContain('xl/drawings/drawing1.xml');
 });
 
 test('ล้างฟอร์มที่จำไว้ แล้วรีเฟรช ต้องกลับไปต้องเลือกไฟล์ใหม่', async ({ page }) => {
