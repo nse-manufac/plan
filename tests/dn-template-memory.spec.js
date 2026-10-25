@@ -61,6 +61,17 @@ async function templateBytes() {
   // โลโก้จำลอง — ไบต์ที่ไม่ใช่ข้อความ รวม 0x00 กับ 0xFF ซึ่งพังง่ายที่สุดถ้ามีการแปลงเป็นข้อความ
   z.file('xl/media/logo.png', Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00,0xFF,0xFE,0x01]));
   z.file('xl/drawings/drawing1.xml', '<xdr:wsDr xmlns:xdr="d"><xdr:pic/></xdr:wsDr>');
+  /* ⚠️ ความกว้างคอลัมน์ — fixture เปล่า **ไม่มี `<cols>` เลย** (ผู้ตรวจ #112 แกะดู)
+   *    ชื่อเทสกับข้อความ assert พูดถึง "ขนาดคอลัมน์" มาตั้งแต่ต้น ซึ่งเป็นสิ่งที่เจ้าของถามตรง ๆ
+   *    ถ้าไฟล์ไม่มีของนั้นอยู่จริง เทียบแล้วเขียวก็ไม่ได้ตอบคำถามนั้น — เป็นคำพูดเกินจริง
+   *    (`<cols>` ต้องอยู่ก่อน `<sheetData>` ตามลำดับของ schema ไม่ใช่วางที่ไหนก็ได้) */
+  for (const n of Object.keys(z.files).filter(n => !z.files[n].dir && n.startsWith('xl/worksheets/'))) {
+    const xml = await z.file(n).async('string');
+    z.file(n, xml.replace('<sheetData', '<cols>'
+      + '<col min="1" max="1" width="4.25" customWidth="1"/>'
+      + '<col min="2" max="5" width="18.5" customWidth="1"/>'
+      + '</cols><sheetData'));
+  }
   return z.generateAsync({ type: 'nodebuffer' });
 }
 
@@ -155,6 +166,9 @@ test('ไฟล์ที่ออกหลังรีเฟรช ต้อง�
   expect(names(za).some(n => n.startsWith('xl/worksheets/')), 'ต้องมีชีตอยู่จริง').toBe(true);
   expect(names(za), 'ต้องมีส่วนที่เป็นไบนารี (โลโก้) ให้เทียบ').toContain('xl/media/logo.png');
   expect(names(za), 'ต้องมีส่วนรูปวาดให้เทียบ').toContain('xl/drawings/drawing1.xml');
+  const sheet1 = names(za).find(n => n.startsWith('xl/worksheets/'));
+  expect(await za.file(sheet1).async('string'),
+    'ต้องมีความกว้างคอลัมน์ให้เทียบ ไม่งั้นชื่อเทสเกินจริง').toContain('<cols>');
 });
 
 test('ล้างฟอร์มที่จำไว้ แล้วรีเฟรช ต้องกลับไปต้องเลือกไฟล์ใหม่', async ({ page }) => {
