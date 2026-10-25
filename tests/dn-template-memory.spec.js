@@ -241,3 +241,26 @@ test('เลือกไฟล์ .xls มาทับ ต้องไม่ท�
   await expect(page.locator('#btnDnExport'), 'ฟอร์มที่จำไว้ต้องถูกดึงกลับมา').toBeEnabled();
   expect(await page.locator('#dnTplInfoText').innerText()).toContain('FM-ST-07.xlsx');
 });
+
+test('ล้างข้อมูลทั้งหมด ต้องไม่ลบฟอร์มที่จำไว้ และกล่องยืนยันต้องบอกไว้', async ({ page }) => {
+  /* 🔒 เจ้าของเคาะเมื่อ 25 ต.ค. 2026 — ฟอร์มเปล่าของบริษัทไม่ใช่ข้อมูลธุรกิจ จึงไม่ถูกลบ
+   *    เทสนี้ล็อกคำตัดสินไว้ ไม่ให้ใครมา "แก้" ทีหลังเพราะเห็นว่าปุ่มเขียนว่าลบทั้งหมด
+   *    (ผู้ตรวจ #112 ทักเรื่องคำกับของไม่ตรงกัน — แก้ที่คำ ไม่ใช่ที่ของ) */
+  await open(page);
+  await pickTemplate(page);
+
+  const asked = [];
+  page.on('dialog', d => { asked.push(d.message()); d.accept(); });
+  await page.click('.tab-btn[data-tab="data"]');
+  await page.click('#btnClearAll');
+  await page.waitForTimeout(500);
+
+  expect(asked.length, 'ต้องถามยืนยันสองชั้นเหมือนเดิม').toBe(2);
+  expect(asked[1], 'กล่องยืนยันต้องบอกว่าฟอร์มไม่ถูกลบ').toContain('จะไม่ถูกลบ');
+  expect(asked[1], 'ต้องบอกว่าล้างฟอร์มได้ที่ไหน').toContain('ล้างฟอร์มที่จำไว้');
+
+  await page.reload();
+  await waitReady(page);
+  await waitTpl(page);
+  await expect(page.locator('#btnDnExport'), 'ฟอร์มที่จำไว้ต้องยังอยู่').toBeEnabled();
+});
