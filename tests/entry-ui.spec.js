@@ -311,9 +311,40 @@ test('ใบที่รหัส PO บอกหน่วยไม่ได้ 
 
   const box = page.locator('#entryShipNoUnit');
   await expect(box).toBeVisible();
-  expect(await box.innerText(), 'ต้องบอกจำนวน').toContain('1');
-  expect(await box.innerText(), 'ต้องบอกว่าใบไหน').toContain('TM9999ZZZ');
-  expect(await box.innerText(), 'ต้องบอกว่าแก้ยังไง').toContain('Sub-Name');
+  const txt = await box.innerText();
+  expect(txt, 'ต้องบอกจำนวน').toContain('1');
+  expect(txt, 'ต้องบอกว่าใบไหน').toContain('TM9999ZZZ');
+
+  /* ⚠️ รหัส PO ใบนี้ตัดสินหน่วยไม่ได้ (ตำแหน่งที่ 7 = Z) — ปุ่ม "คำนวณ Sub-Name ใหม่"
+   *    ข้ามใบแบบนี้ทิ้ง (btnRecalcSubName · if(!to) return) · แนะปุ่มคือส่งคนไปกดของที่ไม่เกิดอะไร
+   *    แล้วเขาจะคิดว่าตัวเองทำผิด (ผู้ตรวจ #110 รันพิสูจน์ว่ากดแล้ว subName ยังว่าง) */
+  expect(txt, 'ต้องบอกตรง ๆ ว่าปุ่มช่วยไม่ได้').toContain('ช่วยไม่ได้');
+  expect(txt, 'ต้องบอกทางที่ใช้ได้จริง — รหัส PO ผิด หรือมีหน่วยใหม่ที่โปรแกรมไม่รู้จัก')
+    .toContain('หน่วยใหม่');
+});
+
+test('ใบที่ Sub-Name ว่างแต่รหัส PO บอกหน่วยได้ ต้องแนะปุ่มคำนวณใหม่ ซึ่งช่วยได้จริง', async ({ page }) => {
+  /* ใบที่นำเข้าก่อน #101 ด้วยกฎเก่า (ถามว่ามีตัว H/U ไหม) — รหัส PO ตัดสินได้ด้วยกฎใหม่
+   * พวกนี้ปุ่มแก้ให้ได้จริง จึงต้องแนะปุ่ม ไม่ใช่สั่งให้ไปแก้รหัส PO ที่ถูกอยู่แล้ว */
+  const old = order('TM5269H688', 3000, '');
+  await openEntry(page, ORDERS.concat([old]));
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(200);
+
+  const txt = await page.locator('#entryShipNoUnit').innerText();
+  expect(txt).toContain('TM5269H688');
+  expect(txt, 'ต้องแนะปุ่ม').toContain('คำนวณ Sub-Name ใหม่');
+  expect(txt, 'ใบพวกนี้ปุ่มช่วยได้ ห้ามบอกว่าช่วยไม่ได้').not.toContain('ช่วยไม่ได้');
+});
+
+test('ใบที่ Sub-Name ว่างแต่ส่งครบแล้ว ต้องไม่ขึ้นเตือน — ไม่ต้องใช้หน้าใบส่งสินค้าอีก', async ({ page }) => {
+  /* ⚠️ แถบที่ติดค้างถาวรคือแถบที่ไม่มีใครอ่าน · ใบที่ส่งครบแล้วไม่ต้องการหน้าใบส่งสินค้าอีก
+   *    (ผู้ตรวจ #110 ทักว่าเดิมนับทั้งระบบ ใบส่งครบ 1,000/1,000 ก็ยังขึ้น) */
+  const done = order('TM9999ZZZ', 1000, '');
+  await openEntry(page, ORDERS.concat([done]), [recToday('s9', 'TM9999ZZZ', 'shipping', 1000)]);
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(200);
+  await expect(page.locator('#entryShipNoUnit')).toBeHidden();
 });
 
 test('ทุกใบบอกหน่วยได้ ต้องไม่ขึ้นเตือนอะไร', async ({ page }) => {
