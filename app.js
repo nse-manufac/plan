@@ -4049,14 +4049,15 @@ function dnPreviewHtml(entry){
   const groups = dnReissueGroups(entry.date, entry.unit);
   const head = `<div class="desc">
       หน่วย <b>${escapeHtml(entry.unit)}</b> · วันที่ <b>${escapeHtml(fmtDateTH(entry.date))}</b>
-      · WK <b>${escapeHtml(String(entry.week||'') || '—')}</b><br>
+      · WK บนใบ <b>${escapeHtml(String(entry.week||'') || '—')}</b><br>
       ออกเมื่อ ${escapeHtml(entry.createdAt ? new Date(entry.createdAt).toLocaleString('th-TH') : '—')}
       จากเครื่อง ${escapeHtml(entry.deviceName||'—')}</div>`;
 
   const why = `<div class="desc">⚠️ <b>นี่คือข้อมูลของใบนี้ ณ วันนี้ ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว</b>
       — ระบบไม่ได้เก็บไฟล์หรือเนื้อของกระดาษไว้ แต่คิดใหม่จากยอดบรรจุของหน่วยและวันนั้นทุกครั้ง
       ถ้ามีอะไรเปลี่ยนไปหลังออกใบ ตัวเลขที่เห็นจะไม่เท่ากับกระดาษ โดยเฉพาะ <b>Wip bal.</b>
-      ซึ่งเปลี่ยนเองทุกครั้งที่นำเข้าไฟล์ Call In งวดใหม่</div>`;
+      ซึ่งเป็นยอดของ <b>งวดล่าสุดที่นำเข้าไว้ ไม่ใช่ของ WK ที่เขียนบนใบ</b>
+      จึงเปลี่ยนเองทุกครั้งที่นำเข้าไฟล์ Call In งวดใหม่</div>`;
 
   /* ⚠️ สภาพ "กลุ่มว่าง" มีได้สามสาเหตุ และหน้านี้แยกจากกันไม่ได้ จึงต้องบอกครบทั้งสาม
    *    ห้ามเขียนชี้แค่สองสาเหตุแรกเหมือนรู้คำตอบ (ผู้ตรวจ #113)
