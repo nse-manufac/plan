@@ -4017,6 +4017,100 @@ function dnLogStale(entry){
   return now !== (Number(entry.qty)||0);
 }
 
+/** รายละเอียดของใบที่ออกไปแล้ว อ่านได้บนจอ **โดยไม่ต้องมีไฟล์ฟอร์ม FM-ST-07**
+ *  (เจ้าของสั่ง 25 ต.ค. 2026 — คนที่ไม่มีฟอร์มในมือก็ต้องตามได้ว่าใบนั้นส่งอะไรไป)
+ *
+ *  ⚠️ สิ่งที่หน้านี้แสดงคือข้อมูลของใบนั้น **ณ วันนี้ ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว**
+ *     ระบบไม่เก็บไฟล์และไม่เก็บเนื้อของกระดาษไว้เลย ทุกช่องคิดใหม่จากยอดบรรจุของหน่วย
+ *     และวันนั้นทุกครั้ง (เหตุผลเดียวกับ writeDeliveryFile) · หน้านี้ต้องพูดเรื่องนี้ออกมาตรง ๆ
+ *     เพราะคนที่เปิดดูคือคนที่ไม่มีฟอร์ม จึงเทียบกับไฟล์เองไม่ได้ และจะไม่รู้เลยว่า
+ *     เลขที่เห็นอาจไม่ใช่เลขบนกระดาษ — ที่เปลี่ยนเองเงียบที่สุดคือ Wip bal. ของ Delta
+ *
+ *  ⚠️ ต้องผ่าน dnReissueGroups() เท่านั้น ห้ามเรียก deliveryGroups() ตรง ๆ ที่นี่
+ *     เหตุผลอยู่ที่คอมเมนต์ของ dnReissueGroups — ช่องติ๊ก dnExtraRows เป็นของวันที่เลือก
+ *     อยู่บนจอ ไม่ใช่วันของแถว log · ใบที่ติ๊กไว้ของวันอื่นจะไหลมาโชว์บนใบนี้เงียบ ๆ
+ *     (ตระกูลเดียวกับที่ผู้ตรวจ #103 รันเจอบนเส้นทางออกไฟล์ซ้ำ)
+ *
+ *  ช่องที่โชว์เรียงตามกระดาษ (ดู fillDeliveryForm) — ราย PO: P/N · PO No. · Order Date ·
+ *  Order Q'ty · Wip bal. · ยอดส่งงาน · ของทั้งกลุ่ม: ต่อกล่อง · กล่อง · เศษ · จำนวน/PCS · Remark */
+function dnPreviewHtml(entry){
+  const groups = dnReissueGroups(entry.date, entry.unit);
+  const head = `<div class="desc" style="margin-bottom:10px">
+      หน่วย <b>${escapeHtml(entry.unit)}</b> · วันที่ <b>${fmtDateTH(entry.date)}</b>
+      · WK <b>${escapeHtml(String(entry.week||'') || '—')}</b><br>
+      ออกเมื่อ ${escapeHtml(entry.createdAt ? new Date(entry.createdAt).toLocaleString('th-TH') : '—')}
+      จากเครื่อง ${escapeHtml(entry.deviceName||'—')}</div>`;
+
+  const why = `<div class="desc">⚠️ <b>นี่คือข้อมูลของใบนี้ ณ วันนี้ ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว</b>
+      — ระบบไม่ได้เก็บไฟล์หรือเนื้อของกระดาษไว้ แต่คิดใหม่จากยอดบรรจุของหน่วยและวันนั้นทุกครั้ง
+      ถ้ามีอะไรเปลี่ยนไปหลังออกใบ ตัวเลขที่เห็นจะไม่เท่ากับกระดาษ โดยเฉพาะ <b>Wip bal.</b>
+      ซึ่งเปลี่ยนเองทุกครั้งที่นำเข้าไฟล์ Call In งวดใหม่</div>`;
+
+  if(!groups.length){
+    return head + why + `<div class="desc"><b>ไม่เหลือยอดบรรจุของใบนี้แล้ว</b> —
+      ยอดที่ตัดเข้าใบถูกแก้เป็น 0 หรือใบสั่งถูกยกเลิกไปหลังออกใบ จึงไม่มีรายการให้แสดง
+      และออกไฟล์ซ้ำไม่ได้ด้วย · ตัวกระดาษที่ส่งไปแล้วยังเป็นหลักฐานตามเดิม</div>`;
+  }
+
+  /* เทียบยอดรวมกับตอนออกใบ — ใช้ dnLogStale() เป็นตัวตัดสินจุดเดียว ไม่ตั้งเกณฑ์ใหม่ที่นี่
+   * ⚠️ แถวที่ไม่ได้บันทึก qty ไว้ (ซิงค์มาจากเครื่องรุ่นก่อน) เทียบไม่ได้ ต้องบอกว่าเทียบไม่ได้
+   *    ห้ามขึ้นว่า "เท่ากับตอนออกใบ" ซึ่งเป็นคำที่ไม่มีหลักฐานรองรับ — dnLogStale() คืน false
+   *    ทั้งกรณี "เท่ากัน" และ "ไม่มีอะไรให้เทียบ" แยกสองกรณีนี้จากค่าที่มันคืนไม่ได้ */
+  const now = groups.reduce((s,g)=> s + (Number(g.qty)||0), 0);
+  const cmp = entry.qty == null
+    ? `<div class="desc">แถวนี้ไม่ได้บันทึกยอดรวมตอนออกใบไว้ จึงเทียบไม่ได้ว่าข้อมูลเปลี่ยนไปหรือยัง
+        · ยอดรวมวันนี้ <b>${numFmt(now)}</b></div>`
+    : dnLogStale(entry)
+    ? `<div class="desc"><span class="badge amber">ข้อมูลเปลี่ยนหลังออกใบ</span>
+        ยอดรวมตอนออกใบ <b>${numFmt(Number(entry.qty)||0)}</b> · ยอดรวมวันนี้ <b>${numFmt(now)}</b></div>`
+    : `<div class="desc">ยอดรวม <b>${numFmt(now)}</b> เท่ากับตอนออกใบ</div>`;
+
+  /* ด่านเดียวกับที่ writeDeliveryFile() กันไว้ก่อนออกไฟล์ — บอกที่นี่ด้วย
+   * เพราะคนที่ไม่มีฟอร์มกดออกไฟล์ซ้ำเพื่อดูเหตุไม่ได้ และนี่คือเหตุที่พบบ่อยที่สุด */
+  const bad = groups.filter(g => g.packQty !== g.qty);
+  const warn = bad.length ? `<div class="desc"><span class="badge red">กล่องกับเศษไม่ตรงกับยอด</span>
+      ${bad.map(g=>`P/N ${escapeHtml(g.pn)} กระดาษจะพิมพ์ ${numFmt(g.packQty)} แต่คีย์ไว้ ${numFmt(g.qty)}`).join(' · ')}
+      — ออกไฟล์ซ้ำไม่ได้จนกว่าจะแก้ให้ตรง</div>` : '';
+
+  const rows = groups.map(g=>{
+    /* shippedOrders() ปลอดภัยที่นี่เพราะ dnReissueGroups() ตัดเหลือเฉพาะ alloc > 0 แล้ว
+     * ช่องติ๊กจึงเพิ่มแถวอะไรไม่ได้ · และด้วยเหตุเดียวกัน qty ของทุกกลุ่มมากกว่า 0 เสมอ
+     * จึงไม่มีกรณี "กลุ่มที่ไม่ได้ส่งของเลย" ที่กระดาษเว้นช่องบรรจุไว้ ให้ต้องรองรับที่นี่
+     *
+     * ⚠️ Wip bal. ที่ Delta ไม่ได้ให้ยอดมา ต้องเว้นว่างเหมือนกระดาษ ห้ามโชว์ 0
+     *    เลข 0 แปลว่า "Delta บอกว่าไม่ค้างแล้ว" ซึ่งคนละเรื่องกับ "Delta ไม่ได้บอก" */
+    const lines = shippedOrders(g);
+    return lines.map((x,i)=>{
+      const grp = i > 0 ? `` : `
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.perBox)}</td>
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.boxes)}</td>
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.remainder)}</td>
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.packQty)}</td>
+        <td class="dn-merge left" rowspan="${lines.length}">${escapeHtml(g.remark)}</td>`;
+      return `<tr>
+        <td class="left">${escapeHtml(g.pn)}</td>
+        <td class="left">${escapeHtml(x.o.poNo)}</td>
+        <td>${x.o.orderDate ? fmtDateTH(x.o.orderDate) : '—'}</td>
+        <td>${numFmt(Number(x.o.orderQty)||0)}</td>
+        <td>${x.deltaWip == null ? '—' : numFmt(x.deltaWip)}</td>
+        <td>${numFmt(Number(x.alloc)||0)}</td>${grp}
+      </tr>`;
+    }).join('');
+  }).join('');
+
+  return head + why + cmp + warn + `<div class="table-wrap"><table id="dnPreviewTable">
+    <thead><tr><th class="left">P/N</th><th class="left">PO No.</th><th>Order Date</th>
+      <th>Order Q'ty</th><th>Wip bal.</th><th>ยอดส่งงาน</th><th>ต่อกล่อง</th><th>กล่อง</th>
+      <th>เศษ</th><th>จำนวน/PCS</th><th class="left">Remark</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function showDnPreview(entry){
+  document.getElementById('dnPreviewTitle').textContent = 'รายละเอียดใบ ' + entry.no;
+  document.getElementById('dnPreviewBody').innerHTML = dnPreviewHtml(entry);
+  document.getElementById('dnPreviewModal').classList.add('show');
+}
+
 function renderDnLog(){
   const table = document.getElementById('dnLogTable');
   if(!table) return;
@@ -4041,13 +4135,16 @@ function renderDnLog(){
         <td>${numFmt(Number(e.lines)||0)}</td>
         <td>${numFmt(Number(e.qty)||0)}</td>
         <td class="left">${escapeHtml(e.deviceName||'')}</td>
+        <td><a href="#" data-dn-preview="${escapeHtml(e.id)}"
+               title="ดูรายการบนใบนี้บนจอ — ไม่ต้องมีไฟล์ฟอร์ม">ดูรายละเอียด</a></td>
       </tr>`;
     }).join('');
 
   table.innerHTML =
     `<thead><tr><th class="left">เลขที่</th><th>เวลาที่ออก</th><th class="left">หน่วย</th><th>WK</th>
-       <th>กลุ่ม P/N</th><th>บรรทัด</th><th>ยอดรวม</th><th class="left">เครื่อง</th></tr></thead>
-     <tbody>${rows || emptyRow(8,'ยังไม่มีใบส่งสินค้าที่ออกไป')}</tbody>`;
+       <th>กลุ่ม P/N</th><th>บรรทัด</th><th>ยอดรวม</th><th class="left">เครื่อง</th>
+       <th class="left">รายละเอียด</th></tr></thead>
+     <tbody>${rows || emptyRow(9,'ยังไม่มีใบส่งสินค้าที่ออกไป')}</tbody>`;
 }
 
 /* กดเลขที่ใบ = ออกไฟล์ใบนั้นอีกครั้ง · สร้างใหม่จากยอดบรรจุของหน่วย+วันนั้น ไม่ได้เก็บไฟล์ไว้ */
@@ -4079,6 +4176,21 @@ document.getElementById('dnLogTable').addEventListener('click', async (e)=>{
     await writeDeliveryFile(entry.unit, entry.date, entry.week, groups);
     toast(`ออกไฟล์ใบ ${entry.no} อีกครั้งแล้ว`);
   }catch(err){ toast('ออกไฟล์ไม่สำเร็จ: '+err.message); }
+});
+
+/* กดดูรายละเอียด = อ่านบนจอ ไม่สร้างไฟล์ จึงไม่ต้องมีฟอร์มและไม่ต้องถามยืนยันอะไร
+ * แยกตัวจับคลิกจากของ "ออกไฟล์ซ้ำ" ตั้งใจ — ทางนั้นมีด่าน dnTemplate กับกล่องยืนยันอยู่ก่อน
+ * ถ้าเอามารวมกัน ทางนี้จะติดด่านที่ไม่เกี่ยวกับมันเลย */
+document.getElementById('dnLogTable').addEventListener('click', (e)=>{
+  const a = e.target.closest('[data-dn-preview]');
+  if(!a) return;
+  e.preventDefault();
+  const entry = (state.deliveryLog||[]).find(x=>x.id===a.dataset.dnPreview);
+  if(entry) showDnPreview(entry);
+});
+
+document.getElementById('dnPreviewCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('dnPreviewModal').classList.remove('show');
 });
 
 document.getElementById('btnDnExport').addEventListener('click', async ()=>{

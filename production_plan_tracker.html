@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-25.11">
+<meta name="app-version" content="2026-10-25.12">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -76,7 +76,9 @@
      ช่องที่ merge คร่อมทุกใบสั่งของ P/N เดียวกัน = ช่องที่ merge ไว้ในกระดาษ
      เส้นหนาคั่นระหว่างกลุ่ม = เส้นตารางในกระดาษ ทำให้กวาดตาหากลุ่มได้เร็ว */
   #dnTable td.dn-pn{background:var(--primary-light);vertical-align:middle;}
-  #dnTable td.dn-merge{background:var(--gray-light);vertical-align:middle;}
+  #dnTable td.dn-merge,#dnPreviewTable td.dn-merge{background:var(--gray-light);vertical-align:middle;}
+  /* ตารางของหน้า preview มี 11 ช่องเท่ากระดาษ จึงกว้างกว่ากล่องมาตรฐาน 560px */
+  .modal.wide{max-width:900px;}
   #dnTable tr.dn-group > td{border-top:2px solid var(--text-dim);}
   /* หัวตารางสองแถว — แถวล่างต้องเลื่อนลงมาเท่าความสูงของแถวบน ไม่งั้นทับกันตอนเลื่อนดู
      ค่า 31px เป็นค่าตั้งต้นเผื่อวัดความสูงจริงไม่ได้ (ตอนแท็บยังซ่อนอยู่ ความสูงเป็น 0)
@@ -482,6 +484,10 @@
       <b>กดที่เลขที่ใบเพื่อออกไฟล์ใบนั้นอีกครั้ง</b> — ระบบไม่ได้เก็บไฟล์ไว้ แต่สร้างใหม่จากยอดบรรจุของหน่วยและวันนั้น
       จึงต้องเลือกไฟล์ฟอร์มไว้ก่อน เหมือนตอนออกใบครั้งแรก
       <br>
+      <b>กด "ดูรายละเอียด" เพื่ออ่านรายการบนใบนั้นบนจอ โดยไม่ต้องมีไฟล์ฟอร์ม</b>
+      สำหรับคนที่ไม่มีฟอร์ม FM-ST-07 ในมือ · เห็นช่องเดียวกับบนกระดาษทุกช่อง
+      แต่เป็นข้อมูล<b>ของวันนี้</b> ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว
+      <br>
       ป้าย <span class="badge amber">ข้อมูลเปลี่ยนหลังออกใบ</span> แปลว่า<b>ยอดรวมของใบนี้ไม่เท่ากับตอนออกใบ</b>
       ด้วยเหตุใดก็ได้ — แก้ยอดบรรจุ · แก้ยอดที่ตัดเข้าใบ · หรือใบสั่งถูกยกเลิก
       <br>
@@ -786,6 +792,16 @@
     <div class="modal-actions">
       <button class="btn" id="mergeCancelBtn">ยกเลิก</button>
       <button class="btn primary" id="mergeConfirmBtn">ยืนยันรวมข้อมูล</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="dnPreviewModal">
+  <div class="modal wide">
+    <h3 id="dnPreviewTitle">รายละเอียดใบส่งสินค้า</h3>
+    <div id="dnPreviewBody"></div>
+    <div class="modal-actions">
+      <button class="btn" id="dnPreviewCloseBtn">ปิด</button>
     </div>
   </div>
 </div>
