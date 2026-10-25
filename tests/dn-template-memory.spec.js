@@ -326,3 +326,47 @@ test('ไฟล์ .xlsx ที่พังกลางทาง ต้องไ
   expect(await page.locator('#dnTplInfoText').innerText(),
     'ต้องกลับไปเป็นฟอร์มที่จำไว้ ไม่ใช่ไฟล์ที่พัง').toContain('FM-ST-07.xlsx');
 });
+
+test('จำฟอร์มใหม่ไม่สำเร็จ ต้องไม่เหลือฟอร์มเก่าให้กู้กลับมาเงียบ ๆ', async ({ page }) => {
+  /* ⚠️ ฉากนี้คือความเสี่ยงที่ใบนี้ตั้งใจกันทั้งใบ แต่เกิดจากตัวใบนี้เอง
+   *
+   *    บริษัทแก้ฟอร์ม → พนักงานเลือกไฟล์ใหม่ทับ → **เขียนฐานข้อมูลไม่สำเร็จ** (พื้นที่เต็ม)
+   *    จอบอกว่า "ครั้งหน้าต้องเลือกไฟล์ฟอร์มอีกครั้ง" · เขาจึงไม่พกไฟล์มา
+   *    แต่แถวของฟอร์มเก่ายังอยู่ รอบถัดไปจึงกู้ของเก่าขึ้นมาให้ออกใบได้ทันที
+   *    แล้วกระดาษออกจากผังฟอร์มเก่าโดยไม่มีใครรู้ (ผู้ตรวจ #112 รันเจอ)
+   *
+   *    จำลองพื้นที่เต็มด้วยการให้ put() ของคีย์เทมเพลตโยนตั้งแต่ครั้งที่สองเป็นต้นไป
+   *    ครั้งแรก (ฟอร์มเก่า) จึงสำเร็จจริง ซึ่งจำเป็น ไม่งั้นไม่มีของเก่าให้ตกค้าง */
+  await page.addInitScript(key => {
+    const realPut = IDBObjectStore.prototype.put;
+    let n = 0;
+    IDBObjectStore.prototype.put = function(val, k){
+      if(k === key && ++n >= 2) throw new Error('จำลองพื้นที่เก็บข้อมูลเต็ม');
+      return realPut.apply(this, arguments);
+    };
+  }, 'tue_order_tracker_v1:dnTemplate');
+
+  await open(page);
+  await pickTemplate(page);   // ฟอร์มเก่า — จำสำเร็จ
+  expect(await page.locator('#dnTplInfoText').innerText(), 'ของเก่าต้องถูกจำไว้จริงก่อน')
+    .toContain('จำฟอร์มไว้แล้ว');
+
+  // ฟอร์มใหม่ — อ่านไฟล์ผ่าน แต่เขียนฐานข้อมูลไม่สำเร็จ
+  const fresh = await templateBytes();
+  await page.setInputFiles('#dnTemplateInput', { name: 'FM-ST-07-ใหม่.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: fresh });
+  await page.waitForTimeout(500);
+  expect(await page.locator('#dnTplInfoText').innerText(), 'ต้องบอกว่าจำไม่ได้')
+    .toContain('จำไว้ให้ไม่ได้');
+
+  await page.reload();
+  await waitReady(page);
+  await waitTpl(page);
+  await page.click('.tab-btn[data-tab="delivery"]');
+
+  /* ข้อความบนจอบอกว่าต้องเลือกไฟล์ใหม่ — พฤติกรรมต้องตรงกับที่บอก
+   * ไม่ใช่กู้ฟอร์มเก่าขึ้นมาให้ใช้ต่อแบบเงียบ ๆ */
+  await expect(page.locator('#btnDnExport'), 'ต้องไม่มีฟอร์มให้ใช้ ตามที่บอกไว้').toBeDisabled();
+  expect(await readSaved(page, TPL_KEY, { raw: true }),
+    'แถวของฟอร์มเก่าต้องถูกล้างไปแล้ว').toBe(null);
+});
