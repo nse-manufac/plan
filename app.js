@@ -2084,6 +2084,26 @@ function renderEntryTable(){
    * แล้วสองทางเขียนกุญแจ orderId|shipping|date เดียวกัน ทับกันเงียบ ๆ โดยไม่มีใครรู้ว่าอันไหนถูก */
   const isShip = currentProcess === 'shipping';
   document.getElementById('entryShipNote').hidden = !isShip;
+  /* ใบที่บอกหน่วยไม่ได้จาก `subNameFromPo()` จะไม่ขึ้นในหน้าใบส่งสินค้าของหน่วยไหนเลย
+   * (`deliveryGroups()` กรอง `o.subName === unit` · `renderDnUnits()` ทิ้งค่าว่าง)
+   * = ส่งของใบนั้นไม่ได้ ยอดค้าง 0 ตลอดไป Dashboard ขึ้นล่าช้าถาวร FG ไม่ลด
+   *
+   * ⚠️ หน้าตรวจก่อนนำเข้าเตือนครั้งเดียวตอนกดยืนยันแล้วหายไป — ตรงนี้คือที่ที่คนจะมาหา
+   *    คำตอบว่า "ทำไมใบนี้ไม่มียอดส่งของ" จึงต้องเตือนทุกวันที่เปิดดู
+   *    ตรวจ 25 ต.ค. 2026 ของจริงมี 0 ใบ · ที่ต้องระวังคือตอนเพิ่มนิติบุคคลตัวถัดไป
+   *    แล้วลืมเติมตัวอักษรเข้า SUB_BY_LETTER — ทุกใบของหน่วยนั้นจะเงียบหายไปทั้งหน่วย */
+  if(isShip){
+    const noUnit = activeOrders().filter(o=> !String(o.subName==null?'':o.subName).trim());
+    const box = document.getElementById('entryShipNoUnit');
+    box.hidden = !noUnit.length;
+    if(noUnit.length){
+      const show = noUnit.slice(0, 5).map(o=>o.poNo).join(' · ');
+      box.innerHTML = `<span class="badge red">ส่งของไม่ได้ ${numFmt(noUnit.length)} ใบ</span> `
+        + 'รหัส PO บอกหน่วยไม่ได้ จึงไม่ขึ้นในหน้าใบส่งสินค้าของหน่วยไหนเลย — '
+        + `${escapeHtml(show)}${noUnit.length > 5 ? ' และอีก ' + numFmt(noUnit.length - 5) + ' ใบ' : ''}`
+        + ' · แก้ที่หน้า "ข้อมูล \u0026 แชร์" ปุ่ม "คำนวณ Sub-Name ใหม่" หรือแก้รหัส PO แล้วนำเข้าใหม่';
+    }
+  }
 
   let orders = activeOrders().filter(o=>o.status!=='closed');
   if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
@@ -2130,7 +2150,7 @@ function renderEntryTable(){
 
   document.getElementById('entryTable').innerHTML =
     `<thead><tr><th>#</th><th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Order Qty</th><th>Aging<br>(วัน)</th>
-     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>${isShip ? 'ยอดวันนี้<br>(จากใบส่งสินค้า)' : 'ยอดวันนี้'}</th></tr></thead>
+     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>${isShip ? 'ยอดวันนี้<br><span class="small">(จากใบส่งสินค้า)</span>' : 'ยอดวันนี้'}</th></tr></thead>
      <tbody>${rowsHtml || emptyRow(9,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
 
   document.querySelectorAll('#entryTable input.row-input').forEach(inputEl=>{

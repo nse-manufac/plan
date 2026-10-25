@@ -271,3 +271,57 @@ test('A2 — ยอดส่งของต้องเขียนได้จ�
   expect(ships.map(r => r.qty), 'ยอดส่งของต้องยังเป็นของเดิมจากใบส่งสินค้า').toEqual([1200]);
   expect(ships.length, 'ห้ามเกิดแถวใหม่ของขั้นส่งของจากหน้านี้').toBe(1);
 });
+
+test('สลับไปขั้นส่งของแล้วกลับ คอลัมน์ยอดวันนี้ต้องไม่หุบแล้วกาง', async ({ page }) => {
+  /* ผู้ตรวจ #110 วัดได้ 246px → 207px → 246px เพราะ .ship-today จับแค่ขนาดตัวอักษร
+   * ไม่จับ width:130px ของช่องกรอก · คนคีย์ยอดสลับขั้นไปกลับทั้งวัน ตารางขยับทุกครั้งคือของที่เห็น
+   *
+   * ⚠️ วัด <th> ไม่ใช่ <td> — ความกว้างคอลัมน์มาจากตารางทั้งคอลัมน์ ไม่ใช่เซลล์ใดเซลล์เดียว
+   *    และเทียบ "ก่อน" กับ "หลังกลับมา" ด้วย เพื่อจับกรณีที่หุบแล้วไม่กางกลับ */
+  await openEntry(page, ORDERS, [recToday('s1', 'PO-1', 'shipping', 1200)]);
+  const w = () => page.locator('#entryTable thead th').nth(COL.today).evaluate(el =>
+    Math.round(el.getBoundingClientRect().width));
+
+  const before = await w();
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(200);
+  const ship = await w();
+  await page.click('#procBtn-winding');
+  await page.waitForTimeout(200);
+  const after = await w();
+
+  expect(before, 'คอลัมน์ต้องกว้างจริง ไม่งั้นเทสนี้ไม่ได้วัดอะไร').toBeGreaterThan(100);
+  /* เกณฑ์ 8px ไม่ใช่ความเท่ากันเป๊ะ — ตารางนี้กว้างเต็มกรอบ จึงกระจายความกว้างที่เหลือ
+   * ให้คอลัมน์เองตามเนื้อหาของหัวตาราง วัดได้ต่างกัน 4px ซึ่งคนมองไม่เห็น
+   * ของที่คนเห็นคือตอนขาด width แล้วคอลัมน์หุบ 39px (246 → 207) ซึ่งเกณฑ์นี้จับได้ */
+  expect(Math.abs(ship - before), `ขั้นส่งของ ${ship}px vs ขั้นอื่น ${before}px`).toBeLessThanOrEqual(8);
+  expect(after, 'สลับกลับมาต้องเท่าเดิม').toBe(before);
+});
+
+test('ใบที่รหัส PO บอกหน่วยไม่ได้ ต้องขึ้นเตือนในแท็บส่งของ ไม่ใช่เงียบหาย', async ({ page }) => {
+  /* ใบแบบนี้ไม่ขึ้นในหน้าใบส่งสินค้าของหน่วยไหนเลย (deliveryGroups กรอง subName === unit
+   * และ renderDnUnits ทิ้งค่าว่าง) = ส่งของไม่ได้ · ยอดค้าง 0 ตลอดไป Dashboard ล่าช้าถาวร FG ไม่ลด
+   *
+   * หน้าตรวจก่อนนำเข้าเตือนครั้งเดียวตอนกดยืนยันแล้วหายไป — แท็บนี้คือที่ที่คนจะมาหาคำตอบ
+   * ว่า "ทำไมใบนี้ไม่มียอดส่งของ" (ผู้ตรวจ #110 ทักว่าเดิมไม่มีอะไรฟ้องเลย) */
+  const lost = order('TM9999ZZZ', 3000, '');
+  await openEntry(page, ORDERS.concat([lost]));
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(200);
+
+  const box = page.locator('#entryShipNoUnit');
+  await expect(box).toBeVisible();
+  expect(await box.innerText(), 'ต้องบอกจำนวน').toContain('1');
+  expect(await box.innerText(), 'ต้องบอกว่าใบไหน').toContain('TM9999ZZZ');
+  expect(await box.innerText(), 'ต้องบอกว่าแก้ยังไง').toContain('Sub-Name');
+});
+
+test('ทุกใบบอกหน่วยได้ ต้องไม่ขึ้นเตือนอะไร', async ({ page }) => {
+  /* ⚠️ กันการเตือนพร่ำเพรื่อ — ของจริงตอนตรวจ 25 ต.ค. 2026 มี 0 ใบ
+   *    ถ้าแถบนี้ขึ้นทุกวันทั้งที่ไม่มีปัญหา คนจะเลิกอ่านมัน แล้ววันที่มีปัญหาจริงก็ไม่มีใครเห็น */
+  await openEntry(page, ORDERS);
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(200);
+  await expect(page.locator('#entryShipNoUnit')).toBeHidden();
+  await expect(page.locator('#entryShipNote'), 'ข้อความปกติยังต้องขึ้น').toBeVisible();
+});
