@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-25.3">
+<meta name="app-version" content="2026-10-25.11">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -460,6 +460,12 @@
       <div class="field">
         <label>ไฟล์ฟอร์ม (.xlsx)</label>
         <input type="file" id="dnTemplateInput" accept=".xlsx">
+        <!-- ฟอร์มที่เครื่องนี้จำไว้ — ต้องเห็นชื่อไฟล์กับวันที่ ไม่ใช่จำเงียบ ๆ
+             บริษัทแก้ฟอร์มเมื่อไหร่ เครื่องที่ยังใช้ของเก่าจะออกใบด้วยผังเก่าโดยไม่มีอะไรฟ้อง -->
+        <div class="desc small" id="dnTplInfo" hidden style="margin-top:6px">
+          <span id="dnTplInfoText"></span>
+          <button class="btn small" id="btnDnTplForget" type="button">ล้างฟอร์มที่จำไว้</button>
+        </div>
       </div>
       <div class="field">
         <label>&nbsp;</label>
