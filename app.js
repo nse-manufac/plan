@@ -3769,42 +3769,68 @@ let dnTemplate = null;   // {buf, sheetMap, fileName, savedAt}
  *
  *  ⚠️ ไม่เก็บ sheetMap ลงฐานข้อมูล — คิดใหม่จากไบต์ทุกครั้ง
  *     กติกาเดียวกับกล่อง/เศษ: ห้ามเก็บของที่คิดได้ ไม่งั้นมันค้างไม่ตรงกับไฟล์จริง */
-async function useDnTemplate(buf, fileName, savedAt){
+async function useDnTemplate(buf, fileName, savedAt, fromMemory){
   const zip = await JSZip.loadAsync(buf);
   if(!zip.file('xl/workbook.xml')) throw new Error('ไม่ใช่ไฟล์ Excel (.xlsx)');
   const sheetMap = await sheetPathMap(zip);
-  dnTemplate = {buf, sheetMap, fileName, savedAt};
-  // เลข WK เป็นสัปดาห์การผลิตของโรงงาน ไม่ตรงกับสัปดาห์ ISO ที่คำนวณเองได้
-  // จึงอ่านจากฟอร์มที่เจ้าของเลือกมาเป็นค่าตั้งต้น แล้วให้แก้บนหน้าจอได้
-  const wk = await weekFromTemplate(zip, sheetMap);
-  if(wk && !dnWeek()) document.getElementById('dnWeek').value = wk;
+  dnTemplate = {buf, sheetMap, fileName, savedAt: savedAt || null};
+  /* เลข WK เป็นสัปดาห์การผลิตของโรงงาน ไม่ตรงกับสัปดาห์ ISO ที่คำนวณเองได้
+   * จึงอ่านจากฟอร์มที่เจ้าของ "เพิ่งเลือก" มาเป็นค่าตั้งต้น แล้วให้แก้บนหน้าจอได้
+   *
+   * ⚠️ **ห้ามเติมจากฟอร์มที่จำไว้** — เจตนาเดิมคือ "ไฟล์ที่เพิ่งหยิบมาคือฟอร์มของสัปดาห์นี้"
+   *    ซึ่งไม่จริงกับไฟล์ที่ค้างอยู่ในเครื่องมาหลายสัปดาห์ · ถ้าเติมให้ทุกครั้งที่เปิดโปรแกรม
+   *    ด่าน "กรอกเลขสัปดาห์ (WK) ก่อนครับ" จะไม่มีโอกาสทำงานอีกเลย แล้ว WK ของสัปดาห์เก่า
+   *    จะไหลลงกระดาษที่ส่ง Delta เองโดยไม่มีใครพิมพ์ (ผู้ตรวจ #112 รันเจอ) */
+  if(!fromMemory){
+    const wk = await weekFromTemplate(zip, sheetMap);
+    if(wk && !dnWeek()) document.getElementById('dnWeek').value = wk;
+  }
   document.getElementById('btnDnExport').disabled = false;
   renderDnTplInfo();
 }
 
 /** บอกบนจอว่าเครื่องนี้จำฟอร์มไหนไว้ และจำไว้เมื่อไหร่
  *  ⚠️ ห้ามจำเงียบ ๆ — บริษัทแก้ฟอร์มเมื่อไหร่ เครื่องที่ยังใช้ของเก่าจะออกใบด้วยผังเก่า
- *     โดยไม่มีอะไรฟ้องเลย · ชื่อไฟล์กับวันที่คือสิ่งเดียวที่ทำให้คนสังเกตได้ */
+ *     โดยไม่มีอะไรฟ้องเลย · ชื่อไฟล์กับวันที่คือสิ่งเดียวที่ทำให้คนสังเกตได้
+ *
+ *  ⚠️ และห้ามบอกว่า "จำแล้ว" ตอนที่จำไม่สำเร็จ — `savedAt` ต้องมาจากการเขียนลงฐานข้อมูล
+ *     ที่สำเร็จจริงเท่านั้น ไม่ใช่จากเวลาที่กดเลือกไฟล์ · เครื่องที่เปิด IndexedDB ไม่ได้ (E3)
+ *     หรือพื้นที่เต็ม ต้องรู้ว่าตัวเองต้องเลือกไฟล์ใหม่ทุกครั้ง ไม่ใช่เชื่อว่าจำให้แล้ว
+ *     (ผู้ตรวจ #112 รันเจอ — ของเดิมกลับด้านกับเจตนาของใบนี้เอง) */
 function renderDnTplInfo(){
   const box = document.getElementById('dnTplInfo');
-  box.hidden = !(dnTemplate && dnTemplate.savedAt);
+  const txt = document.getElementById('dnTplInfoText');
+  box.hidden = !dnTemplate;
   if(box.hidden) return;
-  document.getElementById('dnTplInfoText').textContent =
-    `จำฟอร์มไว้แล้ว: ${dnTemplate.fileName} (เลือกเมื่อ ${fmtDateTH(String(dnTemplate.savedAt).slice(0,10))})`
-    + ' — ไม่ต้องเลือกไฟล์ใหม่ทุกครั้ง · ถ้าบริษัทแก้ฟอร์ม ให้เลือกไฟล์ใหม่ทับ';
+  txt.textContent = dnTemplate.savedAt
+    ? `จำฟอร์มไว้แล้ว: ${dnTemplate.fileName} (เลือกเมื่อ ${fmtDateTimeTH(dnTemplate.savedAt)})`
+      + ' — ไม่ต้องเลือกไฟล์ใหม่ทุกครั้ง · ถ้าบริษัทแก้ฟอร์ม ให้เลือกไฟล์ใหม่ทับ'
+    : `ใช้ฟอร์ม ${dnTemplate.fileName} ได้ในรอบนี้ แต่เครื่องนี้จำไว้ให้ไม่ได้`
+      + ' — เปิดโปรแกรมใหม่ครั้งหน้าต้องเลือกไฟล์ฟอร์มอีกครั้ง';
+  document.getElementById('btnDnTplForget').hidden = !dnTemplate.savedAt;
+}
+
+/** วันเวลาตามนาฬิกาเครื่อง — ห้ามตัดสิบตัวแรกของ ISO มาใช้ นั่นเป็นวันแบบ UTC (C1)
+ *  เลือกไฟล์ตอนเช้าก่อนเจ็ดโมงจะโชว์วันก่อนหน้าหนึ่งวัน (ผู้ตรวจ #112 ทัก) */
+function fmtDateTimeTH(iso){
+  const d = new Date(iso);
+  return isNaN(d) ? String(iso||'') : d.toLocaleString('th-TH');
 }
 
 /** จำไว้ในเครื่องนี้ — ล้มเหลวได้โดยไม่พังอะไร เทมเพลตยังใช้ได้ในรอบนี้อยู่ดี
  *  ⚠️ ไม่มี IndexedDB = ไม่จำ · ห้ามยัด ArrayBuffer ลง localStorage เด็ดขาด
  *     มันเก็บได้แต่ข้อความ ต้องแปลงเป็น base64 ซึ่งโตขึ้นหนึ่งในสามและชนเพดานทันที */
 async function rememberDnTemplate(){
-  if(!stateDb || !dnTemplate) return false;
+  if(!dnTemplate) return false;
+  // เครื่องที่เปิด IndexedDB ไม่ได้ยังใช้ localStorage อยู่ (E3) — จำฟอร์มให้ไม่ได้ และต้องบอก ไม่ใช่เงียบ
+  if(!stateDb) return false;
   try{
+    const savedAt = new Date().toISOString();
     await idbTx('readwrite', st => st.put(
-      {buf: dnTemplate.buf, fileName: dnTemplate.fileName, savedAt: dnTemplate.savedAt}, DN_TPL_KEY));
+      {buf: dnTemplate.buf, fileName: dnTemplate.fileName, savedAt}, DN_TPL_KEY));
+    dnTemplate.savedAt = savedAt;   // ตั้งหลังเขียนสำเร็จเท่านั้น — กล่องบนจออ่านค่านี้
     return true;
   }catch(err){
-    toast('จำฟอร์มไว้ไม่ได้ (พื้นที่เก็บข้อมูลอาจเต็ม) — รอบนี้ยังออกใบได้ตามปกติ');
     return false;
   }
 }
@@ -3813,13 +3839,17 @@ async function rememberDnTemplate(){
  *  ⚠️ ห้ามให้ตัวนี้ถ่วงหรือทำให้การเปิดหน้าพัง — ฟอร์มเสียต้องแค่ "ไม่มีฟอร์ม" ไม่ใช่เปิดโปรแกรมไม่ได้
  *     (กฎเดียวกับ #100 ที่วาดจอพังแล้วห้ามทำทั้งหน้าค้างจาง) */
 async function restoreDnTemplate(){
+  let saved = null;
   try{
-    if(!stateDb) return;
-    const saved = await idbTx('readonly', st => st.get(DN_TPL_KEY));
-    if(saved && saved.buf) await useDnTemplate(saved.buf, saved.fileName, saved.savedAt);
+    if(stateDb) saved = await idbTx('readonly', st => st.get(DN_TPL_KEY));
+  }catch(err){ saved = null; }   // อ่านพลาดชั่วคราว — ห้ามลบของที่จำไว้ทิ้ง
+  try{
+    if(saved && saved.buf) await useDnTemplate(saved.buf, saved.fileName, saved.savedAt, true);
   }catch(err){
+    /* ถึงตรงนี้แปลว่าไบต์ที่เก็บไว้เปิดเป็นไฟล์ Excel ไม่ได้จริง — เก็บไว้ก็ไม่มีประโยชน์ */
     dnTemplate = null;
     try{ await idbTx('readwrite', st => st.delete(DN_TPL_KEY)); }catch(e){}
+    renderDnTplInfo();
     toast('ฟอร์มที่จำไว้เปิดไม่ได้ — กรุณาเลือกไฟล์ฟอร์มใหม่');
   }finally{
     document.documentElement.dataset.dnTplReady = '1';   // ป้ายให้เทสรู้ว่าลองกู้คืนจบแล้ว (ได้หรือไม่ได้ก็ตาม)
@@ -3835,14 +3865,19 @@ document.getElementById('dnTemplateInput').addEventListener('change', async (e)=
   if(rejectLegacyXls(file)) return;
   toast('กำลังอ่านไฟล์...');
   try{
-    await useDnTemplate(await file.arrayBuffer(), file.name, new Date().toISOString());
+    await useDnTemplate(await file.arrayBuffer(), file.name, null, false);
   }catch(err){
     toast('เปิดไฟล์ไม่สำเร็จ: '+err.message);
+    /* ⚠️ เลือกไฟล์เสียมาทับ ไม่ควรทำให้ฟอร์มที่จำไว้หายไปจากหน้าจอด้วย
+     *    ของที่จำไว้ยังอยู่ในฐานข้อมูล แค่หลุดจากหน่วยความจำ — ดึงกลับมาเลย
+     *    ไม่ใช่ให้คนไปรีเฟรชเอง (ผู้ตรวจ #112 ทัก) */
+    await restoreDnTemplate();
     return;
   }
   const kept = await rememberDnTemplate();
+  renderDnTplInfo();
   toast(kept ? 'อ่านเทมเพลตแล้ว และจำไว้ให้ — ครั้งหน้าไม่ต้องเลือกไฟล์อีก'
-             : 'อ่านเทมเพลตแล้ว — กดออกใบส่งสินค้าได้');
+             : 'อ่านเทมเพลตแล้ว — แต่เครื่องนี้จำไว้ให้ไม่ได้ ครั้งหน้าต้องเลือกไฟล์อีกครั้ง');
 });
 
 document.getElementById('btnDnTplForget').addEventListener('click', async ()=>{

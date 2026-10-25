@@ -112,6 +112,9 @@ test('ไฟล์ที่ออกหลังรีเฟรช ต้อง�
   await page.waitForTimeout(150);
   await page.selectOption('#dnUnit', 'TUE-U');
   await page.waitForTimeout(200);
+  /* ฟอร์มที่จำไว้ไม่เติมเลข WK ให้ (ตั้งใจ — ดูข้อข้างล่าง) จึงต้องพิมพ์เอง
+   * ใช้เลขเดียวกับที่ฟอร์มเติมให้รอบแรก เพื่อให้เทียบไฟล์กันได้จริง */
+  await page.fill('#dnWeek', '34');
 
   await expect(page.locator('#btnDnExport')).toBeEnabled();
   const after = await exportFile(page);
@@ -178,4 +181,47 @@ test('ฟอร์มที่จำไว้เสีย ต้องแค่ 
   await page.click('.tab-btn[data-tab="delivery"]');
   await expect(page.locator('#view-delivery'), 'หน้าต้องยังใช้งานได้').toHaveClass(/active/);
   expect(errors, 'ฟอร์มเสียต้องไม่ทำให้หน้าพัง').toEqual([]);
+});
+
+test('ฟอร์มที่จำไว้ต้องไม่เติมเลข WK ให้เอง — ด่านบังคับกรอก WK ต้องยังทำงาน', async ({ page }) => {
+  /* ⚠️ เจตนาเดิมของการเติม WK จากฟอร์มคือ "ไฟล์ที่เพิ่งหยิบมาคือฟอร์มของสัปดาห์นี้"
+   *    ซึ่งไม่จริงกับไฟล์ที่ค้างอยู่ในเครื่องมาหลายสัปดาห์
+   *
+   *    ถ้าเติมให้ทุกครั้งที่เปิดโปรแกรม ด่าน "กรอกเลขสัปดาห์ (WK) ก่อนครับ" จะไม่มีโอกาส
+   *    ทำงานอีกเลย แล้ว WK ของสัปดาห์เก่าจะไหลลงกระดาษที่ส่ง Delta เองโดยไม่มีใครพิมพ์
+   *    (ผู้ตรวจ #112 รันเจอ — เดิมเปิดใหม่ = ช่องว่าง = ถูกบังคับให้คิดเรื่อง WK หนึ่งครั้งต่อรอบ) */
+  await open(page);
+  await pickTemplate(page);
+  expect(await page.inputValue('#dnWeek'), 'ไฟล์ที่เพิ่งเลือกยังเติม WK ให้เหมือนเดิม').toBe('34');
+
+  await page.reload();
+  await waitReady(page);
+  await waitTpl(page);
+  await page.click('.tab-btn[data-tab="delivery"]');
+
+  await expect(page.locator('#btnDnExport'), 'ฟอร์มยังถูกจำไว้').toBeEnabled();
+  expect(await page.inputValue('#dnWeek'), 'ฟอร์มที่จำไว้ต้องไม่เติม WK ให้').toBe('');
+});
+
+test('เครื่องที่จำฟอร์มให้ไม่ได้ ต้องบอกตรง ๆ ไม่ใช่ขึ้นว่าจำไว้แล้ว', async ({ page }) => {
+  /* ⚠️ ข้อนี้กลับด้านกับเจตนาของใบนี้ถ้าทำผิด — ใบนี้มีไว้เพื่อ "ห้ามจำเงียบ ๆ"
+   *    การขึ้นว่า "จำฟอร์มไว้แล้ว" ตอนที่จำไม่สำเร็จ แย่กว่าไม่ขึ้นอะไรเลย
+   *    เพราะคนจะเชื่อแล้วไม่พกไฟล์มาวันรุ่งขึ้น (ผู้ตรวจ #112 รันเจอ)
+   *
+   *    จำลองเครื่องที่เปิด IndexedDB ไม่ได้ (เส้นทางสำรองตาม E3) ด้วยการให้ open() ล้มเสมอ */
+  /* โยนทิ้งตั้งแต่ open() — openStateDb() ห่อไว้ใน new Promise การโยนในนั้นคือ reject
+   * bootState() จึงตก catch แล้วตั้ง stateDb = null และถอยไปใช้ localStorage ตามเส้นทางจริง
+   * (ยังไม่มีธง :moved เพราะ context ใหม่ แอปจึงยังเปิดได้ ไม่ใช่ปฏิเสธบูต) */
+  await page.addInitScript(() => {
+    indexedDB.open = () => { throw new Error('จำลองเครื่องที่เปิด IndexedDB ไม่ได้'); };
+  });
+  await open(page);
+  await pickTemplate(page);
+
+  const txt = await page.locator('#dnTplInfoText').innerText();
+  expect(txt, 'ห้ามบอกว่าจำไว้แล้ว').not.toContain('จำฟอร์มไว้แล้ว');
+  expect(txt, 'ต้องบอกว่าจำให้ไม่ได้').toContain('จำไว้ให้ไม่ได้');
+  expect(txt, 'ต้องบอกผลที่ตามมา').toContain('ต้องเลือกไฟล์ฟอร์มอีกครั้ง');
+  await expect(page.locator('#btnDnTplForget'), 'ไม่มีอะไรให้ล้าง').toBeHidden();
+  await expect(page.locator('#btnDnExport'), 'รอบนี้ยังออกใบได้ตามปกติ').toBeEnabled();
 });

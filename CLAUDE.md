@@ -451,6 +451,7 @@ grep -n "^/\* -\{5,\}" app.js
 | **IndexedDB** ฐาน `tue_order_tracker` store `kv` | `tue_order_tracker_v1` | `state` ทั้งก้อน เป็นข้อความ JSON |
 | IndexedDB (ที่เดียวกัน) | `tue_order_tracker_v1:localStorage` | สำเนาดิบของ localStorage ตอนย้าย — กู้ได้ถ้าย้ายพลาด |
 | localStorage | `tue_order_tracker_sync_v1` | การตั้งค่าเชื่อมต่อ Google Sheets |
+| `tue_order_tracker_v1:dnTemplate` | ไบต์ดิบของฟอร์ม FM-ST-07 ที่เครื่องนี้จำไว้ (IndexedDB) · **ไม่ซิงค์** · คนละคีย์กับ state โดยตั้งใจ |
 | localStorage | `tue_order_tracker_v1:moved` | ธงว่าเครื่องนี้ย้ายเข้า IndexedDB แล้ว — เปิด IndexedDB ไม่ได้จะบังจอแทนเปิดหน้าว่าง (E3) |
 
 > ⚠️ **ย้ายจาก localStorage เมื่อ 9 ต.ค. 2026** เพราะเครื่องหน้างานเต็มเพดาน ~5 MB · กติกาอยู่ที่ INVARIANTS E1–E4
@@ -597,7 +598,7 @@ npm install && npx playwright install chromium && npm test
 
 ### 8.2 ทดสอบด้วยมือเพิ่ม (สำหรับสิ่งที่เทสยังไม่ครอบคลุม)
 
-ชุดเทสตอนนี้มี **360 ข้อใน 18 ไฟล์** ครอบการคีย์ยอด · audit trail · วันที่ · ออฟไลน์ ·
+ชุดเทสตอนนี้มี **362 ข้อใน 18 ไฟล์** ครอบการคีย์ยอด · audit trail · วันที่ · ออฟไลน์ ·
 การนำเข้า/ออกไฟล์ Excel · ใบส่งสินค้า · การเทียบยอดกับไฟล์ Call In
 
 **สิ่งที่เทสยังตรวจแทนตาไม่ได้ และต้องทำด้วยมือทุกครั้งที่แตะ**
