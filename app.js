@@ -4017,6 +4017,150 @@ function dnLogStale(entry){
   return now !== (Number(entry.qty)||0);
 }
 
+/** รายละเอียดของใบที่ออกไปแล้ว อ่านได้บนจอ **โดยไม่ต้องมีไฟล์ฟอร์ม FM-ST-07**
+ *  (เจ้าของสั่ง 25 ต.ค. 2026 — คนที่ไม่มีฟอร์มในมือก็ต้องตามได้ว่าใบนั้นส่งอะไรไป)
+ *
+ *  ⚠️ สิ่งที่หน้านี้แสดงคือข้อมูลของใบนั้น **ณ วันนี้ ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว**
+ *     ระบบไม่เก็บไฟล์และไม่เก็บเนื้อของกระดาษไว้เลย ทุกช่องคิดใหม่จากยอดบรรจุของหน่วย
+ *     และวันนั้นทุกครั้ง (เหตุผลเดียวกับ writeDeliveryFile) · หน้านี้ต้องพูดเรื่องนี้ออกมาตรง ๆ
+ *     เพราะคนที่เปิดดูคือคนที่ไม่มีฟอร์ม จึงเทียบกับไฟล์เองไม่ได้ และจะไม่รู้เลยว่า
+ *     เลขที่เห็นอาจไม่ใช่เลขบนกระดาษ — ที่เปลี่ยนเองเงียบที่สุดคือ Wip bal. ของ Delta
+ *
+ *  ⚠️ ต้องผ่าน dnReissueGroups() เท่านั้น ห้ามเรียก deliveryGroups() ตรง ๆ ที่นี่
+ *     เหตุผลอยู่ที่คอมเมนต์ของ dnReissueGroups — ช่องติ๊ก dnExtraRows เป็นของวันที่เลือก
+ *     อยู่บนจอ ไม่ใช่วันของแถว log · ใบที่ติ๊กไว้ของวันอื่นจะไหลมาโชว์บนใบนี้เงียบ ๆ
+ *     (ตระกูลเดียวกับที่ผู้ตรวจ #103 รันเจอบนเส้นทางออกไฟล์ซ้ำ)
+ *
+ *  ช่องที่โชว์เรียงตามกระดาษ (ดู fillDeliveryForm) — ราย PO: P/N · PO No. · Order Date ·
+ *  PO QTY · Wip bal. · ยอดส่งงาน · ของทั้งกลุ่ม: ต่อกล่อง · กล่อง · เศษ · จำนวน/PCS · Remark
+ *  ⚠️ ป้ายหัวคอลัมน์ทุกช่องต้องเป็นคำที่ **มีใช้อยู่จริงบนกระดาษ (`DN_HEAD`) หรือบนตาราง
+ *     `#dnTable`** ที่พนักงานคีย์ทุกวัน · สองที่นั้นใช้คำไม่เหมือนกันทุกช่อง (กระดาษ `ยอดส่งงาน`
+ *     จอ `จำนวนที่ส่ง` · กระดาษ `จำนวนต่อกล่อง` จอ `ต่อกล่อง`) จึงไม่มีชุดคำที่ "ตรงทั้งคู่"
+ *     ที่ห้ามคือคำที่ไม่มีใครในสายใบส่งสินค้าใช้ — เช่น `Order Q'ty` ซึ่งเป็นป้ายของ
+ *     **ไฟล์แผนงานฝั่งลูกค้า** (`PLAN_HEAD`) คนละเอกสารกัน (ผู้ตรวจ #113 ทักทั้งสองรอบ)
+ *     เทสบังคับกฎนี้ด้วยการอ่าน `DN_HEAD` กับหัวตาราง `#dnTable` มาเทียบ ไม่ใช่รายการที่พิมพ์ไว้เอง
+ *
+ *  ⚠️ **ทุกค่าที่ลง `innerHTML` ต้องผ่าน `escapeHtml()` รวมวันที่** (G3)
+ *     `fmtDateTH()` ไม่ใช่ตัวทำให้ปลอดภัย — `normalizeDateOnly()` คืนค่าเดิมให้สตริงที่ไม่ใช่รูปวันที่
+ *     ค่าเพี้ยนจากชีต `DeliveryLog` หรือจากไฟล์นำเข้าจึงไหลผ่าน `prepareState()` กับการ pull
+ *     มาถึง `innerHTML` ได้ครบ · ผู้ตรวจ #113 รันพิสูจน์แล้วว่าโค้ดเดิมของใบนี้รัน `onerror` ได้จริง
+ *     ใบนี้เป็นที่แรกที่วาด `deliveryLog.date` ลงจอ จึงเป็นรูที่ใบนี้สร้างเอง ไม่ใช่ของเดิม */
+function dnPreviewHtml(entry){
+  const groups = dnReissueGroups(entry.date, entry.unit);
+  const head = `<div class="desc">
+      หน่วย <b>${escapeHtml(entry.unit)}</b> · วันที่ <b>${escapeHtml(fmtDateTH(entry.date))}</b>
+      · WK บนใบ <b>${escapeHtml(String(entry.week||'') || '—')}</b><br>
+      ออกเมื่อ ${escapeHtml(entry.createdAt ? new Date(entry.createdAt).toLocaleString('th-TH') : '—')}
+      จากเครื่อง ${escapeHtml(entry.deviceName||'—')}</div>`;
+
+  /* ⚠️ "ณ ตอนที่กดเปิด" ไม่ใช่ "ณ วันนี้" — กล่องนี้เป็นภาพนิ่ง ไม่มีกลไกวาดใหม่
+   *    แก้ยอดหรือซิงค์เข้ามาขณะกล่องเปิดอยู่ ตัวเลขในกล่องไม่ขยับ (ผู้ตรวจ #113 รอบ 6 รันแล้ว)
+   *    ถ้าวันหนึ่งทำให้มันวาดใหม่ได้ ให้แก้คำนี้ด้วย ไม่ใช่ปล่อยให้คำกับพฤติกรรมคลาดกัน */
+  const why = `<div class="desc">⚠️ <b>นี่คือข้อมูลของใบนี้ ณ ตอนที่กดเปิด ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว</b>
+      — ระบบไม่ได้เก็บไฟล์หรือเนื้อของกระดาษไว้ แต่คิดใหม่จากยอดบรรจุของหน่วยและวันนั้นทุกครั้ง
+      ถ้ามีอะไรเปลี่ยนไปหลังออกใบ ตัวเลขที่เห็นจะไม่เท่ากับกระดาษ โดยเฉพาะ <b>Wip bal.</b>
+      ซึ่งเป็นยอดของ <b>งวดล่าสุดที่นำเข้าไว้ ไม่ใช่ของ WK ที่เขียนบนใบ</b>
+      จึงเปลี่ยนเองทุกครั้งที่นำเข้าไฟล์ Call In งวดใหม่</div>`;
+
+  /* ⚠️ สภาพ "กลุ่มว่าง" มีได้สี่สาเหตุ และหน้านี้แยกจากกันไม่ได้ จึงต้องบอกครบทั้งสี่
+   *    ห้ามเขียนชี้แค่บางสาเหตุเหมือนรู้คำตอบ (ผู้ตรวจ #113 ทักสองรอบ รอบละสาเหตุ)
+   *    สาเหตุที่สามเกิดจาก `doSync()` ดึง `DeliveryLog` **ก่อน** `Orders`/`Records`
+   *    และบล็อกนั้นมี try/catch ของตัวเอง ส่วน Orders/Records ไม่มี — เน็ตหลุดหลังดึง log
+   *    ทั้งรอบจึงหลุดไป catch ชั้นนอกโดยที่แถว log เข้ามาอยู่ในหน่วยความจำแล้ว
+   *    และหน้านี้ทำมาเพื่อคนที่นั่งเครื่องอื่น ซึ่งคือเครื่องที่เจอสภาพนี้ง่ายที่สุด
+   *
+   *    สาเหตุที่สี่คือ **ใบถูกย้ายหน่วย** · `deliveryGroups()` กรองด้วย `o.subName === unit`
+   *    ใบที่ย้ายไปหน่วยอื่นจึงหายจากใบเดิมทันที · เกิดจากปุ่ม "คำนวณ Sub-Name ใหม่"
+   *    (เจ้าของกดของจริง 25 ต.ค. 2026 แล้วมี 1 ใบย้าย TUE-H→TUE-T) และจากการนำเข้า
+   *    ไฟล์แผนทับด้วยกฎ `subNameFromPo()` ที่เข้มขึ้น — สองทางนั้นไม่ได้แตะยอดอะไรเลย
+   *    ถ้าไม่บอกไว้ ข้อความจะไปโทษว่ามีคนแก้ยอดหรือยกเลิกใบ ทั้งที่ไม่มีใครทำ */
+  if(!groups.length){
+    return head + why + `<div class="desc"><b>ไม่เหลือยอดบรรจุของใบนี้แล้ว</b> —
+      ยอดที่ตัดเข้าใบถูกแก้เป็น 0 · ใบสั่งถูกยกเลิกไปหลังออกใบ · ใบสั่งถูกย้ายหน่วย
+      · หรือข้อมูลของวันนั้นยังไม่ซิงค์มาถึงเครื่องนี้ · จึงไม่มีรายการให้แสดง
+      และออกไฟล์ซ้ำไม่ได้ด้วย · ตัวกระดาษที่ส่งไปแล้วยังเป็นหลักฐานตามเดิม</div>`;
+  }
+
+  /* เทียบยอดรวมกับตอนออกใบ — ใช้ dnLogStale() เป็นตัวตัดสินจุดเดียว ไม่ตั้งเกณฑ์ใหม่ที่นี่
+   * ⚠️ แถวที่ไม่ได้บันทึก qty ไว้ (ซิงค์มาจากเครื่องรุ่นก่อน) เทียบไม่ได้ ต้องบอกว่าเทียบไม่ได้
+   *    ห้ามขึ้นว่า "เท่ากับตอนออกใบ" ซึ่งเป็นคำที่ไม่มีหลักฐานรองรับ — dnLogStale() คืน false
+   *    ทั้งกรณี "เท่ากัน" และ "ไม่มีอะไรให้เทียบ" แยกสองกรณีนี้จากค่าที่มันคืนไม่ได้ */
+  const now = groups.reduce((s,g)=> s + (Number(g.qty)||0), 0);
+  const cmp = entry.qty == null
+    ? `<div class="desc">แถวนี้ไม่ได้บันทึกยอดรวมตอนออกใบไว้ จึงเทียบไม่ได้ว่าข้อมูลเปลี่ยนไปหรือยัง
+        · ยอดรวมวันนี้ <b>${numFmt(now)}</b></div>`
+    : dnLogStale(entry)
+    ? `<div class="desc"><span class="badge amber">ข้อมูลเปลี่ยนหลังออกใบ</span>
+        ยอดรวมตอนออกใบ <b>${numFmt(Number(entry.qty)||0)}</b> · ยอดรวมวันนี้ <b>${numFmt(now)}</b></div>`
+    : `<div class="desc">ยอดรวม <b>${numFmt(now)}</b> เท่ากับตอนออกใบ</div>`;
+
+  /* ⚠️ ยอดรวมเท่าเดิมไม่ได้แปลว่ากระดาษเหมือนเดิม — จำนวนบรรทัดต่างกันได้โดยยอดรวมไม่ขยับ
+   *    เพราะใบที่ถูกติ๊กให้ขึ้นกระดาษทั้งที่รอบนั้นไม่ได้ส่งของมี `alloc = 0` จึงบวกยอดเป็นศูนย์
+   *    `dnLogStale()` มองไม่เห็นโดยออกแบบ (#103 บันทึกไว้แล้วว่าจะจับได้ต้องเพิ่มคอลัมน์)
+   *    แต่แถว log เก็บ `lines` ไว้อยู่แล้ว จึงเทียบได้ฟรีโดยไม่ต้องเพิ่มคอลัมน์และไม่ต้อง redeploy
+   *    ใบนี้เป็นที่แรกที่วางสองเลขนี้ไว้ใกล้กันให้คนเทียบ จึงต้องไม่ปล่อยให้ขัดกันเงียบ ๆ
+   *    (ผู้ตรวจ #113 รอบ 5 รันเจอ: log บอก 2 บรรทัด กล่องโชว์ 1 พร้อมคำว่า "เท่ากับตอนออกใบ")
+   * ⚠️ สาเหตุบอกแบบ "ที่พบบ่อยคือ" เท่านั้น — บรรทัดหายเพราะใบถูกยกเลิกหรือย้ายหน่วยก็ได้
+   *    ซึ่งกรณีนั้นยอดรวมมักเปลี่ยนตามด้วย และหน้านี้แยกสาเหตุจากกันไม่ได้ */
+  const nowLines = groups.reduce((s,g)=> s + shippedOrders(g).length, 0);
+  /* ⚠️ ต้องเป็นตัวเลขจริงเท่านั้น · ค่าที่ซิงค์กลับมาเป็นสตริงว่างให้ 0 และสตริงอื่นให้ NaN
+   *    ซึ่ง NaN !== nowLines เสมอ → ป้ายขึ้นพร้อมเลข 0 ที่ไม่มีใครเคยออกใบด้วย (ผู้ตรวจ #113) */
+  const keptNum = Number(entry.lines);
+  const keptLines = (entry.lines == null || entry.lines === '' || !isFinite(keptNum))
+    ? null : keptNum;
+  const lineCmp = (keptLines != null && keptLines !== nowLines)
+    ? `<div class="desc"><span class="badge amber">จำนวนบรรทัดไม่เท่าตอนออกใบ</span>
+        ตอนออกใบ <b>${numFmt(keptLines)}</b> บรรทัด · วันนี้ <b>${numFmt(nowLines)}</b> บรรทัด —
+        ถ้ายอดรวมเท่าเดิม สาเหตุที่พบบ่อยคือใบที่ถูกติ๊กให้ขึ้นกระดาษทั้งที่รอบนั้นไม่ได้ส่งของ
+        ซึ่งย้อนรู้ไม่ได้ว่าใบไหน</div>`
+    : '';
+
+  /* ด่านเดียวกับที่ writeDeliveryFile() กันไว้ก่อนออกไฟล์ — บอกที่นี่ด้วย
+   * เพราะคนที่ไม่มีฟอร์มกดออกไฟล์ซ้ำเพื่อดูเหตุไม่ได้ และนี่คือเหตุที่พบบ่อยที่สุด */
+  const bad = groups.filter(g => g.packQty !== g.qty);
+  const warn = bad.length ? `<div class="desc"><span class="badge red">กล่องกับเศษไม่ตรงกับยอด</span>
+      ${bad.map(g=>`P/N ${escapeHtml(g.pn)} กระดาษจะพิมพ์ ${numFmt(g.packQty)} แต่คีย์ไว้ ${numFmt(g.qty)}`).join(' · ')}
+      — ออกไฟล์ซ้ำไม่ได้จนกว่าจะแก้ให้ตรง</div>` : '';
+
+  const rows = groups.map(g=>{
+    /* shippedOrders() ปลอดภัยที่นี่เพราะ dnReissueGroups() ตัดเหลือเฉพาะ alloc > 0 แล้ว
+     * ช่องติ๊กจึงเพิ่มแถวอะไรไม่ได้ · และด้วยเหตุเดียวกัน qty ของทุกกลุ่มมากกว่า 0 เสมอ
+     * จึงไม่มีกรณี "กลุ่มที่ไม่ได้ส่งของเลย" ที่กระดาษเว้นช่องบรรจุไว้ ให้ต้องรองรับที่นี่
+     *
+     * ⚠️ Wip bal. ที่ Delta ไม่ได้ให้ยอดมา ต้องเว้นว่างเหมือนกระดาษ ห้ามโชว์ 0
+     *    เลข 0 แปลว่า "Delta บอกว่าไม่ค้างแล้ว" ซึ่งคนละเรื่องกับ "Delta ไม่ได้บอก" */
+    const lines = shippedOrders(g);
+    return lines.map((x,i)=>{
+      const grp = i > 0 ? `` : `
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.perBox)}</td>
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.boxes)}</td>
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.remainder)}</td>
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.packQty)}</td>
+        <td class="dn-merge left" rowspan="${lines.length}">${escapeHtml(g.remark)}</td>`;
+      return `<tr>
+        <td class="left">${escapeHtml(g.pn)}</td>
+        <td class="left">${escapeHtml(x.o.poNo)}</td>
+        <td>${x.o.orderDate ? escapeHtml(fmtDateTH(x.o.orderDate)) : '—'}</td>
+        <td>${numFmt(Number(x.o.orderQty)||0)}</td>
+        <td>${x.deltaWip == null ? '—' : numFmt(x.deltaWip)}</td>
+        <td>${numFmt(Number(x.alloc)||0)}</td>${grp}
+      </tr>`;
+    }).join('');
+  }).join('');
+
+  return head + why + cmp + lineCmp + warn + `<div class="table-wrap"><table id="dnPreviewTable">
+    <thead><tr><th class="left">P/N</th><th class="left">PO No.</th><th>Order Date</th>
+      <th>PO QTY</th><th>Wip bal.</th><th>ยอดส่งงาน</th><th>ต่อกล่อง</th><th>กล่อง</th>
+      <th>เศษ</th><th>จำนวน/PCS</th><th class="left">Remark</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function showDnPreview(entry){
+  document.getElementById('dnPreviewTitle').textContent = 'รายละเอียดใบ ' + entry.no;
+  document.getElementById('dnPreviewBody').innerHTML = dnPreviewHtml(entry);
+  document.getElementById('dnPreviewModal').classList.add('show');
+}
+
 function renderDnLog(){
   const table = document.getElementById('dnLogTable');
   if(!table) return;
@@ -4041,13 +4185,16 @@ function renderDnLog(){
         <td>${numFmt(Number(e.lines)||0)}</td>
         <td>${numFmt(Number(e.qty)||0)}</td>
         <td class="left">${escapeHtml(e.deviceName||'')}</td>
+        <td><a href="#" data-dn-preview="${escapeHtml(e.id)}"
+               title="ดูรายการบนใบนี้บนจอ — ไม่ต้องมีไฟล์ฟอร์ม">ดูรายละเอียด</a></td>
       </tr>`;
     }).join('');
 
   table.innerHTML =
     `<thead><tr><th class="left">เลขที่</th><th>เวลาที่ออก</th><th class="left">หน่วย</th><th>WK</th>
-       <th>กลุ่ม P/N</th><th>บรรทัด</th><th>ยอดรวม</th><th class="left">เครื่อง</th></tr></thead>
-     <tbody>${rows || emptyRow(8,'ยังไม่มีใบส่งสินค้าที่ออกไป')}</tbody>`;
+       <th>กลุ่ม P/N</th><th>บรรทัด</th><th>ยอดรวม</th><th class="left">เครื่อง</th>
+       <th class="left">รายละเอียด</th></tr></thead>
+     <tbody>${rows || emptyRow(9,'ยังไม่มีใบส่งสินค้าที่ออกไป')}</tbody>`;
 }
 
 /* กดเลขที่ใบ = ออกไฟล์ใบนั้นอีกครั้ง · สร้างใหม่จากยอดบรรจุของหน่วย+วันนั้น ไม่ได้เก็บไฟล์ไว้ */
@@ -4079,6 +4226,26 @@ document.getElementById('dnLogTable').addEventListener('click', async (e)=>{
     await writeDeliveryFile(entry.unit, entry.date, entry.week, groups);
     toast(`ออกไฟล์ใบ ${entry.no} อีกครั้งแล้ว`);
   }catch(err){ toast('ออกไฟล์ไม่สำเร็จ: '+err.message); }
+});
+
+/* กดดูรายละเอียด = อ่านบนจอ ไม่สร้างไฟล์ จึงไม่ต้องมีฟอร์มและไม่ต้องถามยืนยันอะไร
+ * แยกตัวจับคลิกจากของ "ออกไฟล์ซ้ำ" ตั้งใจ — ทางนั้นมีด่าน dnTemplate กับกล่องยืนยันอยู่ก่อน
+ * ถ้าเอามารวมกัน ทางนี้จะติดด่านที่ไม่เกี่ยวกับมันเลย */
+document.getElementById('dnLogTable').addEventListener('click', (e)=>{
+  const a = e.target.closest('[data-dn-preview]');
+  if(!a) return;
+  e.preventDefault();
+  const entry = (state.deliveryLog||[]).find(x=>x.id===a.dataset.dnPreview);
+  if(entry) showDnPreview(entry);
+});
+
+document.getElementById('dnPreviewCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('dnPreviewModal').classList.remove('show');
+});
+
+// คลิกฉากหลังก็ปิด — รูปแบบเดียวกับ mergeModal · ไม่มีอะไรต้องเก็บ จึงไม่ต้องล้างสถานะ
+document.getElementById('dnPreviewModal').addEventListener('click', (e)=>{
+  if(e.target.id==='dnPreviewModal') e.currentTarget.classList.remove('show');
 });
 
 document.getElementById('btnDnExport').addEventListener('click', async ()=>{
