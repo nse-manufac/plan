@@ -1927,7 +1927,7 @@ function renderPreview(parsed){
       <td class="left">${escapeHtml(it.osc)}</td>
       <td class="left">${escapeHtml(it.pc)}</td>
       <td>${numFmt(it.orderQty)}</td>
-      <td>${fmtDateTH(it.orderDate)}</td>
+      <td>${escapeHtml(fmtDateTH(it.orderDate))}</td>
     </tr>`;
   }).join('');
   document.getElementById('previewTable').innerHTML =
@@ -1984,7 +1984,7 @@ function renderOrderVoidTable(){
       <td class="left">${escapeHtml(o.poNo)}</td>
       <td class="left">${escapeHtml(o.pn)}</td>
       <td class="left">${escapeHtml(o.subName||'—')}</td>
-      <td>${fmtDateTH(o.orderDate)}</td>
+      <td>${escapeHtml(fmtDateTH(o.orderDate))}</td>
       <td>${numFmt(o.orderQty)}</td>
       <td>${n ? numFmt(n) : '—'}</td>
       <td>${o.voided?'<span class="badge gray">ยกเลิกแล้ว</span> ':''}${btn}</td>
@@ -2241,7 +2241,7 @@ function renderRecordEditor(){
       : `<button class="btn danger small" data-delete="${r.id}">🗑️ ลบ</button>`;
     return `<tr class="${r.voided?'row-voided':''}">
       <td><input type="checkbox" class="rec-chk" data-id="${r.id}" ${recSelectedIds.has(r.id)?'checked':''}></td>
-      <td>${fmtDateTH(r.date)}</td>
+      <td>${escapeHtml(fmtDateTH(r.date))}</td>
       <td class="left">${escapeHtml(PROCESS_LABELS[r.process]||r.process)}</td>
       <td class="left">${escapeHtml(o?o.poNo:'?')}</td>
       <td class="left">${escapeHtml(o?o.pn:'?')}</td>
@@ -2453,7 +2453,7 @@ function renderFgCard(pn, unit){
       <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>
       <th style="width:110px">คงเหลือ</th></tr></thead><tbody>` +
     (moves.map(m=>`<tr>
-      <td>${fmtDateTH(m.date)}</td>
+      <td>${escapeHtml(fmtDateTH(m.date))}</td>
       <td class="left">${escapeHtml(m.po)}</td>
       <td>${m.kind==='inspection' ? numFmt(m.qty) : ''}</td>
       <td>${m.kind==='shipping' ? numFmt(m.qty) : ''}</td>
@@ -2845,7 +2845,7 @@ function renderDashTable(){
       <td class="left">${escapeHtml(o.pn)}</td>
       <td class="left">${escapeHtml(o.subName)}</td>
       <td>${numFmt(o.orderQty)}</td>
-      <td>${fmtDateTH(o.orderDate)}</td>
+      <td>${escapeHtml(fmtDateTH(o.orderDate))}</td>
       <td data-aging>${agingCell(aging, st.code)}</td>
       ${PROCESSES.map(p=>`<td>${progressCell(c[p]||0, split[p], o.orderQty)}</td>`).join('')}
       <td><span class="badge ${st.color}">${escapeHtml(st.label)}</span>${anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
@@ -3415,7 +3415,7 @@ function renderDeliveryNote(){
              <div class="hint">${span} ใบสั่ง</div></td>` : '')
         + `<td>${itemOf.get(o.id)}</td>
         <td class="left">${escapeHtml(o.poNo)}</td>
-        <td>${fmtDateTH(o.orderDate)}</td>
+        <td>${escapeHtml(fmtDateTH(o.orderDate))}</td>
         <td>${numFmt(o.orderQty)}</td>
         <td data-ourwip="${escapeHtml(o.id)}">${numFmt(wip)}</td>
         <td data-deltawip="${escapeHtml(o.id)}">${dnDeltaCell(deltaWip, deltaWeek, wip, inCallIn, deltaRow)}</td>
