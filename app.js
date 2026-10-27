@@ -2241,10 +2241,20 @@ function renderEntryTable(){
   // ช่องเลือกเหตุผล — วาดใหม่หลังบันทึกเหมือนช่องยอด เพราะการเลือกอาจสร้างรายการยอด 0 ขึ้นใหม่
   document.querySelectorAll('#entryTable select.row-note').forEach(sel=>{
     sel.addEventListener('change', function(){
-      saveEntryNote(this.dataset.order, this.value, date);
+      const oid = this.dataset.order;
+      saveEntryNote(oid, this.value, date);
       renderEntryTable();
       renderRecordEditor();
       renderSyncBadge();
+      /* ⚠️ ต้องคืนโฟกัสเอง — วาดตารางใหม่แล้วอิลิเมนต์เดิมหายไปพร้อมโฟกัส
+       *    Chrome ยิง change **ทุกครั้งที่กดลูกศร** บน select ที่ยังไม่เปิดรายการ
+       *    พอโฟกัสหลุดตั้งแต่ลูกศรครั้งแรก ลูกศรครั้งต่อไปไม่ถึงช่องนี้แล้ว
+       *    เหตุผลตัวที่สองเป็นต้นไปจึงเอื้อมไม่ถึงด้วยแป้นพิมพ์ และค่าที่ค้างอยู่คือ
+       *    ตัวแรกของรายการซึ่งเขาไม่ได้ตั้งใจเลือก (ผู้ตรวจ #115 รันพิสูจน์บน Chromium)
+       *    ช่องยอดมี pendingFocusOrderId คืนให้อยู่แล้ว ช่องนี้ต้องมีของตัวเอง (G2) */
+      const again = document.querySelector(
+        `#entryTable select.row-note[data-order="${CSS.escape(oid)}"]`);
+      if(again) again.focus();
     });
   });
 }

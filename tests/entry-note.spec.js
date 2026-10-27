@@ -215,3 +215,31 @@ test('คอลัมน์หมายเหตุต้องไม่หุ�
   expect(Math.abs(ship - before), `ขั้นส่งของ ${ship}px vs ขั้นอื่น ${before}px`).toBeLessThanOrEqual(8);
   expect(after, 'สลับกลับมาต้องเท่าเดิม').toBe(before);
 });
+
+test('ไล่เหตุผลด้วยลูกศรได้ — โฟกัสต้องไม่หลุดหลังบันทึก (G2)', async ({ page }) => {
+  /* ⚠️ Chrome ยิง change **ทุกครั้งที่กดลูกศร** บน select ที่ยังไม่เปิดรายการ
+   *    ตัวจับ change วาดตารางใหม่ อิลิเมนต์เดิมจึงหายไปพร้อมโฟกัส
+   *    ผลที่ผู้ตรวจ #115 รันเจอ: ลูกศรครั้งแรกบันทึก "เครื่องเสีย" แล้ว activeElement กลายเป็น BODY
+   *    ลูกศรครั้งที่สองจึงไม่ถึงช่องนี้อีกเลย = เหตุผลตัวที่ 2–8 เอื้อมไม่ถึงด้วยแป้นพิมพ์
+   *    ต้องคว้าเมาส์ และค่าที่ค้างอยู่คือตัวแรกที่เขาไม่ได้ตั้งใจเลือก */
+  await open(page, []);
+  const notes = await page.evaluate(() => ENTRY_NOTES);
+
+  await sel(page).focus();
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(250);
+  expect((await liveRec(page))[0].note, 'ลูกศรครั้งแรกได้ตัวแรกของรายการ').toBe(notes[0]);
+  expect(await page.evaluate(() => document.activeElement &&
+    (document.activeElement.className + '|' + (document.activeElement.dataset.order || ''))),
+    'โฟกัสต้องยังอยู่ที่ช่องเดิม ไม่ใช่หลุดไป BODY').toBe('row-note|' + OID);
+
+  // ลูกศรครั้งต่อไปต้องเดินต่อได้จริง ไม่ใช่ค้างอยู่ที่ตัวแรก
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(250);
+  expect((await liveRec(page))[0].note, 'ต้องเดินไปตัวที่สองได้').toBe(notes[1]);
+  expect((await liveRec(page)).length, 'ยังเป็น record เดียว กุญแจเดิม (A2)').toBe(1);
+
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(250);
+  expect((await liveRec(page))[0].note, 'และไปตัวที่สามได้').toBe(notes[2]);
+});
