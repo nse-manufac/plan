@@ -2080,7 +2080,7 @@ function renderImportHistory(){
         // entry เก่าก่อนมี batchId — จับคู่ด้วยวันที่ที่ฝังอยู่ใน week ("ส่งของ YYYY-MM-DD")
         const m = (entry.week||'').match(/^ส่งของ (\d{4}-\d{2}-\d{2})$/);
         if(m) idsToVoid = state.records
-          .filter(r=>r.process==='shipping' && r.note==='นำเข้าจากใบส่งงาน' && r.date===m[1] && !r.voided)
+          .filter(r=>r.process==='shipping' && r.note===SOURCE_SHIP_IMPORT && r.date===m[1] && !r.voided)
           .map(r=>r.id);
       }
       if(!idsToVoid.length){ toast('ไม่พบรายการที่จะลบ (อาจถูกลบหรือแก้ไขไปแล้ว)'); return; }
@@ -2289,8 +2289,8 @@ function renderRecordEditor(){
   let rows = state.records.filter(r=>showVoided ? true : !r.voided);
   if(dateF) rows = rows.filter(r=>r.date===dateF);
   if(procF) rows = rows.filter(r=>r.process===procF);
-  if(srcF==='ship') rows = rows.filter(r=>r.note==='นำเข้าจากใบส่งงาน');
-  if(srcF==='manual') rows = rows.filter(r=>r.note!=='นำเข้าจากใบส่งงาน');
+  if(srcF==='ship') rows = rows.filter(r=>r.note===SOURCE_SHIP_IMPORT);
+  if(srcF==='manual') rows = rows.filter(r=>r.note!==SOURCE_SHIP_IMPORT);
   if(search){
     rows = rows.filter(r=>{
       const o = orderById[r.orderId];

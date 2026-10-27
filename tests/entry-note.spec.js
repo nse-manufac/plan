@@ -12,6 +12,7 @@
 
 const { test, expect } = require('@playwright/test');
 const { readSaved, waitReady } = require('./app-state');
+const { appSource } = require('./app-source');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -341,4 +342,19 @@ test('แถวที่เกิดจากการเลือกเหต�
   await open(page, []);
   await pick(page, 'คนไม่พอ');
   expect((await liveRec(page))[0].deviceName, 'แถวที่สร้างใหม่ต้องมีชื่อเครื่อง').toBe('เครื่องวางแผน');
+});
+
+test('คำบอกที่มาของยอด ต้องเทียบผ่านค่าคงที่ ไม่ใช่ข้อความดิบที่กระจายอยู่', async () => {
+  /* ⚠️ ด่านนี้คือสิ่งที่ทำให้ด่าน "ห้ามเหตุผลซ้ำกับคำบอกที่มา" มีผลจริง
+   *
+   *    ด่านนั้นอ่าน ENTRY_NOTES กับ SOURCE_* จากหน้าเว็บมาเทียบกัน — ถ้ามีที่ไหนเทียบ note
+   *    กับ **ข้อความดิบ** แทนที่จะใช้ค่าคงที่ วันที่ใครแก้ถ้อยคำในค่าคงที่ ที่นั่นจะหลุดจากกัน
+   *    ตัวกรอง "กรอกมือ" จะพังเงียบ ทั้งที่ด่านนั้นยังเขียว (ผู้ตรวจ #115 พบสามจุดในโค้ดเดิม)
+   *
+   *    อ่านซอร์สที่เบราว์เซอร์โหลดจริง (tests/app-source.js) ย้ายโค้ดไปไฟล์ไหนก็ยังเห็น */
+  const src = appSource();
+  for (const word of ['นำเข้าจากใบส่งงาน', 'จากใบส่งสินค้า']) {
+    const hits = src.split("'" + word + "'").length - 1;
+    expect(hits, `"${word}" ต้องมีเป็นข้อความดิบที่เดียว คือบรรทัดที่ประกาศค่าคงที่`).toBe(1);
+  }
 });
