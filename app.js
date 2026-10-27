@@ -2237,15 +2237,15 @@ function renderRecordEditor(){
     const source = r.note===SOURCE_SHIP_IMPORT ? 'ใบส่งงาน'
                  : r.note===SOURCE_DELIVERY ? 'ใบส่งสินค้า' : 'กรอกมือ';
     const actionBtn = r.voided
-      ? `<button class="btn small" data-restore="${r.id}">↩️ กู้คืน</button>`
-      : `<button class="btn danger small" data-delete="${r.id}">🗑️ ลบ</button>`;
+      ? `<button class="btn small" data-restore="${escapeHtml(r.id)}">↩️ กู้คืน</button>`
+      : `<button class="btn danger small" data-delete="${escapeHtml(r.id)}">🗑️ ลบ</button>`;
     return `<tr class="${r.voided?'row-voided':''}">
-      <td><input type="checkbox" class="rec-chk" data-id="${r.id}" ${recSelectedIds.has(r.id)?'checked':''}></td>
+      <td><input type="checkbox" class="rec-chk" data-id="${escapeHtml(r.id)}" ${recSelectedIds.has(r.id)?'checked':''}></td>
       <td>${escapeHtml(fmtDateTH(r.date))}</td>
       <td class="left">${escapeHtml(PROCESS_LABELS[r.process]||r.process)}</td>
       <td class="left">${escapeHtml(o?o.poNo:'?')}</td>
       <td class="left">${escapeHtml(o?o.pn:'?')}</td>
-      <td><input type="number" min="0" class="row-input rec-qty-input" data-id="${r.id}" value="${r.qty}" ${r.voided?'disabled':''}></td>
+      <td><input type="number" min="0" class="row-input rec-qty-input" data-id="${escapeHtml(r.id)}" value="${escapeHtml(r.qty)}" ${r.voided?'disabled':''}></td>
       <td class="left">${source}${r.voided?' <span class="badge gray">ลบแล้ว</span>':''}</td>
       <td class="left">${escapeHtml(r.deviceName||'-')}</td>
       <td>${actionBtn}</td>
@@ -2917,7 +2917,7 @@ function showMergeModal(plan){
     html += `<div class="small muted">ตัวอย่างรายการขัดแย้ง:<br>` +
       plan.conflictRecords.slice(0,6).map(c=>{
         const winVal = c.winner==='incoming'? c.incoming.qty : c.local.qty;
-        return `${escapeHtml(c.local.orderId)} (${escapeHtml(c.local.process)}, ${c.local.date}): ${c.local.qty} vs ${c.incoming.qty} → ใช้ ${winVal}`;
+        return `${escapeHtml(c.local.orderId)} (${escapeHtml(c.local.process)}, ${escapeHtml(c.local.date)}): ${escapeHtml(c.local.qty)} vs ${escapeHtml(c.incoming.qty)} → ใช้ ${escapeHtml(winVal)}`;
       }).join('<br>') + `</div>`;
   }
   if(!plan.newOrders.length && !plan.updOrders.length && !plan.newRecords.length && !plan.conflictRecords.length){
