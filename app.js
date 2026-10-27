@@ -2475,9 +2475,15 @@ function saveEntryNote(orderId, value, date){
   if(idx>-1 && cur === note) return false;
   const now = new Date().toISOString();
   if(idx>-1){
+    /* ⚠️ ห้ามแตะ `deviceName` ตรงนี้ — คอลัมน์ในหน้าแก้ไขรายการชื่อ "เครื่องที่กรอก"
+     *    และสิ่งที่คนไปหาคำตอบคือ **ใครคีย์ยอดจำนวนนี้** · การที่อีกคนมาเลือกเหตุผล
+     *    ให้แถวนั้นแล้วชื่อเครื่องเปลี่ยนตาม = คำตอบนั้นผิดโดยไม่มีใครรู้
+     *    ต่างจาก `saveEntryValue()` ที่ทับชื่อได้ถูกต้อง เพราะที่นั่นคนพิมพ์ยอดใหม่จริง ๆ
+     *    (ผู้ตรวจ #115) · ตอนสร้างแถวใหม่ข้างล่างยังบันทึกชื่อเครื่องตามเดิม เพราะคนนั้นสร้างแถวจริง
+     *    ผลที่ยอมรับไว้: ไม่มีที่เก็บว่า "ใครเลือกเหตุผล" — จะเก็บต้องเพิ่มคอลัมน์ = แก้ contract
+     *    การซิงค์ + redeploy Apps Script ซึ่งต้องถามเจ้าของก่อน (§7) */
     state.records[idx].note = note;
     state.records[idx].updatedAt = now;
-    state.records[idx].deviceName = state.deviceName;
     state.records[idx]._dirty = true;
     saveState();
     doSync();
