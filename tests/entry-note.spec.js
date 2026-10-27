@@ -1,0 +1,217 @@
+// ช่องเลือกเหตุผล (หมายเหตุ) ท้ายแถวในหน้าคีย์ยอดรายวัน — เจ้าของสั่ง 27 ต.ค. 2026
+//
+// ⚠️ เรื่องที่ไฟล์นี้คุมหนักที่สุด: ช่อง `note` ของ record **ถูกใช้สองหน้าที่**
+//    หน้าที่เดิมคือบอก "ที่มาของยอด" (`จากใบส่งสินค้า` · `นำเข้าจากใบส่งงาน`) ซึ่งคอลัมน์
+//    แหล่งที่มาในหน้าแก้ไขรายการกับตัวกรองของมันอ่านค่านี้ตรง ๆ
+//    ถ้าเหตุผลไปซ้ำกับสองคำนั้น ยอดที่พนักงานคีย์มือจะถูกนับเป็นยอดจากใบส่งสินค้า
+//    แล้วตัวกรอง "กรอกมือ" จะซ่อนมันไปเลย — เป็นความพังแบบเงียบที่ตามหาไม่เจอ
+//
+// คำตัดสินของเจ้าของ 27 ต.ค. 2026: เลือกเหตุผลได้แม้ยังไม่คีย์ยอด แล้วระบบบันทึกยอดเป็น 0 ให้
+// เพราะเหตุผลมักจำเป็นตอน "วันนี้ไม่ได้ผลิต" ซึ่งคือตอนที่ยังไม่มียอด
+
+const { test, expect } = require('@playwright/test');
+const { readSaved, waitReady } = require('./app-state');
+
+const APP = '/production_plan_tracker.html';
+const K_STATE = 'tue_order_tracker_v1';
+const DATE = '2026-08-29';
+const PN = '9000000002';
+const OID = 'PO-B001|' + PN;
+
+const ORDERS = [{
+  id: OID, week: 'WK 34', poNo: 'PO-B001', pn: PN, subName: 'TUE-U',
+  orderQty: 12000, orderDate: '2026-08-03', status: 'active',
+  importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false
+}];
+
+const rec = (patch = {}) => Object.assign({
+  id: 'R1', date: DATE, orderId: OID, process: 'winding', qty: 500, note: '',
+  deviceName: 't', createdAt: '2026-08-29T01:00:00.000Z', updatedAt: '2026-08-29T01:00:00.000Z',
+  voided: false, _dirty: false
+}, patch);
+
+/* ⚠️ ห้ามใช้ forgetSavedOnEveryLoad() ที่นี่ — มันลบ IndexedDB ทุกครั้งที่หน้าโหลด
+ *    ซึ่งจะลบสิ่งที่เทส "ต้องรอดการรีเฟรช" เพิ่งบันทึกไป แล้วเทสจะแดงเพราะตัวช่วย ไม่ใช่เพราะโค้ด
+ *    Playwright ให้ context ใหม่ต่อเทสอยู่แล้ว IndexedDB จึงว่างตั้งแต่ต้นโดยไม่ต้องลบเอง */
+async function open(page, records = []) {
+  await page.addInitScript(([k, o, r]) => localStorage.setItem(k, JSON.stringify({
+    version: 1, deviceName: 'เครื่องวางแผน',
+    deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
+    chartPref: { mode: '14', from: '', to: '' },
+    orders: o, records: r, deliveryNotes: [], deltaWip: [], deliveryLog: [], importHistory: []
+  })), [K_STATE, ORDERS, records]);
+  await page.goto(APP);
+  await waitReady(page);
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.fill('#entryDate', DATE);
+  await page.waitForTimeout(200);
+}
+
+const sel = page => page.locator(`#entryTable select.row-note[data-order="${OID}"]`);
+const readState = page => readSaved(page, K_STATE);
+const liveRec = async (page, process = 'winding') =>
+  (await readState(page)).records.filter(r => r.orderId === OID && r.process === process && r.date === DATE);
+
+/** เลือกเหตุผลแล้วรอให้บันทึก */
+async function pick(page, value) {
+  await sel(page).selectOption(value);
+  await page.waitForTimeout(250);
+}
+
+test('เลือกเหตุผลในแถวที่มียอดแล้ว ต้องเขียนลงรายการเดิม ไม่สร้างแถวใหม่', async ({ page }) => {
+  await open(page, [rec()]);
+  await pick(page, 'เครื่องเสีย');
+
+  const rows = await liveRec(page);
+  expect(rows.length, 'ต้องยังมีรายการเดียว — กุญแจ orderId|process|date ไม่เปลี่ยน (A2)').toBe(1);
+  expect(rows[0].note).toBe('เครื่องเสีย');
+  expect(Number(rows[0].qty), 'ยอดต้องไม่ถูกแตะ').toBe(500);
+  expect(rows[0].id, 'ต้องเป็นรายการเดิม').toBe('R1');
+  expect(rows[0]._dirty, 'ต้องถูกส่งขึ้นเซิร์ฟเวอร์รอบถัดไป').toBe(true);
+});
+
+test('เลือกเหตุผลในแถวที่ยังไม่มียอด ต้องบันทึกยอด 0 ให้ (เจ้าของเลือก 27 ต.ค. 2026)', async ({ page }) => {
+  /* ฉากจริงที่คำตัดสินนี้รองรับ: วันนี้เครื่องเสีย ไม่ได้ผลิตเลย แต่ต้องบอกเหตุไว้
+   * ผลที่ยอมรับไว้คือเกิดรายการยอด 0 ขึ้นจริง ซึ่งหมายถึง "วันนี้ผลิต 0" ไม่ใช่ "ยังไม่ได้คีย์" */
+  await open(page, []);
+  await expect(sel(page), 'ยังไม่มีรายการ ก็ต้องเลือกได้').toBeVisible();
+  await pick(page, 'ขาดวัตถุดิบ');
+
+  const rows = await liveRec(page);
+  expect(rows.length, 'ต้องสร้างรายการให้หนึ่งแถว').toBe(1);
+  expect(Number(rows[0].qty), 'ยอดต้องเป็น 0').toBe(0);
+  expect(rows[0].note).toBe('ขาดวัตถุดิบ');
+  expect(rows[0].deviceName, 'ต้องบันทึกว่าเครื่องไหนกรอก').toBe('เครื่องวางแผน');
+  // ยอดสะสมไม่ขยับเพราะบวก 0 — ตัวเลขบนจอต้องไม่เพี้ยนจากการใส่เหตุผล
+  expect(await page.locator('#entryTable tbody tr').first().locator('td').nth(6).innerText(),
+    'ยอดสะสมต้องยังเป็น 0').toBe('0');
+});
+
+test('ไม่เลือกอะไรในแถวที่ยังไม่มียอด ต้องไม่สร้างแถวเปล่า', async ({ page }) => {
+  await open(page, []);
+  // เลือกค่าว่างทับค่าว่าง — ต้องไม่เกิดอะไรขึ้นเลย
+  await pick(page, '');
+  expect((await readState(page)).records.length, 'ห้ามมีรายการโผล่มา').toBe(0);
+});
+
+test('ล้างเหตุผลได้ และรายการยอด 0 ยังอยู่ ไม่ถูกลบ (B1)', async ({ page }) => {
+  await open(page, []);
+  await pick(page, 'คนไม่พอ');
+  await pick(page, '');
+
+  const rows = await liveRec(page);
+  expect(rows.length, 'B1 — ไม่ลบรายการ ต่อให้ไม่เหลือเหตุผล').toBe(1);
+  expect(rows[0].note).toBe('');
+  expect(Number(rows[0].qty)).toBe(0);
+  expect(await sel(page).inputValue(), 'ช่องต้องกลับไปว่าง').toBe('');
+});
+
+test('เหตุผลต้องรอดการรีเฟรช และเลือกค้างไว้ให้เห็น', async ({ page }) => {
+  await open(page, [rec()]);
+  await pick(page, 'งานแก้ไข/ซ่อม');
+
+  await page.reload();
+  await waitReady(page);
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.fill('#entryDate', DATE);
+  await page.waitForTimeout(200);
+  expect(await sel(page).inputValue(), 'ต้องเลือกค้างไว้ตามที่บันทึก').toBe('งานแก้ไข/ซ่อม');
+});
+
+test('รายการเหตุผล ห้ามซ้ำกับคำที่ระบบใช้บอกที่มาของยอด', async ({ page }) => {
+  /* ⚠️ ด่านที่สำคัญที่สุดของใบนี้ · ถ้าเหตุผลไปซ้ำกับคำบอกที่มา ยอดที่คีย์มือจะถูกนับเป็น
+   *    ยอดจากใบส่งสินค้า แล้วตัวกรอง "กรอกมือ" ในหน้าแก้ไขรายการจะซ่อนมันไปเลย
+   *    อ่านค่าจริงจากหน้าเว็บมาเทียบ ไม่ใช่รายการที่พิมพ์ไว้ในเทส */
+  await open(page, []);
+  const got = await page.evaluate(() => ({
+    notes: ENTRY_NOTES, ship: SOURCE_SHIP_IMPORT, dn: SOURCE_DELIVERY
+  }));
+  expect(got.notes.length, 'ต้องอ่านรายการจริงได้ ไม่ใช่ลิสต์ว่าง').toBeGreaterThan(3);
+  expect(got.notes, 'ห้ามซ้ำกับคำบอกที่มาจากใบส่งสินค้า').not.toContain(got.dn);
+  expect(got.notes, 'ห้ามซ้ำกับคำบอกที่มาจากการนำเข้าใบส่งงาน').not.toContain(got.ship);
+  expect(new Set(got.notes).size, 'ห้ามมีคำซ้ำกันในรายการ').toBe(got.notes.length);
+  // ทุกคำในรายการต้องขึ้นเป็นตัวเลือกจริงบนจอ ไม่ใช่มีแต่ในโค้ด
+  const opts = await sel(page).locator('option').allInnerTexts();
+  for (const n of got.notes) expect(opts.join('|'), 'ตัวเลือก ' + n).toContain(n);
+});
+
+test('เหตุผลต้องไม่ทำให้คอลัมน์แหล่งที่มาในหน้าแก้ไขรายการเพี้ยน', async ({ page }) => {
+  /* คอลัมน์นั้นตัดสินจากค่าใน note ตรง ๆ — ยอดที่คีย์มือพร้อมเหตุผล ต้องยังเป็น "กรอกมือ"
+   * และตัวกรอง "กรอกมือ" ต้องยังหามันเจอ ไม่ใช่ถูกเหตุผลเขี่ยออกจากตัวกรอง */
+  await open(page, [rec()]);
+  await pick(page, 'ผลิตเกินแผน');
+
+  await page.selectOption('#recFilterSource', 'manual');
+  await page.waitForTimeout(200);
+  const row = page.locator('#recordEditorTable tbody tr').first();
+  await expect(row, 'ยอดที่คีย์มือพร้อมเหตุผลต้องยังอยู่ในตัวกรองกรอกมือ').toContainText('PO-B001');
+  await expect(row, 'และยังต้องขึ้นว่ากรอกมือ').toContainText('กรอกมือ');
+});
+
+test('แถวส่งของต้องไม่มีช่องเลือก และต้องเขียน note ของมันไม่ได้', async ({ page }) => {
+  /* note ของแถวส่งของคือคำบอกที่มา ทับแล้วแหล่งที่มาเพี้ยน · กฎเดียวกับที่ #110
+   * ปิดช่องกรอกยอดของ shipping ไว้ — หน้านี้แสดงผลอย่างเดียว */
+  const shipRec = rec({ id: 'R2', process: 'shipping', qty: 100, note: 'จากใบส่งสินค้า' });
+  await open(page, [shipRec]);
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(250);
+
+  expect(await page.locator('#entryTable select.row-note').count(),
+    'แถวส่งของห้ามมีช่องเลือกเหตุผล').toBe(0);
+
+  // ชั้นที่สอง — เรียกตัวบันทึกตรง ๆ ก็ต้องไม่เขียน
+  await page.evaluate(([oid, d]) => saveEntryNote(oid, 'เครื่องเสีย', d), [OID, DATE]);
+  await page.waitForTimeout(200);
+  const rows = await liveRec(page, 'shipping');
+  expect(rows[0].note, 'คำบอกที่มาต้องไม่ถูกทับ').toBe('จากใบส่งสินค้า');
+});
+
+test('รายการที่ยกเลิกไว้ ต้องไม่ถูกปลุกด้วยการใส่เหตุผล (B1)', async ({ page }) => {
+  /* saveEntryValue ปลุกให้เมื่อพิมพ์ยอดทับ เพราะนั่นคือการกู้คืนโดยเจตนา
+   * แต่การใส่เหตุผลไม่ใช่ — ปลุกแล้วยอดที่ถูกยกเลิกจะกลับเข้ายอดสะสมเงียบ ๆ */
+  await open(page, [rec({ voided: true })]);
+  expect(await page.locator('#entryTable tbody tr').first().locator('td').nth(6).innerText(),
+    'ยอดสะสมต้องยังไม่นับรายการที่ยกเลิก').toBe('0');
+
+  await pick(page, 'เครื่องเสีย');
+  const rows = await liveRec(page);
+  expect(rows[0].voided, 'ต้องยังยกเลิกอยู่').toBe(true);
+  expect(rows[0].note, 'และต้องไม่ถูกเขียนเหตุผลลงไป').toBe('');
+  expect(await page.locator('#entryTable tbody tr').first().locator('td').nth(6).innerText(),
+    'ยอดสะสมต้องไม่ขยับ').toBe('0');
+});
+
+test('ค่าเดิมที่ไม่อยู่ในรายการ ต้องยังเลือกค้างและอ่านออก', async ({ page }) => {
+  /* เกิดได้จริงเมื่อเครื่องอื่นใช้รายการคนละชุด หรือรายการถูกแก้ทีหลัง
+   * ทำให้หายจากจอ = ทำข้อมูลที่คนอื่นบันทึกไว้หายไปเงียบ ๆ */
+  await open(page, [rec({ note: 'รอไฟฟ้า' })]);
+  expect(await sel(page).inputValue(), 'ต้องยังเลือกค่าเดิมค้างไว้').toBe('รอไฟฟ้า');
+  await expect(sel(page), 'และต้องบอกว่าเป็นค่าเดิม').toContainText('ค่าเดิม');
+
+  // และการเลือกค่าอื่นทับต้องทำได้ตามปกติ
+  await pick(page, 'คนไม่พอ');
+  expect((await liveRec(page))[0].note).toBe('คนไม่พอ');
+});
+
+test('คอลัมน์หมายเหตุต้องไม่หุบแล้วกางเวลาสลับขั้น', async ({ page }) => {
+  /* แถวส่งของไม่มีช่องเลือก ถ้าช่องว่างของมันกินที่ไม่เท่ากัน คอลัมน์นี้จะหุบตอนสลับไป
+   * ขั้นส่งของ แล้วความกว้างที่เหลือไปดันคอลัมน์อื่นขยับทั้งตาราง — คนคีย์ยอดสลับขั้น
+   * ไปกลับทั้งวัน จึงเห็นทุกครั้ง · ตระกูลเดียวกับที่ผู้ตรวจ #110 วัดได้ 246 → 207 → 246px
+   *
+   * ⚠️ วัด <th> ไม่ใช่ <td> — ความกว้างมาจากคอลัมน์ทั้งคอลัมน์ ไม่ใช่เซลล์ใดเซลล์เดียว */
+  await open(page, [rec({ id: 'R3', process: 'shipping', qty: 100, note: 'จากใบส่งสินค้า' })]);
+  const w = () => page.locator('#entryTable thead th').nth(9).evaluate(el =>
+    Math.round(el.getBoundingClientRect().width));
+
+  const before = await w();
+  await page.click('#procBtn-shipping');
+  await page.waitForTimeout(250);
+  const ship = await w();
+  await page.click('#procBtn-winding');
+  await page.waitForTimeout(250);
+  const after = await w();
+
+  expect(before, 'คอลัมน์ต้องกว้างจริง ไม่งั้นเทสนี้ไม่ได้วัดอะไร').toBeGreaterThan(100);
+  expect(Math.abs(ship - before), `ขั้นส่งของ ${ship}px vs ขั้นอื่น ${before}px`).toBeLessThanOrEqual(8);
+  expect(after, 'สลับกลับมาต้องเท่าเดิม').toBe(before);
+});

@@ -149,6 +149,19 @@ function downloadBlob(content, filename, type){
 const SOURCE_SHIP_IMPORT = 'นำเข้าจากใบส่งงาน';
 const SOURCE_DELIVERY = 'จากใบส่งสินค้า';
 
+/** เหตุผลสำเร็จรูปของช่องหมายเหตุในหน้าคีย์ยอดรายวัน (เจ้าของเลือกชุดนี้ 27 ต.ค. 2026)
+ *  ⚠️ **ที่เดียวที่กำหนดรายการ** — แก้ที่นี่แล้วทั้งโปรแกรมเปลี่ยนตาม (แบบเดียวกับ DEFAULT_PROCESSES)
+ *
+ *  ⚠️ **ห้ามมีค่าใดซ้ำกับ SOURCE_SHIP_IMPORT หรือ SOURCE_DELIVERY สองบรรทัดข้างบน**
+ *     ช่อง `note` ช่องเดียวกันนี้ถูกใช้บอก "ที่มาของยอด" ด้วย — คอลัมน์แหล่งที่มาในหน้าแก้ไขรายการ
+ *     กับตัวกรองของมันตัดสินจากค่านี้ตรง ๆ · ถ้าซ้ำ ยอดที่พนักงานคีย์มือจะถูกนับเป็น
+ *     ยอดจากใบส่งสินค้า แล้วตัวกรอง "กรอกมือ" จะซ่อนมันไปเลย · มีเทสคุมไว้
+ *
+ *  เพิ่ม/แก้คำได้ตามปกติ แต่ **คำที่เคยถูกเลือกไว้แล้วจะยังอยู่ในข้อมูล** — หน้าจอจึงต้อง
+ *  แสดงค่าเดิมที่ไม่อยู่ในรายการได้ด้วย ไม่ใช่ทำให้มันหายไปเงียบ ๆ (ดู renderEntryTable) */
+const ENTRY_NOTES = ['เครื่องเสีย', 'ขาดวัตถุดิบ', 'รองาน/รอชิ้นส่วนจากขั้นก่อน', 'คนไม่พอ',
+                     'หยุดงาน/วันหยุด', 'งานแก้ไข/ซ่อม', 'ผลิตเกินแผน', 'อื่น ๆ'];
+
 /* ---------- รายการขั้นการผลิต — มีที่เดียวคือ DEFAULT_PROCESSES (INVARIANTS A3) ----------
  * เจ้าของสั่ง 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม
  * ข้างล่างคือห้าขั้นตั้งต้น · ขั้นที่เพิ่ม/เปลี่ยนชื่อ/ซ่อนจากหน้าจัดการขั้น ซิงค์มาเก็บใน state.processes
@@ -1852,6 +1865,16 @@ function buildRecordIndex(records){
   for(const r of records){ if(!r.voided) idx[r.orderId+'|'+r.process+'|'+r.date] = r.qty; }
   return idx;
 }
+
+/** หมายเหตุของรายการ ตามกุญแจ orderId|process|date เดียวกับ buildRecordIndex (A2)
+ *  แยก map เพราะตัวนั้นคืนยอด และที่เรียกใช้ต้องการทั้งสองอย่างคนละช่องกัน */
+function buildNoteIndex(records){
+  const idx = {};
+  for(const r of records){
+    if(!r.voided) idx[r.orderId+'|'+r.process+'|'+r.date] = String(r.note==null?'':r.note);
+  }
+  return idx;
+}
 /** เหมือน buildCumMap แต่แยกยอดสะสมออกเป็น "ทันกำหนด" (บันทึกในหรือก่อนวัน deadline ของขั้นนั้น)
  *  กับ "เกินกำหนด" (บันทึกหลังวัน deadline) — ใช้วาดแถบ progress 2 สีในตาราง Dashboard
  *  ต้องใช้ orderById เพราะ deadline คำนวณจาก orderDate ของแต่ละ order เอง ไม่ใช่ค่าคงที่ */
@@ -2082,6 +2105,7 @@ function renderEntryTable(){
 
   const allCum = buildCumMap(state.records);
   const recIndex = buildRecordIndex(state.records);
+  const noteIndex = buildNoteIndex(state.records);
   const prevProc = PREV_PROCESS[currentProcess];
   const procLabel = PROCESS_LABELS[currentProcess];
   /* ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (A2) — หน้านี้โชว์อย่างเดียว
@@ -2149,6 +2173,7 @@ function renderEntryTable(){
     if(hideDone && cum>=o.orderQty) return;
     const todayKey = o.id+'|'+currentProcess+'|'+date;
     const todayVal = recIndex[todayKey];
+    const todayNote = noteIndex[todayKey] || '';
     const prevCum = prevProc!=null ? ((allCum[o.id] && allCum[o.id][prevProc]) || 0) : null;
     const warn = prevProc!=null && cum > prevCum;
     const remaining = Math.max(0, o.orderQty - cum);
@@ -2170,13 +2195,26 @@ function renderEntryTable(){
       <td>${isShip
         ? `<span class="ship-today">${todayVal!=null ? numFmt(todayVal) : '—'}</span>`
         : `<input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}">`}</td>
+      ${/* ⚠️ แถวส่งของไม่มีช่องเลือก · note ของแถวนั้นคือคำว่า "จากใบส่งสินค้า" ที่ระบบใช้บอกที่มา
+             ทับแล้วคอลัมน์แหล่งที่มากับตัวกรองของหน้าแก้ไขรายการจะนับยอดนั้นเป็นยอดคีย์มือ
+           ⚠️ ค่าเดิมที่ไม่อยู่ใน ENTRY_NOTES ต้องยังเลือกค้างและอ่านออก — เกิดได้จริงเมื่อ
+             เครื่องอื่นใช้รายการคนละชุด หรือรายการถูกแก้ทีหลัง · ทำให้หายคือทำข้อมูลของคนอื่นหาย */''}
+      <td>${isShip
+        ? `<span class="row-note-na" title="ยอดส่งของคีย์ที่หน้าใบส่งสินค้า — ช่องหมายเหตุของแถวนั้นระบบใช้บอกที่มาของยอด">—</span>`
+        : `<select class="row-note" data-order="${escapeHtml(o.id)}">`
+          + `<option value=""${todayNote ? '' : ' selected'}>— ไม่ระบุ —</option>`
+          + ENTRY_NOTES.map(x=>`<option value="${escapeHtml(x)}"${x===todayNote?' selected':''}>${escapeHtml(x)}</option>`).join('')
+          + (todayNote && !ENTRY_NOTES.includes(todayNote)
+              ? `<option value="${escapeHtml(todayNote)}" selected>${escapeHtml(todayNote)} (ค่าเดิม)</option>` : '')
+          + `</select>`}</td>
     </tr>`;
   });
 
   document.getElementById('entryTable').innerHTML =
     `<thead><tr><th>#</th><th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Order Qty</th><th>Aging<br>(วัน)</th>
-     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>${isShip ? 'ยอดวันนี้<br><span class="small">(แก้ที่ใบส่งสินค้า)</span>' : 'ยอดวันนี้'}</th></tr></thead>
-     <tbody>${rowsHtml || emptyRow(9,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
+     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>${isShip ? 'ยอดวันนี้<br><span class="small">(แก้ที่ใบส่งสินค้า)</span>' : 'ยอดวันนี้'}</th>
+     <th>หมายเหตุ</th></tr></thead>
+     <tbody>${rowsHtml || emptyRow(10,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
 
   document.querySelectorAll('#entryTable input.row-input').forEach(inputEl=>{
     inputEl.addEventListener('keydown', function(e){
@@ -2197,6 +2235,16 @@ function renderEntryTable(){
         if(el){ el.focus(); el.select(); }
         pendingFocusOrderId = null;
       }
+    });
+  });
+
+  // ช่องเลือกเหตุผล — วาดใหม่หลังบันทึกเหมือนช่องยอด เพราะการเลือกอาจสร้างรายการยอด 0 ขึ้นใหม่
+  document.querySelectorAll('#entryTable select.row-note').forEach(sel=>{
+    sel.addEventListener('change', function(){
+      saveEntryNote(this.dataset.order, this.value, date);
+      renderEntryTable();
+      renderRecordEditor();
+      renderSyncBadge();
     });
   });
 }
@@ -2357,6 +2405,55 @@ function saveEntryValue(orderId, rawVal, date){
     state.records[idx]._dirty = true;
   } else {
     state.records.push({id:uid(), date, orderId, process:currentProcess, qty, note:'', deviceName:state.deviceName, createdAt:now, updatedAt:now, voided:false, _dirty:true});
+  }
+  saveState();
+  doSync();
+}
+
+/** บันทึกเหตุผลของแถวในหน้าคีย์ยอดรายวัน — เขียนช่อง `note` ของรายการวันนั้น
+ *
+ *  ⚠️ ด่านเดียวกับ saveEntryValue — ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (A2)
+ *     และ `note` ของแถว shipping คือคำว่า "จากใบส่งสินค้า" ที่ระบบใช้บอกที่มาของยอด
+ *     ทับแล้วคอลัมน์แหล่งที่มากับตัวกรองของหน้าแก้ไขรายการจะนับยอดนั้นเป็นยอดคีย์มือ
+ *     ด่านนี้ไม่ใช่ของซ้ำกับการไม่วาดช่องเลือก — มันกันทางที่เหลือถ้ามีใครเรียกฟังก์ชันนี้จากที่อื่น */
+function saveEntryNote(orderId, value, date){
+  if(currentProcess === 'shipping'){
+    toast('แถวส่งของแก้ที่หน้าใบส่งสินค้า — หน้านี้แสดงผลอย่างเดียว');
+    return;
+  }
+  const note = String(value==null?'':value);
+  const idx = state.records.findIndex(r=>r.orderId===orderId && r.process===currentProcess && r.date===date);
+  const cur = idx>-1 ? String(state.records[idx].note==null?'':state.records[idx].note) : '';
+  /* รับเฉพาะค่าว่าง (ล้างหมายเหตุ) · ค่าที่อยู่ในรายการ · หรือค่าเดิมของแถวนั้นเอง
+   * ค่าเดิมที่ไม่อยู่ในรายการเกิดได้จริงเมื่อเครื่องอื่นใช้รายการคนละชุด จึงต้องเลือกค้างไว้ได้
+   * ห้ามรับค่าอื่น ไม่งั้นช่องนี้กลายเป็นทางเขียนข้อความอะไรก็ได้ลง note ซึ่งชนกับที่มาของยอด */
+  if(note !== '' && note !== cur && !ENTRY_NOTES.includes(note)){
+    toast('เหตุผลนี้ไม่อยู่ในรายการ');
+    return;
+  }
+  if(idx>-1 && cur === note) return;
+  const now = new Date().toISOString();
+  if(idx>-1){
+    /* ⚠️ รายการที่ยกเลิกไว้ ห้ามปลุกด้วยการใส่หมายเหตุ
+     *    saveEntryValue ปลุกให้เพราะ "พิมพ์ยอดทับ" คือการกู้คืนโดยเจตนา แต่การใส่เหตุผล
+     *    ไม่ใช่ — ปลุกแล้วยอดที่ถูกยกเลิกจะกลับเข้ายอดสะสมเงียบ ๆ โดยคนกดไม่ได้สั่ง (B1) */
+    if(state.records[idx].voided){
+      toast('รายการของวันนี้ถูกยกเลิกไว้ — ถ้าต้องการใช้อีกครั้ง ให้คีย์ยอดทับก่อน');
+      return;
+    }
+    state.records[idx].note = note;
+    state.records[idx].updatedAt = now;
+    state.records[idx].deviceName = state.deviceName;
+    state.records[idx]._dirty = true;
+  } else {
+    if(note === '') return;   // ไม่มีรายการ และไม่ได้เลือกอะไร = ไม่ต้องสร้างแถวเปล่า
+    /* ⚠️ เจ้าของเลือก 27 ต.ค. 2026 ให้เลือกเหตุผลได้แม้ยังไม่คีย์ยอด แล้ว **บันทึกยอดเป็น 0**
+     *    เพราะเหตุผลมักจำเป็นตอน "วันนี้ไม่ได้ผลิต" ซึ่งคือตอนที่ยังไม่มียอด
+     *    ผลที่ตามมาและยอมรับไว้: เกิดรายการยอด 0 ขึ้นจริง ซึ่งมีความหมายว่า "วันนี้ผลิต 0"
+     *    ไม่ใช่ "ยังไม่ได้คีย์" · โผล่ในหน้าแก้ไขรายการ และนับเป็นการคีย์ของวันนั้น
+     *    ยอดสะสมไม่ขยับเพราะบวก 0 · ล้างเหตุผลทีหลังจะเหลือรายการยอด 0 ไว้ ไม่ลบให้ (B1) */
+    state.records.push({id:uid(), date, orderId, process:currentProcess, qty:0, note,
+      deviceName:state.deviceName, createdAt:now, updatedAt:now, voided:false, _dirty:true});
   }
   saveState();
   doSync();
