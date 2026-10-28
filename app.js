@@ -149,6 +149,27 @@ function downloadBlob(content, filename, type){
 const SOURCE_SHIP_IMPORT = 'นำเข้าจากใบส่งงาน';
 const SOURCE_DELIVERY = 'จากใบส่งสินค้า';
 
+/** เหตุผลสำเร็จรูปของช่องหมายเหตุในหน้าคีย์ยอดรายวัน (เจ้าของเลือกชุดนี้ 27 ต.ค. 2026)
+ *  ⚠️ **ที่เดียวที่กำหนดรายการ** — แก้ที่นี่แล้วทั้งโปรแกรมเปลี่ยนตาม (แบบเดียวกับ DEFAULT_PROCESSES)
+ *
+ *  ⚠️ **ห้ามมีค่าใดซ้ำกับ SOURCE_SHIP_IMPORT หรือ SOURCE_DELIVERY สองบรรทัดข้างบน**
+ *     ช่อง `note` ช่องเดียวกันนี้ถูกใช้บอก "ที่มาของยอด" ด้วย — คอลัมน์แหล่งที่มาในหน้าแก้ไขรายการ
+ *     กับตัวกรองของมันตัดสินจากค่านี้ตรง ๆ · **ผลของการซ้ำไม่เหมือนกันสองคำ**
+ *       ซ้ำกับ SOURCE_DELIVERY    → แหล่งที่มาแสดงผิดเป็น "ใบส่งสินค้า" แต่ยังอยู่ในตัวกรอง "กรอกมือ"
+ *       ซ้ำกับ SOURCE_SHIP_IMPORT → หายจากตัวกรอง "กรอกมือ" ไปเลย เพราะตัวกรองนั้นคัดด้วยคำนี้คำเดียว
+ *     ทั้งคู่พังแบบเงียบและตามหายาก · มีเทสคุมทั้งสองคำ
+ *
+ *  ⚠️ **ตัวอักษรแรกของทั้งแปดคำไม่ซ้ำกันเลย** (เ ข ร ค ห ง ผ อ) — คนคีย์ยอดจึงพิมพ์
+ *     ตัวอักษรตัวเดียวแล้วถึงตัวเลือกนั้นทันที (type-ahead ของ `<select>` · ผู้ตรวจ #115
+ *     รันยืนยันด้วยแป้นไทยจริงผ่าน CDP) ซึ่ง **เร็วกว่าไล่ลูกศรมาก** และเป็นทางที่คนใช้จริง
+ *     เพิ่มคำใหม่แล้วตัวอักษรแรกไปซ้ำกับของเดิม ทางนั้นจะกลายเป็นต้องกดซ้ำเพื่อวน
+ *     **พยายามรักษาคุณสมบัตินี้ไว้** (ไม่ถึงกับพัง แค่ช้าลงสำหรับคำที่ซ้ำ)
+ *
+ *  เพิ่ม/แก้คำได้ตามปกติ แต่ **คำที่เคยถูกเลือกไว้แล้วจะยังอยู่ในข้อมูล** — หน้าจอจึงต้อง
+ *  แสดงค่าเดิมที่ไม่อยู่ในรายการได้ด้วย ไม่ใช่ทำให้มันหายไปเงียบ ๆ (ดู renderEntryTable) */
+const ENTRY_NOTES = ['เครื่องเสีย', 'ขาดวัตถุดิบ', 'รองาน/รอชิ้นส่วนจากขั้นก่อน', 'คนไม่พอ',
+                     'หยุดงาน/วันหยุด', 'งานแก้ไข/ซ่อม', 'ผลิตเกินแผน', 'อื่น ๆ'];
+
 /* ---------- รายการขั้นการผลิต — มีที่เดียวคือ DEFAULT_PROCESSES (INVARIANTS A3) ----------
  * เจ้าของสั่ง 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม
  * ข้างล่างคือห้าขั้นตั้งต้น · ขั้นที่เพิ่ม/เปลี่ยนชื่อ/ซ่อนจากหน้าจัดการขั้น ซิงค์มาเก็บใน state.processes
@@ -1852,6 +1873,16 @@ function buildRecordIndex(records){
   for(const r of records){ if(!r.voided) idx[r.orderId+'|'+r.process+'|'+r.date] = r.qty; }
   return idx;
 }
+
+/** หมายเหตุของรายการ ตามกุญแจ orderId|process|date เดียวกับ buildRecordIndex (A2)
+ *  แยก map เพราะตัวนั้นคืนยอด และที่เรียกใช้ต้องการทั้งสองอย่างคนละช่องกัน */
+function buildNoteIndex(records){
+  const idx = {};
+  for(const r of records){
+    if(!r.voided) idx[r.orderId+'|'+r.process+'|'+r.date] = String(r.note==null?'':r.note);
+  }
+  return idx;
+}
 /** เหมือน buildCumMap แต่แยกยอดสะสมออกเป็น "ทันกำหนด" (บันทึกในหรือก่อนวัน deadline ของขั้นนั้น)
  *  กับ "เกินกำหนด" (บันทึกหลังวัน deadline) — ใช้วาดแถบ progress 2 สีในตาราง Dashboard
  *  ต้องใช้ orderById เพราะ deadline คำนวณจาก orderDate ของแต่ละ order เอง ไม่ใช่ค่าคงที่ */
@@ -2055,7 +2086,7 @@ function renderImportHistory(){
         // entry เก่าก่อนมี batchId — จับคู่ด้วยวันที่ที่ฝังอยู่ใน week ("ส่งของ YYYY-MM-DD")
         const m = (entry.week||'').match(/^ส่งของ (\d{4}-\d{2}-\d{2})$/);
         if(m) idsToVoid = state.records
-          .filter(r=>r.process==='shipping' && r.note==='นำเข้าจากใบส่งงาน' && r.date===m[1] && !r.voided)
+          .filter(r=>r.process==='shipping' && r.note===SOURCE_SHIP_IMPORT && r.date===m[1] && !r.voided)
           .map(r=>r.id);
       }
       if(!idsToVoid.length){ toast('ไม่พบรายการที่จะลบ (อาจถูกลบหรือแก้ไขไปแล้ว)'); return; }
@@ -2082,6 +2113,7 @@ function renderEntryTable(){
 
   const allCum = buildCumMap(state.records);
   const recIndex = buildRecordIndex(state.records);
+  const noteIndex = buildNoteIndex(state.records);
   const prevProc = PREV_PROCESS[currentProcess];
   const procLabel = PROCESS_LABELS[currentProcess];
   /* ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (A2) — หน้านี้โชว์อย่างเดียว
@@ -2149,6 +2181,7 @@ function renderEntryTable(){
     if(hideDone && cum>=o.orderQty) return;
     const todayKey = o.id+'|'+currentProcess+'|'+date;
     const todayVal = recIndex[todayKey];
+    const todayNote = noteIndex[todayKey] || '';
     const prevCum = prevProc!=null ? ((allCum[o.id] && allCum[o.id][prevProc]) || 0) : null;
     const warn = prevProc!=null && cum > prevCum;
     const remaining = Math.max(0, o.orderQty - cum);
@@ -2170,13 +2203,26 @@ function renderEntryTable(){
       <td>${isShip
         ? `<span class="ship-today">${todayVal!=null ? numFmt(todayVal) : '—'}</span>`
         : `<input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}">`}</td>
+      ${/* ⚠️ แถวส่งของไม่มีช่องเลือก · note ของแถวนั้นคือคำว่า "จากใบส่งสินค้า" ที่ระบบใช้บอกที่มา
+             ทับแล้วคอลัมน์แหล่งที่มากับตัวกรองของหน้าแก้ไขรายการจะนับยอดนั้นเป็นยอดคีย์มือ
+           ⚠️ ค่าเดิมที่ไม่อยู่ใน ENTRY_NOTES ต้องยังเลือกค้างและอ่านออก — เกิดได้จริงเมื่อ
+             เครื่องอื่นใช้รายการคนละชุด หรือรายการถูกแก้ทีหลัง · ทำให้หายคือทำข้อมูลของคนอื่นหาย */''}
+      <td>${isShip
+        ? `<span class="row-note-na" title="ยอดส่งของคีย์ที่หน้าใบส่งสินค้า — ช่องหมายเหตุของแถวนั้นระบบใช้บอกที่มาของยอด">—</span>`
+        : `<select class="row-note" data-order="${escapeHtml(o.id)}">`
+          + `<option value=""${todayNote ? '' : ' selected'}>— ไม่ระบุ —</option>`
+          + ENTRY_NOTES.map(x=>`<option value="${escapeHtml(x)}"${x===todayNote?' selected':''}>${escapeHtml(x)}</option>`).join('')
+          + (todayNote && !ENTRY_NOTES.includes(todayNote)
+              ? `<option value="${escapeHtml(todayNote)}" selected>${escapeHtml(todayNote)} (ค่าเดิม)</option>` : '')
+          + `</select>`}</td>
     </tr>`;
   });
 
   document.getElementById('entryTable').innerHTML =
     `<thead><tr><th>#</th><th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Order Qty</th><th>Aging<br>(วัน)</th>
-     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>${isShip ? 'ยอดวันนี้<br><span class="small">(แก้ที่ใบส่งสินค้า)</span>' : 'ยอดวันนี้'}</th></tr></thead>
-     <tbody>${rowsHtml || emptyRow(9,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
+     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>${isShip ? 'ยอดวันนี้<br><span class="small">(แก้ที่ใบส่งสินค้า)</span>' : 'ยอดวันนี้'}</th>
+     <th>หมายเหตุ</th></tr></thead>
+     <tbody>${rowsHtml || emptyRow(10,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
 
   document.querySelectorAll('#entryTable input.row-input').forEach(inputEl=>{
     inputEl.addEventListener('keydown', function(e){
@@ -2199,6 +2245,40 @@ function renderEntryTable(){
       }
     });
   });
+
+  /* ช่องเลือกเหตุผล
+   *
+   * ⚠️ วาดตารางใหม่ **เฉพาะตอนที่หน้าตาของตารางเปลี่ยนจริง** — `saveEntryNote()` บอกมาเอง
+   *    เปลี่ยนเหตุผลของรายการที่มีอยู่แล้วไม่ทำให้ช่องไหนบนตารางเปลี่ยนเลย (เหตุผลอยู่ในตัว
+   *    `select` ซึ่งเบราว์เซอร์อัปเดตให้แล้ว) การวาดใหม่จึงเป็นงานเปล่า
+   *    และไม่ใช่งานเปล่าที่ถูก ๆ — ตารางขนาดของจริง (712 ใบ) วาดครั้งละ ~95 ms
+   *    ส่วนการกดลูกศรยิง change **ทุกครั้ง** ต่างจากช่องยอดที่ยิงครั้งเดียวตอนออกจากช่อง
+   *    ไล่เหตุผลจากตัวแรกถึงตัวท้ายจึงเคยเสียเวลาวาดตารางเปล่า ๆ เจ็ดรอบ
+   *    (ผู้ตรวจ #115 วัดได้ 274 ms ต่อการกดลูกศรหนึ่งครั้งบนตาราง 712 ใบ)
+   *
+   * ⚠️ แต่ตอนที่ **ต้อง** วาดก็ต้องวาดจริง ๆ **สามกรณี** — สร้างรายการยอด 0 ขึ้นใหม่ (ช่อง
+   *    "ยอดวันนี้" เปลี่ยนจากว่างเป็น 0) · ค่าเดิมของแถวเป็นค่านอกรายการ ซึ่งตัวเลือก
+   *    "(ค่าเดิม)" จะค้างอยู่ถ้าไม่วาดใหม่ · และตอนที่การเลือกถูกปฏิเสธ (แถวที่ยกเลิกไว้ ·
+   *    ค่านอกรายการ) ซึ่งต้องดีดช่องกลับให้ตรงกับข้อมูล ไม่งั้นจอโชว์ค่าที่ไม่ได้บันทึก */
+  document.querySelectorAll('#entryTable select.row-note').forEach(sel=>{
+    sel.addEventListener('change', function(){
+      const oid = this.dataset.order;
+      const redraw = saveEntryNote(oid, this.value, date);
+      renderRecordEditor();
+      renderSyncBadge();
+      if(!redraw) return;
+      renderEntryTable();
+      /* ⚠️ ต้องคืนโฟกัสเอง — วาดตารางใหม่แล้วอิลิเมนต์เดิมหายไปพร้อมโฟกัส
+       *    Chrome ยิง change **ทุกครั้งที่กดลูกศร** บน select ที่ยังไม่เปิดรายการ
+       *    พอโฟกัสหลุดตั้งแต่ลูกศรครั้งแรก ลูกศรครั้งต่อไปไม่ถึงช่องนี้แล้ว
+       *    เหตุผลตัวที่สองเป็นต้นไปจึงเอื้อมไม่ถึงด้วยแป้นพิมพ์ และค่าที่ค้างอยู่คือ
+       *    ตัวแรกของรายการซึ่งเขาไม่ได้ตั้งใจเลือก (ผู้ตรวจ #115 รันพิสูจน์บน Chromium)
+       *    ช่องยอดมี pendingFocusOrderId คืนให้อยู่แล้ว ช่องนี้ต้องมีของตัวเอง (G2) */
+      const again = document.querySelector(
+        `#entryTable select.row-note[data-order="${CSS.escape(oid)}"]`);
+      if(again) again.focus();
+    });
+  });
 }
 
 /* ---------- Record editor: แก้ไข/ลบรายการที่บันทึกแล้ว ---------- */
@@ -2215,8 +2295,8 @@ function renderRecordEditor(){
   let rows = state.records.filter(r=>showVoided ? true : !r.voided);
   if(dateF) rows = rows.filter(r=>r.date===dateF);
   if(procF) rows = rows.filter(r=>r.process===procF);
-  if(srcF==='ship') rows = rows.filter(r=>r.note==='นำเข้าจากใบส่งงาน');
-  if(srcF==='manual') rows = rows.filter(r=>r.note!=='นำเข้าจากใบส่งงาน');
+  if(srcF==='ship') rows = rows.filter(r=>r.note===SOURCE_SHIP_IMPORT);
+  if(srcF==='manual') rows = rows.filter(r=>r.note!==SOURCE_SHIP_IMPORT);
   if(search){
     rows = rows.filter(r=>{
       const o = orderById[r.orderId];
@@ -2360,6 +2440,86 @@ function saveEntryValue(orderId, rawVal, date){
   }
   saveState();
   doSync();
+}
+
+/** บันทึกเหตุผลของแถวในหน้าคีย์ยอดรายวัน — เขียนช่อง `note` ของรายการวันนั้น
+ *
+ *  คืน `true` เมื่อ **ตารางต้องถูกวาดใหม่** — สร้างรายการยอด 0 ขึ้นใหม่ หรือการเลือกถูกปฏิเสธ
+ *  จนต้องดีดช่องกลับ · คืน `false` เมื่อไม่มีอะไรบนตารางเปลี่ยน (ดูเหตุผลที่ตัวจับ change)
+ *
+ *  ⚠️ ด่านเดียวกับ saveEntryValue — ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (A2)
+ *     และ `note` ของแถว shipping คือคำว่า "จากใบส่งสินค้า" ที่ระบบใช้บอกที่มาของยอด
+ *     ทับแล้วคอลัมน์แหล่งที่มากับตัวกรองของหน้าแก้ไขรายการจะนับยอดนั้นเป็นยอดคีย์มือ
+ *     ด่านนี้ไม่ใช่ของซ้ำกับการไม่วาดช่องเลือก — มันกันทางที่เหลือถ้ามีใครเรียกฟังก์ชันนี้จากที่อื่น */
+function saveEntryNote(orderId, value, date){
+  if(currentProcess === 'shipping'){
+    toast('แถวส่งของแก้ที่หน้าใบส่งสินค้า — หน้านี้แสดงผลอย่างเดียว');
+    return false;   // แถวส่งของไม่มีช่องเลือกอยู่แล้ว ไม่มีอะไรต้องดีดกลับ
+  }
+  const note = String(value==null?'':value);
+  const idx = state.records.findIndex(r=>r.orderId===orderId && r.process===currentProcess && r.date===date);
+  const cur = idx>-1 ? String(state.records[idx].note==null?'':state.records[idx].note) : '';
+  /* ⚠️ ด่าน voided ต้องมา **ก่อน** ด่าน "ค่าไม่เปลี่ยน" ข้างล่าง
+   *    ไม่งั้นการเลือกค่าที่บังเอิญตรงกับเหตุผลเดิมของแถวที่ยกเลิกไว้ จะคืนค่าเงียบสนิท
+   *    ไม่มีข้อความอะไรเลย แล้วช่องเด้งกลับเป็น "— ไม่ระบุ —" เอง (เพราะแถวที่ยกเลิกไม่เข้าดัชนี)
+   *    คนกดจึงไม่รู้ว่าเกิดอะไรขึ้น · เลือกค่าอื่นได้ข้อความเตือน แต่ตัวที่ตรงกับของเก่าไม่ได้
+   *    = พฤติกรรมสองแบบบนการกดเดียวกัน (ผู้ตรวจ #115 รันเจอ)
+   *
+   *    saveEntryValue ปลุกรายการที่ยกเลิกให้เมื่อพิมพ์ยอดทับ เพราะนั่นคือการกู้คืนโดยเจตนา
+   *    แต่การใส่เหตุผลไม่ใช่ — ปลุกแล้วยอดที่ถูกยกเลิกจะกลับเข้ายอดสะสมโดยคนกดไม่ได้สั่ง (B1) */
+  if(idx>-1 && state.records[idx].voided){
+    toast('รายการของวันนี้ถูกยกเลิกไว้ — ถ้าต้องการใช้อีกครั้ง ให้คีย์ยอดทับก่อน');
+    return true;    // ต้องดีดช่องกลับ ไม่งั้นจอโชว์เหตุผลที่ไม่ได้บันทึก
+  }
+  /* รับเฉพาะค่าว่าง (ล้างหมายเหตุ) · ค่าที่อยู่ในรายการ · หรือค่าเดิมของแถวนั้นเอง
+   * ค่าเดิมที่ไม่อยู่ในรายการเกิดได้จริงเมื่อเครื่องอื่นใช้รายการคนละชุด จึงต้องเลือกค้างไว้ได้
+   * ห้ามรับค่าอื่น ไม่งั้นช่องนี้กลายเป็นทางเขียนข้อความอะไรก็ได้ลง note ซึ่งชนกับที่มาของยอด */
+  if(note !== '' && note !== cur && !ENTRY_NOTES.includes(note)){
+    toast('เหตุผลนี้ไม่อยู่ในรายการ');
+    return true;    // เช่นเดียวกัน ต้องดีดกลับ
+  }
+  if(idx>-1 && cur === note) return false;
+  const now = new Date().toISOString();
+  if(idx>-1){
+    /* ⚠️ ห้ามแตะ `deviceName` ตรงนี้ — คอลัมน์ในหน้าแก้ไขรายการชื่อ "เครื่องที่กรอก"
+     *    และสิ่งที่คนไปหาคำตอบคือ **ใครคีย์ยอดจำนวนนี้** · การที่อีกคนมาเลือกเหตุผล
+     *    ให้แถวนั้นแล้วชื่อเครื่องเปลี่ยนตาม = คำตอบนั้นผิดโดยไม่มีใครรู้
+     *
+     *    ⚠️ **สามทางที่แก้ record เขียนช่องนี้ไม่เหมือนกัน และยังไม่มีกฎกลาง**
+     *      `saveEntryValue()` (คีย์ยอดบนหน้านี้) — **ทับ**
+     *      ช่องแก้ยอดในหน้าแก้ไขรายการ — **ไม่ทับ**
+     *      `saveEntryNote()` (ที่นี่) — **ไม่ทับ**
+     *    อย่าสรุปว่ากฎคือ "ใครพิมพ์ยอดเป็นเจ้าของช่องนี้" — ไม่จริงในโค้ดวันนี้
+     *    (ผู้ตรวจ #115 รันยืนยันทั้งสามทาง) · จะตั้งกฎกลางต้องแก้ทั้งสามทางพร้อมกัน
+     *    ไม่ใช่แก้ทางเดียวให้ต่างจากที่เหลือ ซึ่งจะยิ่งเพิ่มความไม่ตรงกัน
+     *
+     *    ตอนสร้างแถวใหม่ข้างล่างยังบันทึกชื่อเครื่องตามเดิม เพราะคนนั้นสร้างแถวจริง
+     *    ผลที่ยอมรับไว้: ไม่มีที่เก็บว่า "ใครเลือกเหตุผล" — จะเก็บต้องเพิ่มคอลัมน์ = แก้ contract
+     *    การซิงค์ + redeploy Apps Script ซึ่งต้องถามเจ้าของก่อน (§7) */
+    state.records[idx].note = note;
+    state.records[idx].updatedAt = now;
+    state.records[idx]._dirty = true;
+    saveState();
+    doSync();
+    /* ⚠️ ค่าเดิมที่เป็นค่านอกรายการต้องวาดใหม่ — ตัวเลือก "(ค่าเดิม)" ถูกวาดไว้เฉพาะตอนที่
+     *    มันเป็นค่าปัจจุบันของแถว · เปลี่ยนไปค่าอื่นแล้วไม่วาดใหม่ มันจะค้างอยู่ในรายการ
+     *    แล้วถ้าคนเลือกย้อนกลับไปหามัน จะได้ข้อความ "เหตุผลนี้ไม่อยู่ในรายการ"
+     *    ทั้งที่มันอยู่บนจอตรงหน้า = จอกับพฤติกรรมไม่ตรงกัน ซึ่งเป็นสิ่งที่การประหยัด
+     *    การวาดใหม่ต้องไม่สร้างขึ้นมา (ผู้ตรวจ #115 รันเจอ) */
+    return cur !== '' && !ENTRY_NOTES.includes(cur);
+  } else {
+    if(note === '') return false;   // ไม่มีรายการ และไม่ได้เลือกอะไร = ไม่ต้องสร้างแถวเปล่า
+    /* ⚠️ เจ้าของเลือก 27 ต.ค. 2026 ให้เลือกเหตุผลได้แม้ยังไม่คีย์ยอด แล้ว **บันทึกยอดเป็น 0**
+     *    เพราะเหตุผลมักจำเป็นตอน "วันนี้ไม่ได้ผลิต" ซึ่งคือตอนที่ยังไม่มียอด
+     *    ผลที่ตามมาและยอมรับไว้: เกิดรายการยอด 0 ขึ้นจริง ซึ่งมีความหมายว่า "วันนี้ผลิต 0"
+     *    ไม่ใช่ "ยังไม่ได้คีย์" · โผล่ในหน้าแก้ไขรายการ และนับเป็นการคีย์ของวันนั้น
+     *    ยอดสะสมไม่ขยับเพราะบวก 0 · ล้างเหตุผลทีหลังจะเหลือรายการยอด 0 ไว้ ไม่ลบให้ (B1) */
+    state.records.push({id:uid(), date, orderId, process:currentProcess, qty:0, note,
+      deviceName:state.deviceName, createdAt:now, updatedAt:now, voided:false, _dirty:true});
+  }
+  saveState();
+  doSync();
+  return true;      // แถวใหม่โผล่บนตาราง ช่อง "ยอดวันนี้" เปลี่ยนจากว่างเป็น 0
 }
 
 /* ---------- Render: ยอดคงคลัง FG ---------- */
