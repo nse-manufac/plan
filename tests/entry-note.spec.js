@@ -395,7 +395,7 @@ test('เหตุผลของเมื่อวาน ต้องตาม�
   const shown = (await box.locator('option:checked').innerText()).trim();
   expect(shown, 'แต่ต้องเห็นเหตุผลที่ค้างอยู่').toContain('เครื่องเสีย');
   // fmtDateTH คืนปี ค.ศ. ไม่ใช่ พ.ศ.
-  expect(shown, 'และต้องบอกว่ามาจากวันไหน').toContain('29/08/2026');
+  expect(shown, 'และต้องบอกว่ามาจากวันไหน').toContain('29/08');   // ป้ายใช้รูปสั้น ตัวเต็มอยู่ใน title
   await expect(box, 'ต้องดูต่างจากของที่ใส่เองวันนี้').toHaveClass(/carried/);
 
   // ⚠️ แค่ดู ต้องไม่เกิดรายการใหม่ของวันนี้
@@ -506,4 +506,34 @@ test('ล้างเหตุผลของวันนี้ เรื่อ�
   const rows = (await readState(page)).records.filter(r => r.date === DAY2);
   expect(rows[0].note, 'ข้อมูลของวันนี้ต้องว่างจริง').toBe('');
   expect(Number(rows[0].qty), 'ยอดต้องไม่ถูกแตะ').toBe(300);
+});
+
+test('ป้ายสืบทอดต้องอ่านได้จริงบนจอ ไม่ใช่ถูกตัดจนวันที่หาย', async ({ page }) => {
+  /* ⚠️ ใบนี้อ้างเองว่า "ต้องบอกด้วยว่ามาจากวันไหน" แต่ผู้ตรวจ #117 วัดแล้วพบว่า
+   *    ช่องกว้าง 160px ตัดวันที่ทิ้งเกือบทุกคำ — คำอ้างจึงเหลืออยู่แค่ใน title ที่ต้องเอาเมาส์ไปชี้
+   *    วัดความกว้างข้อความจริงด้วยฟอนต์ที่ใช้อยู่ เทียบกับที่ว่างในช่อง (หัก padding กับลูกศร)
+   *
+   * ⚠️ เหตุผลที่ยาวที่สุด (รองาน/รอชิ้นส่วนจากขั้นก่อน) ยังถูกตัดโดยรู้ตัว — ตัวเต็มอยู่ใน title
+   *    ข้อนี้จึงวัดเหตุผลขนาดกลางซึ่งเป็นกรณีส่วนใหญ่ */
+  /* ⚠️ ต้องใช้เหตุผลที่ยาวพอจะแยกสองกรณีจริง — วัดมาแล้วป้ายกว้าง 85–209px
+   *    ส่วนที่ว่างในช่องคือ ~132px ที่กล่อง 160px และ ~182px ที่ 210px
+   *    คำสั้น (ขาดวัตถุดิบ 119px) พอดีทั้งสองกรณี เทสจะเขียวโดยไม่ได้วัดอะไร
+   *    'หยุดงาน/วันหยุด' (146px) พอดีเฉพาะกล่องใหญ่ จึงเป็นตัวที่แยกได้ */
+  await open(page, [rec({ note: 'หยุดงาน/วันหยุด' })]);
+  await goDay(page, DAY2);
+
+  const m = await sel(page).evaluate(el => {
+    const cs = getComputedStyle(el);
+    const c = document.createElement('canvas').getContext('2d');
+    c.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    return {
+      text: el.options[el.selectedIndex].text,
+      w: c.measureText(el.options[el.selectedIndex].text).width,
+      // ที่ว่างจริง = ความกว้างใน border ลบ padding สองข้าง ลบที่ของลูกศร select (~20px)
+      avail: el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 20
+    };
+  });
+  expect(m.text, 'ต้องเป็นป้ายสืบทอดที่มีวันที่').toContain('29/08');
+  expect(m.w, `ป้าย "${m.text}" กว้าง ${Math.round(m.w)}px แต่ช่องมีที่ ${Math.round(m.avail)}px`)
+    .toBeLessThanOrEqual(m.avail);
 });

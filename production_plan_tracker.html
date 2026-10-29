@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-29.2">
+<meta name="app-version" content="2026-10-29.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -149,8 +149,13 @@
   /* ช่องที่โชว์เหตุผลซึ่งต่อเนื่องมาจากวันก่อน — ข้อมูลของวันนี้ยังว่าง จึงต้องดูต่างจากของที่ใส่เอง
      (ตัวเอียง + สีจาง + ลูกศรย้อนหน้าคำ) ไม่งั้นคนอ่านจะเข้าใจว่าวันนี้มีคนใส่ไว้แล้ว */
   #entryTable select.row-note.carried{font-style:italic;color:var(--text-dim);}
+  /* ⚠️ ความกว้างต้อง **คงที่** และเท่ากันทั้งช่องเลือกกับช่องว่างของแถวส่งของ
+     ใช้ width:100% ไม่ได้ — คอลัมน์จะกว้างตามเนื้อ แล้วหุบตอนสลับไปขั้นส่งของ
+     (ด่าน #110 จับได้ 235 → 218px) · 210px เลือกจากที่ผู้ตรวจ #117 วัดความกว้างข้อความมา
+     เหตุผลส่วนใหญ่ 120–162px + วันที่สั้น ~45px จึงพอดีเกือบทุกคำ
+     คำที่ยาวสุด (รองาน/รอชิ้นส่วนจากขั้นก่อน 256px) ยังถูกตัด — ตัวเต็มอยู่ใน title */
   #entryTable select.row-note,
-  #entryTable .row-note-na{font-size:13px;padding:7px 4px;width:160px;box-sizing:border-box;display:inline-block;}
+  #entryTable .row-note-na{font-size:13px;padding:7px 4px;width:210px;box-sizing:border-box;display:inline-block;}
   #entryTable .row-note-na{color:var(--text-dim);text-align:center;}
   #entryTable .ship-today{font-size:19px;font-weight:700;width:130px;display:inline-block;
     box-sizing:border-box;padding:10px 8px;}
