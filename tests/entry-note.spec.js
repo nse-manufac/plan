@@ -537,3 +537,34 @@ test('ป้ายสืบทอดต้องอ่านได้จริ�
   expect(m.w, `ป้าย "${m.text}" กว้าง ${Math.round(m.w)}px แต่ช่องมีที่ ${Math.round(m.avail)}px`)
     .toBeLessThanOrEqual(m.avail);
 });
+
+test('เลือกเหตุผลให้วันนี้บนแถวที่คีย์ยอดไว้แล้ว ป้ายสืบทอดต้องหายทันที', async ({ page }) => {
+  /* ⚠️ ทางกลับของข้อข้างบน และเป็น **เส้นทางที่คนใช้จริงมากที่สุด**:
+   *    คีย์ยอดไว้ก่อน (record มีอยู่ หมายเหตุว่าง) แล้วค่อยใส่เหตุผล
+   *    ถ้าไม่วาดใหม่ ช่องจะค้างเป็นตัวเอียงสีจางพร้อม tooltip ของวันเก่า ทั้งที่เป็นของวันนี้แล้ว
+   *    (ผู้ตรวจ #117 รันเจอ · ตรวจสไตล์จริงด้วย ไม่ใช่แค่คลาส เพราะคลาสคือสิ่งที่เราตั้งเอง)
+   *
+   * ⚠️ ต้องเดินผ่านตัวจับ change จริง — เทสที่ยัดสถานะไว้ให้สำเร็จแล้วค่อยวาด
+   *    จะไม่เคยแตะเงื่อนไขนี้เลย */
+  await open(page, [rec({ note: 'เครื่องเสีย' }),
+                    rec({ id: 'R9', date: DAY2, qty: 300, note: '' })]);
+  await goDay(page, DAY2);
+  await expect(sel(page), 'ตั้งต้นต้องเป็นป้ายสืบทอด').toHaveClass(/carried/);
+
+  await pick(page, 'คนไม่พอ');
+
+  const box = sel(page);
+  await expect(box, 'เลือกของวันนี้แล้ว ต้องไม่ใช่ป้ายสืบทอดอีก').not.toHaveClass(/carried/);
+  const look = await box.evaluate(el => ({
+    italic: getComputedStyle(el).fontStyle,
+    title: el.getAttribute('title') || '',
+    first: el.options[0].text
+  }));
+  expect(look.italic, 'ต้องไม่เอียงแล้ว').toBe('normal');
+  expect(look.title, 'tooltip ของวันเก่าต้องไม่ค้าง').toBe('');
+  expect(look.first, 'ตัวเลือกแรกต้องกลับเป็นไม่ระบุ').toBe('— ไม่ระบุ —');
+
+  const rows = (await readState(page)).records.filter(r => r.date === DAY2);
+  expect(rows[0].note).toBe('คนไม่พอ');
+  expect(Number(rows[0].qty), 'ยอดต้องไม่ถูกแตะ').toBe(300);
+});
