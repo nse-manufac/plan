@@ -394,7 +394,8 @@ test('เหตุผลของเมื่อวาน ต้องตาม�
   expect(await box.inputValue(), 'ข้อมูลของวันนี้ยังว่าง ค่าที่เลือกจึงต้องเป็นค่าว่าง').toBe('');
   const shown = (await box.locator('option:checked').innerText()).trim();
   expect(shown, 'แต่ต้องเห็นเหตุผลที่ค้างอยู่').toContain('เครื่องเสีย');
-  expect(shown, 'และต้องบอกว่ามาจากวันไหน').toContain('29/08/2026')   // fmtDateTH คืนปี ค.ศ. ไม่ใช่ พ.ศ.;
+  // fmtDateTH คืนปี ค.ศ. ไม่ใช่ พ.ศ.
+  expect(shown, 'และต้องบอกว่ามาจากวันไหน').toContain('29/08/2026');
   await expect(box, 'ต้องดูต่างจากของที่ใส่เองวันนี้').toHaveClass(/carried/);
 
   // ⚠️ แค่ดู ต้องไม่เกิดรายการใหม่ของวันนี้
@@ -484,4 +485,25 @@ test('ใส่เหตุผลของวันนี้เอง ต้อ�
   const box = sel(page);
   expect(await box.inputValue(), 'ต้องเป็นของวันนี้').toBe('คนไม่พอ');
   await expect(box, 'ไม่ใช่ของที่สืบทอดมา').not.toHaveClass(/carried/);
+});
+
+test('ล้างเหตุผลของวันนี้ เรื่องที่ยังค้างอยู่ต้องกลับมาโชว์ทันที ไม่ต้องสลับวัน', async ({ page }) => {
+  /* ⚠️ กรณีที่สี่ที่ต้องวาดตารางใหม่ (ผู้ตรวจ #117 รันเจอ)
+   *    ข้อมูลของวันนี้ว่างแล้ว ช่องจึงต้องกลับไปโชว์เรื่องที่ค้างจากวันก่อน
+   *    ถ้าไม่วาดใหม่ ช่องค้างเป็น "— ไม่ระบุ —" = จอบอกว่าไม่มีอะไรค้าง ทั้งที่เรื่องเดิมยังไม่ปิด
+   *    และคนที่เพิ่งล้างช่องเองคือคนที่อ่านผิดง่ายที่สุด */
+  await open(page, [rec({ note: 'เครื่องเสีย' }),
+                    rec({ id: 'R9', date: DAY2, qty: 300, note: 'คนไม่พอ' })]);
+  await goDay(page, DAY2);
+  expect(await sel(page).inputValue(), 'ตั้งต้นเป็นของวันนี้').toBe('คนไม่พอ');
+
+  await pick(page, '');   // ล้างของวันนี้
+
+  const box = sel(page);
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'ต้องกลับไปโชว์เรื่องที่ค้างทันที').toContain('เครื่องเสีย');
+  await expect(box, 'และต้องติดป้ายว่าต่อเนื่อง').toHaveClass(/carried/);
+  const rows = (await readState(page)).records.filter(r => r.date === DAY2);
+  expect(rows[0].note, 'ข้อมูลของวันนี้ต้องว่างจริง').toBe('');
+  expect(Number(rows[0].qty), 'ยอดต้องไม่ถูกแตะ').toBe(300);
 });
