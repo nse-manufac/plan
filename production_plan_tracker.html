@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-28.3">
+<meta name="app-version" content="2026-10-29.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -146,6 +146,9 @@
      ไปขั้นส่งของ แล้วความกว้างที่เหลือไปดันคอลัมน์อื่นขยับทั้งตาราง
      เป็นของที่คนคีย์ยอดเห็นทุกครั้งที่สลับขั้น — ตระกูลเดียวกับที่ผู้ตรวจ #110 วัดได้ 246→207→246px
      (เทสคุมไว้ที่ tests/entry-ui.spec.js และ tests/entry-note.spec.js) */
+  /* ช่องที่โชว์เหตุผลซึ่งต่อเนื่องมาจากวันก่อน — ข้อมูลของวันนี้ยังว่าง จึงต้องดูต่างจากของที่ใส่เอง
+     (ตัวเอียง + สีจาง + ลูกศรย้อนหน้าคำ) ไม่งั้นคนอ่านจะเข้าใจว่าวันนี้มีคนใส่ไว้แล้ว */
+  #entryTable select.row-note.carried{font-style:italic;color:var(--text-dim);}
   #entryTable select.row-note,
   #entryTable .row-note-na{font-size:13px;padding:7px 4px;width:160px;box-sizing:border-box;display:inline-block;}
   #entryTable .row-note-na{color:var(--text-dim);text-align:center;}

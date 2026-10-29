@@ -168,7 +168,19 @@ const SOURCE_DELIVERY = 'จากใบส่งสินค้า';
  *  เพิ่ม/แก้คำได้ตามปกติ แต่ **คำที่เคยถูกเลือกไว้แล้วจะยังอยู่ในข้อมูล** — หน้าจอจึงต้อง
  *  แสดงค่าเดิมที่ไม่อยู่ในรายการได้ด้วย ไม่ใช่ทำให้มันหายไปเงียบ ๆ (ดู renderEntryTable) */
 const ENTRY_NOTES = ['เครื่องเสีย', 'ขาดวัตถุดิบ', 'รองาน/รอชิ้นส่วนจากขั้นก่อน', 'คนไม่พอ',
-                     'หยุดงาน/วันหยุด', 'งานแก้ไข/ซ่อม', 'ผลิตเกินแผน', 'อื่น ๆ'];
+                     'หยุดงาน/วันหยุด', 'งานแก้ไข/ซ่อม', 'ผลิตเกินแผน', 'อื่น ๆ', 'เคลียร์แล้ว'];
+
+/** คำปิดเรื่องของช่องหมายเหตุ (เจ้าของเลือก 29 ต.ค. 2026)
+ *
+ *  เหตุผลที่ใส่ไว้วันหนึ่ง **สืบทอดไปแสดงในวันถัด ๆ ไป** จนกว่าจะมีคนเปลี่ยนหรือกดปิด
+ *  (เจ้าของสั่ง — ของเดิมหายทุกครั้งที่เปลี่ยนวัน เพราะหมายเหตุผูกกับ `orderId|process|date`)
+ *  คำนี้คือตัวปิด · เป็นสมาชิกของ `ENTRY_NOTES` เหมือนคำอื่น จึงถูกบันทึกลงรายการของวันที่กดปิด
+ *  = **มีหลักฐานว่าใครปิดเมื่อไหร่** ต่างจากการล้างเป็นค่าว่าง ซึ่งแยกจาก "ยังไม่เคยใส่" ไม่ออก
+ *
+ *  ⚠️ ขึ้นต้นด้วย "เ" ซ้ำกับ `เครื่องเสีย` — type-ahead จึงต้องกด เ สองครั้งถึงจะถึงคำนี้
+ *     (ดูคุณสมบัติตัวอักษรแรกไม่ซ้ำข้างบน) · เจ้าของเลือกถ้อยคำนี้เอง 29 ต.ค. 2026
+ *     เปลี่ยนเป็นคำที่ขึ้นต้นด้วยตัวอื่น (เช่น 'ปกติแล้ว' · 'จบแล้ว') ได้ที่บรรทัดนี้จุดเดียว */
+const NOTE_CLEARED = 'เคลียร์แล้ว';
 
 /* ---------- รายการขั้นการผลิต — มีที่เดียวคือ DEFAULT_PROCESSES (INVARIANTS A3) ----------
  * เจ้าของสั่ง 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม
@@ -1883,6 +1895,36 @@ function buildNoteIndex(records){
   }
   return idx;
 }
+
+/** เหตุผลล่าสุดของแต่ละ `orderId|process` ที่ยัง "ค้างอยู่" ณ วันที่เลือกบนจอ
+ *  → `{note, date}` ของวันที่ใส่ไว้ หรือ `undefined` ถ้าไม่มีอะไรค้าง
+ *
+ *  เจ้าของสั่ง 29 ต.ค. 2026 — เหตุผลต้องตามไปวันถัด ๆ ไปจนกว่าจะเปลี่ยนหรือกดปิด
+ *  ไม่งั้นต้องมาใส่ใหม่ทุกวันทั้งที่เรื่องเดิมยังไม่จบ
+ *
+ *  ⚠️ **นับเฉพาะวันที่ไม่เกินวันที่เลือกอยู่** · ย้อนไปดูวันเก่าต้องไม่เห็นเหตุผลที่เพิ่งใส่ทีหลัง
+ *     ไม่งั้นจอจะเล่าอดีตด้วยข้อมูลของอนาคต (C1 — วันที่เป็นวันปฏิทินล้วน เทียบเป็นข้อความได้)
+ *  ⚠️ **ข้ามรายการที่ยกเลิกไว้ และข้ามหมายเหตุที่ว่าง** · ว่าง = "ไม่เคยใส่" ไม่ใช่ "ปิดแล้ว"
+ *     เพราะรายการที่เกิดจากการคีย์ยอดตามปกติก็มี `note` ว่าง ถ้านับว่าเป็นการปิด
+ *     เรื่องที่ยังไม่จบจะหายไปทุกวันที่มีคนคีย์ยอด ซึ่งคือทุกวัน
+ *  ⚠️ **ตัวปิดคือ `NOTE_CLEARED`** — เจอเป็นตัวล่าสุดแล้วถือว่าไม่มีอะไรค้าง
+ *     (ยังคืนค่าออกไปด้วย เพื่อให้ผู้เรียกแยกได้ว่า "ปิดแล้ว" กับ "ไม่เคยมี")
+ *  ⚠️ วันเดียวกันซ้ำกัน (สองรายการกุญแจเดียวกัน) หยิบตัวที่เจอทีหลังตาม `buildNoteIndex`
+ *     เพื่อให้จอฝั่งสืบทอดกับฝั่งของวันนั้นเองเล่าเรื่องเดียวกัน */
+function buildCarryIndex(records, onDate){
+  const idx = {};
+  for(const r of records){
+    if(r.voided) continue;
+    const note = String(r.note==null?'':r.note);
+    if(!note) continue;
+    const d = String(r.date==null?'':r.date);
+    if(!d || d > onDate) continue;
+    const key = r.orderId+'|'+r.process;
+    const cur = idx[key];
+    if(!cur || d >= cur.date) idx[key] = {note, date: d};
+  }
+  return idx;
+}
 /** เหมือน buildCumMap แต่แยกยอดสะสมออกเป็น "ทันกำหนด" (บันทึกในหรือก่อนวัน deadline ของขั้นนั้น)
  *  กับ "เกินกำหนด" (บันทึกหลังวัน deadline) — ใช้วาดแถบ progress 2 สีในตาราง Dashboard
  *  ต้องใช้ orderById เพราะ deadline คำนวณจาก orderDate ของแต่ละ order เอง ไม่ใช่ค่าคงที่ */
@@ -2114,6 +2156,7 @@ function renderEntryTable(){
   const allCum = buildCumMap(state.records);
   const recIndex = buildRecordIndex(state.records);
   const noteIndex = buildNoteIndex(state.records);
+  const carryIndex = buildCarryIndex(state.records, date);
   const prevProc = PREV_PROCESS[currentProcess];
   const procLabel = PROCESS_LABELS[currentProcess];
   /* ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (A2) — หน้านี้โชว์อย่างเดียว
@@ -2182,6 +2225,11 @@ function renderEntryTable(){
     const todayKey = o.id+'|'+currentProcess+'|'+date;
     const todayVal = recIndex[todayKey];
     const todayNote = noteIndex[todayKey] || '';
+    /* เหตุผลที่ค้างมาจากวันก่อน — ใช้เฉพาะตอนวันนี้ยังไม่ได้ใส่เอง
+     * ⚠️ ห้ามโชว์เป็นค่าที่ถูกเลือกไว้เฉย ๆ · ต้องบอกด้วยว่ามาจากวันไหน ไม่งั้นคนอ่านจะเข้าใจว่า
+     *    มีคนใส่ไว้ให้วันนี้แล้ว ทั้งที่ข้อมูลของวันนี้ยังว่าง (จอต้องไม่เล่าเกินข้อมูล) */
+    const carry = todayNote ? null : carryIndex[o.id+'|'+currentProcess];
+    const carried = carry && carry.note !== NOTE_CLEARED ? carry : null;
     const prevCum = prevProc!=null ? ((allCum[o.id] && allCum[o.id][prevProc]) || 0) : null;
     const warn = prevProc!=null && cum > prevCum;
     const remaining = Math.max(0, o.orderQty - cum);
@@ -2209,8 +2257,10 @@ function renderEntryTable(){
              เครื่องอื่นใช้รายการคนละชุด หรือรายการถูกแก้ทีหลัง · ทำให้หายคือทำข้อมูลของคนอื่นหาย */''}
       <td>${isShip
         ? `<span class="row-note-na" title="ยอดส่งของคีย์ที่หน้าใบส่งสินค้า — ช่องหมายเหตุของแถวนั้นระบบใช้บอกที่มาของยอด">—</span>`
-        : `<select class="row-note" data-order="${escapeHtml(o.id)}">`
-          + `<option value=""${todayNote ? '' : ' selected'}>— ไม่ระบุ —</option>`
+        : `<select class="row-note${carried ? ' carried' : ''}" data-order="${escapeHtml(o.id)}"`
+          + `${carried ? ` title="ต่อเนื่องมาจากวันที่ ${escapeHtml(fmtDateTH(carried.date))} — เลือกใหม่เพื่อเปลี่ยน หรือเลือก ${escapeHtml(NOTE_CLEARED)} เพื่อปิดเรื่องนี้"` : ''}>`
+          + `<option value=""${todayNote ? '' : ' selected'}>`
+          + `${carried ? `↩ ${escapeHtml(carried.note)} (${escapeHtml(fmtDateTH(carried.date))})` : '— ไม่ระบุ —'}</option>`
           + ENTRY_NOTES.map(x=>`<option value="${escapeHtml(x)}"${x===todayNote?' selected':''}>${escapeHtml(x)}</option>`).join('')
           + (todayNote && !ENTRY_NOTES.includes(todayNote)
               ? `<option value="${escapeHtml(todayNote)}" selected>${escapeHtml(todayNote)} (ค่าเดิม)</option>` : '')

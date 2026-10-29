@@ -366,3 +366,122 @@ test('คำบอกที่มาของยอด ต้องเทีย�
       `ห้ามเทียบ note กับข้อความดิบ "${word}" — ให้ใช้ค่าคงที่`).toBe('');
   }
 });
+
+// ── เหตุผลต่อเนื่องข้ามวัน (เจ้าของสั่ง 29 ต.ค. 2026) ──────────────────────
+//
+// ของเดิมหายทุกครั้งที่เปลี่ยนวัน เพราะหมายเหตุผูกกับกุญแจ orderId|process|date
+// ตอนนี้วันที่ยังไม่ได้ใส่เอง จะ **โชว์** เหตุผลล่าสุดที่ยังค้างอยู่ของใบ+ขั้นนั้น
+// จนกว่าจะมีคนเลือกใหม่ หรือเลือกคำปิดเรื่อง
+//
+// ⚠️ เป็นการ "โชว์" ไม่ใช่ "บันทึกซ้ำทุกวัน" — ถ้าบันทึกซ้ำจะเกิดรายการยอด 0
+//    ของทุกใบทุกวัน ซึ่งทำให้ข้อมูลบวมและรายงานอ่านว่าผลิต 0 ทั้งที่ไม่มีใครแตะ
+
+/** วันถัดจาก DATE — ใช้ทดสอบการข้ามวัน */
+const DAY2 = '2026-08-30';
+const DAY0 = '2026-08-28';
+
+/** เลื่อนวันบนจอ แล้วรอให้ตารางวาดใหม่ */
+async function goDay(page, d) {
+  await page.fill('#entryDate', d);
+  await page.waitForTimeout(250);
+}
+
+test('เหตุผลของเมื่อวาน ต้องตามมาโชว์ในวันถัดไป พร้อมบอกว่ามาจากวันไหน', async ({ page }) => {
+  await open(page, [rec({ note: 'เครื่องเสีย' })]);
+  await goDay(page, DAY2);
+
+  const box = sel(page);
+  expect(await box.inputValue(), 'ข้อมูลของวันนี้ยังว่าง ค่าที่เลือกจึงต้องเป็นค่าว่าง').toBe('');
+  const shown = (await box.locator('option:checked').innerText()).trim();
+  expect(shown, 'แต่ต้องเห็นเหตุผลที่ค้างอยู่').toContain('เครื่องเสีย');
+  expect(shown, 'และต้องบอกว่ามาจากวันไหน').toContain('29/08/2026')   // fmtDateTH คืนปี ค.ศ. ไม่ใช่ พ.ศ.;
+  await expect(box, 'ต้องดูต่างจากของที่ใส่เองวันนี้').toHaveClass(/carried/);
+
+  // ⚠️ แค่ดู ต้องไม่เกิดรายการใหม่ของวันนี้
+  const st = await readState(page);
+  expect(st.records.length, 'การโชว์ต่อเนื่องต้องไม่บันทึกอะไรเพิ่ม').toBe(1);
+  expect(st.records[0].date).toBe(DATE);
+});
+
+test('เลือกเหตุผลใหม่ในวันถัดไป ต้องบันทึกของวันนั้น ไม่ไปแก้ของวันเก่า', async ({ page }) => {
+  await open(page, [rec({ note: 'เครื่องเสีย' })]);
+  await goDay(page, DAY2);
+  await pick(page, 'ขาดวัตถุดิบ');
+
+  const st = await readState(page);
+  const byDate = {};
+  st.records.filter(r => r.orderId === OID).forEach(r => { byDate[r.date] = r; });
+  expect(byDate[DATE].note, 'ของวันเก่าต้องไม่ถูกแตะ').toBe('เครื่องเสีย');
+  expect(byDate[DAY2].note, 'ของวันใหม่ต้องเป็นค่าที่เพิ่งเลือก').toBe('ขาดวัตถุดิบ');
+  expect(Number(byDate[DAY2].qty), 'วันใหม่ยังไม่ได้คีย์ยอด จึงเป็น 0').toBe(0);
+});
+
+test('กดปิดเรื่องแล้ว วันถัด ๆ ไปต้องไม่ตามมาอีก', async ({ page }) => {
+  await open(page, [rec({ note: 'เครื่องเสีย' })]);
+  await goDay(page, DAY2);
+  await pick(page, 'เคลียร์แล้ว');
+
+  // วันที่กดปิด ยังเห็นคำปิดอยู่ — เป็นหลักฐานว่าใครปิดเมื่อไหร่
+  expect(await sel(page).inputValue(), 'วันที่กดปิดต้องเก็บคำปิดไว้').toBe('เคลียร์แล้ว');
+
+  await goDay(page, '2026-08-31');
+  const box = sel(page);
+  expect(await box.inputValue(), 'วันถัดไปต้องว่าง').toBe('');
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'และต้องไม่เห็นเหตุผลเก่าตามมาอีก').toBe('— ไม่ระบุ —');
+  await expect(box, 'และต้องไม่ติดป้ายต่อเนื่อง').not.toHaveClass(/carried/);
+});
+
+test('ย้อนไปดูวันก่อนหน้า ต้องไม่เห็นเหตุผลที่เพิ่งใส่ทีหลัง (C1)', async ({ page }) => {
+  /* ⚠️ ถ้าไม่กรองวัน จอจะเล่าอดีตด้วยข้อมูลของอนาคต — คนย้อนไปดูว่า "วันนั้นเกิดอะไร"
+   *    แล้วเห็นเหตุผลที่เพิ่งใส่เมื่อวาน จะสรุปผิดว่าวันนั้นก็เครื่องเสียเหมือนกัน */
+  await open(page, [rec({ note: 'เครื่องเสีย' })]);
+  await goDay(page, DAY0);
+
+  const box = sel(page);
+  expect(await box.inputValue()).toBe('');
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'วันก่อนหน้าต้องไม่เห็นเหตุผลของวันหลัง').toBe('— ไม่ระบุ —');
+});
+
+test('เหตุผลต้องไม่ข้ามขั้นตอน และไม่ข้ามใบ', async ({ page }) => {
+  await open(page, [rec({ note: 'เครื่องเสีย' })]);
+  await goDay(page, DAY2);
+  expect((await sel(page).locator('option:checked').innerText()).trim(),
+    'ขั้นเดิมต้องเห็น').toContain('เครื่องเสีย');
+
+  await page.click('#procBtn-assembly');
+  await page.waitForTimeout(250);
+  expect((await sel(page).locator('option:checked').innerText()).trim(),
+    'ขั้นอื่นต้องไม่เห็น').toBe('— ไม่ระบุ —');
+});
+
+test('รายการที่ถูกยกเลิก ต้องไม่ส่งเหตุผลต่อไปวันถัดไป (B1)', async ({ page }) => {
+  /* ยกเลิกรายการ = ถอนสิ่งที่บันทึกไว้ · ถ้าเหตุผลของมันยังตามไปวันถัด ๆ ไป
+   * การยกเลิกก็ไม่มีผลจริงในสายตาคนใช้ */
+  await open(page, [rec({ note: 'เครื่องเสีย', voided: true })]);
+  await goDay(page, DAY2);
+  expect((await sel(page).locator('option:checked').innerText()).trim(),
+    'ของที่ยกเลิกไว้ต้องไม่ตามมา').toBe('— ไม่ระบุ —');
+});
+
+test('รายการที่คีย์ยอดตามปกติ (หมายเหตุว่าง) ต้องไม่ปิดเรื่องที่ยังค้างอยู่', async ({ page }) => {
+  /* ⚠️ กับดักหลักของกติกานี้ — รายการที่เกิดจากการคีย์ยอดมี note ว่าง
+   *    ถ้านับว่าว่าง = ปิดเรื่อง เรื่องที่ยังไม่จบจะหายทุกวันที่มีคนคีย์ยอด ซึ่งคือทุกวัน
+   *    ต้องปิดด้วยการเลือกคำปิดเท่านั้น */
+  await open(page, [rec({ note: 'เครื่องเสีย' }),
+                    rec({ id: 'R9', date: DAY2, qty: 300, note: '' })]);
+  await goDay(page, '2026-08-31');
+  expect((await sel(page).locator('option:checked').innerText()).trim(),
+    'เรื่องเดิมต้องยังค้างอยู่').toContain('เครื่องเสีย');
+});
+
+test('ใส่เหตุผลของวันนี้เอง ต้องชนะของที่ค้างมา และไม่ติดป้ายต่อเนื่อง', async ({ page }) => {
+  await open(page, [rec({ note: 'เครื่องเสีย' }),
+                    rec({ id: 'R9', date: DAY2, qty: 300, note: 'คนไม่พอ' })]);
+  await goDay(page, DAY2);
+
+  const box = sel(page);
+  expect(await box.inputValue(), 'ต้องเป็นของวันนี้').toBe('คนไม่พอ');
+  await expect(box, 'ไม่ใช่ของที่สืบทอดมา').not.toHaveClass(/carried/);
+});
