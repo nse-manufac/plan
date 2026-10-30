@@ -366,3 +366,242 @@ test('คำบอกที่มาของยอด ต้องเทีย�
       `ห้ามเทียบ note กับข้อความดิบ "${word}" — ให้ใช้ค่าคงที่`).toBe('');
   }
 });
+
+// ── เหตุผลต่อเนื่องข้ามวัน (เจ้าของสั่ง 29 ต.ค. 2026) ──────────────────────
+//
+// ของเดิมหายทุกครั้งที่เปลี่ยนวัน เพราะหมายเหตุผูกกับกุญแจ orderId|process|date
+// ตอนนี้วันที่ยังไม่ได้ใส่เอง จะ **โชว์** เหตุผลล่าสุดที่ยังค้างอยู่ของใบ+ขั้นนั้น
+// จนกว่าจะมีคนเลือกใหม่ หรือเลือกคำปิดเรื่อง
+//
+// ⚠️ เป็นการ "โชว์" ไม่ใช่ "บันทึกซ้ำทุกวัน" — ถ้าบันทึกซ้ำจะเกิดรายการยอด 0
+//    ของทุกใบทุกวัน ซึ่งทำให้ข้อมูลบวมและรายงานอ่านว่าผลิต 0 ทั้งที่ไม่มีใครแตะ
+
+/** วันถัดจาก DATE — ใช้ทดสอบการข้ามวัน */
+const DAY2 = '2026-08-30';
+const DAY0 = '2026-08-28';
+
+/** เลื่อนวันบนจอ แล้วรอให้ตารางวาดใหม่ */
+async function goDay(page, d) {
+  await page.fill('#entryDate', d);
+  await page.waitForTimeout(250);
+}
+
+test('เหตุผลของเมื่อวาน ต้องตามมาโชว์ในวันถัดไป พร้อมบอกว่ามาจากวันไหน', async ({ page }) => {
+  await open(page, [rec({ note: 'เครื่องเสีย' })]);
+  await goDay(page, DAY2);
+
+  const box = sel(page);
+  expect(await box.inputValue(), 'ข้อมูลของวันนี้ยังว่าง ค่าที่เลือกจึงต้องเป็นค่าว่าง').toBe('');
+  const shown = (await box.locator('option:checked').innerText()).trim();
+  expect(shown, 'แต่ต้องเห็นเหตุผลที่ค้างอยู่').toContain('เครื่องเสีย');
+  // fmtDateTH คืนปี ค.ศ. ไม่ใช่ พ.ศ.
+  expect(shown, 'และต้องบอกว่ามาจากวันไหน').toContain('29/08');   // ป้ายใช้รูปสั้น ตัวเต็มอยู่ใน title
+  await expect(box, 'ต้องดูต่างจากของที่ใส่เองวันนี้').toHaveClass(/carried/);
+
+  // ⚠️ แค่ดู ต้องไม่เกิดรายการใหม่ของวันนี้
+  const st = await readState(page);
+  expect(st.records.length, 'การโชว์ต่อเนื่องต้องไม่บันทึกอะไรเพิ่ม').toBe(1);
+  expect(st.records[0].date).toBe(DATE);
+});
+
+test('เลือกเหตุผลใหม่ในวันถัดไป ต้องบันทึกของวันนั้น ไม่ไปแก้ของวันเก่า', async ({ page }) => {
+  await open(page, [rec({ note: 'เครื่องเสีย' })]);
+  await goDay(page, DAY2);
+  await pick(page, 'ขาดวัตถุดิบ');
+
+  const st = await readState(page);
+  const byDate = {};
+  st.records.filter(r => r.orderId === OID).forEach(r => { byDate[r.date] = r; });
+  expect(byDate[DATE].note, 'ของวันเก่าต้องไม่ถูกแตะ').toBe('เครื่องเสีย');
+  expect(byDate[DAY2].note, 'ของวันใหม่ต้องเป็นค่าที่เพิ่งเลือก').toBe('ขาดวัตถุดิบ');
+  expect(Number(byDate[DAY2].qty), 'วันใหม่ยังไม่ได้คีย์ยอด จึงเป็น 0').toBe(0);
+});
+
+test('กดปิดเรื่องแล้ว วันถัด ๆ ไปต้องไม่ตามมาอีก', async ({ page }) => {
+  await open(page, [rec({ note: 'เครื่องเสีย' })]);
+  await goDay(page, DAY2);
+  await pick(page, 'เคลียร์แล้ว');
+
+  // วันที่กดปิด ยังเห็นคำปิดอยู่ — เป็นหลักฐานว่าใครปิดเมื่อไหร่
+  expect(await sel(page).inputValue(), 'วันที่กดปิดต้องเก็บคำปิดไว้').toBe('เคลียร์แล้ว');
+
+  await goDay(page, '2026-08-31');
+  const box = sel(page);
+  expect(await box.inputValue(), 'วันถัดไปต้องว่าง').toBe('');
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'และต้องไม่เห็นเหตุผลเก่าตามมาอีก').toBe('— ไม่ระบุ —');
+  await expect(box, 'และต้องไม่ติดป้ายต่อเนื่อง').not.toHaveClass(/carried/);
+});
+
+test('ย้อนไปดูวันก่อนหน้า ต้องไม่เห็นเหตุผลที่เพิ่งใส่ทีหลัง (C1)', async ({ page }) => {
+  /* ⚠️ ถ้าไม่กรองวัน จอจะเล่าอดีตด้วยข้อมูลของอนาคต — คนย้อนไปดูว่า "วันนั้นเกิดอะไร"
+   *    แล้วเห็นเหตุผลที่เพิ่งใส่เมื่อวาน จะสรุปผิดว่าวันนั้นก็เครื่องเสียเหมือนกัน */
+  await open(page, [rec({ note: 'เครื่องเสีย' })]);
+  await goDay(page, DAY0);
+
+  const box = sel(page);
+  expect(await box.inputValue()).toBe('');
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'วันก่อนหน้าต้องไม่เห็นเหตุผลของวันหลัง').toBe('— ไม่ระบุ —');
+});
+
+test('เหตุผลต้องไม่ข้ามขั้นตอน และไม่ข้ามใบ', async ({ page }) => {
+  await open(page, [rec({ note: 'เครื่องเสีย' })]);
+  await goDay(page, DAY2);
+  expect((await sel(page).locator('option:checked').innerText()).trim(),
+    'ขั้นเดิมต้องเห็น').toContain('เครื่องเสีย');
+
+  await page.click('#procBtn-assembly');
+  await page.waitForTimeout(250);
+  expect((await sel(page).locator('option:checked').innerText()).trim(),
+    'ขั้นอื่นต้องไม่เห็น').toBe('— ไม่ระบุ —');
+});
+
+test('รายการที่ถูกยกเลิก ต้องไม่ส่งเหตุผลต่อไปวันถัดไป (B1)', async ({ page }) => {
+  /* ยกเลิกรายการ = ถอนสิ่งที่บันทึกไว้ · ถ้าเหตุผลของมันยังตามไปวันถัด ๆ ไป
+   * การยกเลิกก็ไม่มีผลจริงในสายตาคนใช้ */
+  await open(page, [rec({ note: 'เครื่องเสีย', voided: true })]);
+  await goDay(page, DAY2);
+  expect((await sel(page).locator('option:checked').innerText()).trim(),
+    'ของที่ยกเลิกไว้ต้องไม่ตามมา').toBe('— ไม่ระบุ —');
+});
+
+test('รายการที่คีย์ยอดตามปกติ (หมายเหตุว่าง) ต้องไม่ปิดเรื่องที่ยังค้างอยู่', async ({ page }) => {
+  /* ⚠️ กับดักหลักของกติกานี้ — รายการที่เกิดจากการคีย์ยอดมี note ว่าง
+   *    ถ้านับว่าว่าง = ปิดเรื่อง เรื่องที่ยังไม่จบจะหายทุกวันที่มีคนคีย์ยอด ซึ่งคือทุกวัน
+   *    ต้องปิดด้วยการเลือกคำปิดเท่านั้น */
+  await open(page, [rec({ note: 'เครื่องเสีย' }),
+                    rec({ id: 'R9', date: DAY2, qty: 300, note: '' })]);
+  await goDay(page, '2026-08-31');
+  expect((await sel(page).locator('option:checked').innerText()).trim(),
+    'เรื่องเดิมต้องยังค้างอยู่').toContain('เครื่องเสีย');
+});
+
+test('ใส่เหตุผลของวันนี้เอง ต้องชนะของที่ค้างมา และไม่ติดป้ายต่อเนื่อง', async ({ page }) => {
+  await open(page, [rec({ note: 'เครื่องเสีย' }),
+                    rec({ id: 'R9', date: DAY2, qty: 300, note: 'คนไม่พอ' })]);
+  await goDay(page, DAY2);
+
+  const box = sel(page);
+  expect(await box.inputValue(), 'ต้องเป็นของวันนี้').toBe('คนไม่พอ');
+  await expect(box, 'ไม่ใช่ของที่สืบทอดมา').not.toHaveClass(/carried/);
+});
+
+test('ล้างเหตุผลของวันนี้ เรื่องที่ยังค้างอยู่ต้องกลับมาโชว์ทันที ไม่ต้องสลับวัน', async ({ page }) => {
+  /* ⚠️ กรณีที่สี่ที่ต้องวาดตารางใหม่ (ผู้ตรวจ #117 รันเจอ)
+   *    ข้อมูลของวันนี้ว่างแล้ว ช่องจึงต้องกลับไปโชว์เรื่องที่ค้างจากวันก่อน
+   *    ถ้าไม่วาดใหม่ ช่องค้างเป็น "— ไม่ระบุ —" = จอบอกว่าไม่มีอะไรค้าง ทั้งที่เรื่องเดิมยังไม่ปิด
+   *    และคนที่เพิ่งล้างช่องเองคือคนที่อ่านผิดง่ายที่สุด */
+  await open(page, [rec({ note: 'เครื่องเสีย' }),
+                    rec({ id: 'R9', date: DAY2, qty: 300, note: 'คนไม่พอ' })]);
+  await goDay(page, DAY2);
+  expect(await sel(page).inputValue(), 'ตั้งต้นเป็นของวันนี้').toBe('คนไม่พอ');
+
+  await pick(page, '');   // ล้างของวันนี้
+
+  const box = sel(page);
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'ต้องกลับไปโชว์เรื่องที่ค้างทันที').toContain('เครื่องเสีย');
+  await expect(box, 'และต้องติดป้ายว่าต่อเนื่อง').toHaveClass(/carried/);
+  const rows = (await readState(page)).records.filter(r => r.date === DAY2);
+  expect(rows[0].note, 'ข้อมูลของวันนี้ต้องว่างจริง').toBe('');
+  expect(Number(rows[0].qty), 'ยอดต้องไม่ถูกแตะ').toBe(300);
+});
+
+test('ป้ายสืบทอดต้องอ่านได้จริงบนจอ ไม่ใช่ถูกตัดจนวันที่หาย', async ({ page }) => {
+  /* ⚠️ ใบนี้อ้างเองว่า "ต้องบอกด้วยว่ามาจากวันไหน" แต่ผู้ตรวจ #117 วัดแล้วพบว่า
+   *    ช่องกว้าง 160px ตัดวันที่ทิ้งเกือบทุกคำ — คำอ้างจึงเหลืออยู่แค่ใน title ที่ต้องเอาเมาส์ไปชี้
+   *    วัดความกว้างข้อความจริงด้วยฟอนต์ที่ใช้อยู่ เทียบกับที่ว่างในช่อง (หัก padding กับลูกศร)
+   *
+   * ⚠️ เหตุผลที่ยาวที่สุด (รองาน/รอชิ้นส่วนจากขั้นก่อน) ยังถูกตัดโดยรู้ตัว — ตัวเต็มอยู่ใน title
+   *    ข้อนี้จึงวัดเหตุผลขนาดกลางซึ่งเป็นกรณีส่วนใหญ่ */
+  /* ⚠️ ต้องใช้เหตุผลที่ยาวพอจะแยกสองกรณีจริง — วัดมาแล้วป้ายกว้าง 85–209px
+   *    ส่วนที่ว่างในช่องคือ ~132px ที่กล่อง 160px และ ~182px ที่ 210px
+   *    คำสั้น (ขาดวัตถุดิบ 119px) พอดีทั้งสองกรณี เทสจะเขียวโดยไม่ได้วัดอะไร
+   *    'หยุดงาน/วันหยุด' (146px) พอดีเฉพาะกล่องใหญ่ จึงเป็นตัวที่แยกได้ */
+  await open(page, [rec({ note: 'หยุดงาน/วันหยุด' })]);
+  await goDay(page, DAY2);
+
+  const m = await sel(page).evaluate(el => {
+    const cs = getComputedStyle(el);
+    const c = document.createElement('canvas').getContext('2d');
+    c.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    return {
+      text: el.options[el.selectedIndex].text,
+      w: c.measureText(el.options[el.selectedIndex].text).width,
+      // ที่ว่างจริง = ความกว้างใน border ลบ padding สองข้าง ลบที่ของลูกศร select (~20px)
+      avail: el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - 20
+    };
+  });
+  expect(m.text, 'ต้องเป็นป้ายสืบทอดที่มีวันที่').toContain('29/08');
+  expect(m.w, `ป้าย "${m.text}" กว้าง ${Math.round(m.w)}px แต่ช่องมีที่ ${Math.round(m.avail)}px`)
+    .toBeLessThanOrEqual(m.avail);
+});
+
+test('เลือกเหตุผลให้วันนี้บนแถวที่คีย์ยอดไว้แล้ว ป้ายสืบทอดต้องหายทันที', async ({ page }) => {
+  /* ⚠️ ทางกลับของข้อข้างบน และเป็น **เส้นทางที่คนใช้จริงมากที่สุด**:
+   *    คีย์ยอดไว้ก่อน (record มีอยู่ หมายเหตุว่าง) แล้วค่อยใส่เหตุผล
+   *    ถ้าไม่วาดใหม่ ช่องจะค้างเป็นตัวเอียงสีจางพร้อม tooltip ของวันเก่า ทั้งที่เป็นของวันนี้แล้ว
+   *    (ผู้ตรวจ #117 รันเจอ · ตรวจสไตล์จริงด้วย ไม่ใช่แค่คลาส เพราะคลาสคือสิ่งที่เราตั้งเอง)
+   *
+   * ⚠️ ต้องเดินผ่านตัวจับ change จริง — เทสที่ยัดสถานะไว้ให้สำเร็จแล้วค่อยวาด
+   *    จะไม่เคยแตะเงื่อนไขนี้เลย */
+  await open(page, [rec({ note: 'เครื่องเสีย' }),
+                    rec({ id: 'R9', date: DAY2, qty: 300, note: '' })]);
+  await goDay(page, DAY2);
+  await expect(sel(page), 'ตั้งต้นต้องเป็นป้ายสืบทอด').toHaveClass(/carried/);
+
+  await pick(page, 'คนไม่พอ');
+
+  const box = sel(page);
+  await expect(box, 'เลือกของวันนี้แล้ว ต้องไม่ใช่ป้ายสืบทอดอีก').not.toHaveClass(/carried/);
+  const look = await box.evaluate(el => ({
+    italic: getComputedStyle(el).fontStyle,
+    title: el.getAttribute('title') || '',
+    first: el.options[0].text
+  }));
+  expect(look.italic, 'ต้องไม่เอียงแล้ว').toBe('normal');
+  expect(look.title, 'tooltip ของวันเก่าต้องไม่ค้าง').toBe('');
+  expect(look.first, 'ตัวเลือกแรกต้องกลับเป็นไม่ระบุ').toBe('— ไม่ระบุ —');
+
+  const rows = (await readState(page)).records.filter(r => r.date === DAY2);
+  expect(rows[0].note).toBe('คนไม่พอ');
+  expect(Number(rows[0].qty), 'ยอดต้องไม่ถูกแตะ').toBe(300);
+});
+
+test('หมายเหตุที่มีแต่ช่องว่าง ต้องไม่ตามไปวันถัดไป', async ({ page }) => {
+  /* ค่านี้ช่องเขียนเองสร้างไม่ได้ มาจากข้อมูลภายนอก (เซลล์ในชีตที่มีสเปซ · การรวมไฟล์)
+   * ถ้าไม่ตัด ป้ายจะเป็น "↩    · 29/08" คือเอียงสีจางแต่ไม่มีเหตุผลให้อ่าน
+   * แล้วตามไปทุกวันจนกว่าจะมีคนกดปิด — การสืบทอดทำให้ของเสียชิ้นเดียวกวนได้ยาวกว่าเดิมมาก */
+  await open(page, [rec({ note: '   ' })]);
+  await goDay(page, DAY2);
+
+  const box = sel(page);
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'ต้องไม่ขึ้นป้ายที่ไม่มีอะไรให้อ่าน').toBe('— ไม่ระบุ —');
+  await expect(box, 'และต้องไม่ติดคลาสสืบทอด').not.toHaveClass(/carried/);
+});
+
+test('หมายเหตุช่องว่างของวันนี้ ต้องไม่บังเรื่องที่ยังค้างอยู่', async ({ page }) => {
+  /* ⚠️ รูที่คอมมิตก่อนหน้าสร้างเอง — ฝั่งดัชนีข้ามหมายเหตุช่องว่างไปแล้ว
+   *    แต่ฝั่งที่ตัดสินว่า "วันนี้ใส่เองแล้วหรือยัง" ยังนับช่องว่างว่าใส่แล้ว
+   *    ผลคือวันที่บังเอิญมีหมายเหตุช่องว่าง จะบังเรื่องที่ค้างอยู่ไปหนึ่งวัน (ผู้ตรวจ #117) */
+  await open(page, [rec({ note: 'เครื่องเสีย' }),
+                    rec({ id: 'R9', date: DAY2, qty: 300, note: '  ' })]);
+  await goDay(page, DAY2);
+
+  const box = sel(page);
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'เรื่องของวันก่อนต้องยังโชว์').toContain('เครื่องเสีย');
+  await expect(box).toHaveClass(/carried/);
+});
+
+test('คำปิดที่ติดช่องว่างมาจากข้อมูลภายนอก ต้องยังปิดเรื่องได้', async ({ page }) => {
+  await open(page, [rec({ note: ' เคลียร์แล้ว ' })]);
+  await goDay(page, DAY2);
+
+  const box = sel(page);
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'ปิดแล้วต้องไม่ตามมา').toBe('— ไม่ระบุ —');
+  await expect(box).not.toHaveClass(/carried/);
+});
