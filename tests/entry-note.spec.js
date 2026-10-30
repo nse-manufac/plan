@@ -581,3 +581,27 @@ test('หมายเหตุที่มีแต่ช่องว่าง �
     'ต้องไม่ขึ้นป้ายที่ไม่มีอะไรให้อ่าน').toBe('— ไม่ระบุ —');
   await expect(box, 'และต้องไม่ติดคลาสสืบทอด').not.toHaveClass(/carried/);
 });
+
+test('หมายเหตุช่องว่างของวันนี้ ต้องไม่บังเรื่องที่ยังค้างอยู่', async ({ page }) => {
+  /* ⚠️ รูที่คอมมิตก่อนหน้าสร้างเอง — ฝั่งดัชนีข้ามหมายเหตุช่องว่างไปแล้ว
+   *    แต่ฝั่งที่ตัดสินว่า "วันนี้ใส่เองแล้วหรือยัง" ยังนับช่องว่างว่าใส่แล้ว
+   *    ผลคือวันที่บังเอิญมีหมายเหตุช่องว่าง จะบังเรื่องที่ค้างอยู่ไปหนึ่งวัน (ผู้ตรวจ #117) */
+  await open(page, [rec({ note: 'เครื่องเสีย' }),
+                    rec({ id: 'R9', date: DAY2, qty: 300, note: '  ' })]);
+  await goDay(page, DAY2);
+
+  const box = sel(page);
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'เรื่องของวันก่อนต้องยังโชว์').toContain('เครื่องเสีย');
+  await expect(box).toHaveClass(/carried/);
+});
+
+test('คำปิดที่ติดช่องว่างมาจากข้อมูลภายนอก ต้องยังปิดเรื่องได้', async ({ page }) => {
+  await open(page, [rec({ note: ' เคลียร์แล้ว ' })]);
+  await goDay(page, DAY2);
+
+  const box = sel(page);
+  expect((await box.locator('option:checked').innerText()).trim(),
+    'ปิดแล้วต้องไม่ตามมา').toBe('— ไม่ระบุ —');
+  await expect(box).not.toHaveClass(/carried/);
+});

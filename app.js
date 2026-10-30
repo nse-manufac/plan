@@ -2247,11 +2247,22 @@ function renderEntryTable(){
     const todayKey = o.id+'|'+currentProcess+'|'+date;
     const todayVal = recIndex[todayKey];
     const todayNote = noteIndex[todayKey] || '';
+    /* ⚠️ "หมายเหตุที่วันนี้ใส่เอง" — **ช่องว่างล้วนนับเป็นไม่ได้ใส่** ทุกที่ในเซลล์นี้
+     *    ต้องเป็นกติกาเดียวกับ `buildCarryIndex()` ไม่งั้นสองฝั่งเล่าคนละเรื่อง
+     *    (ผู้ตรวจ #117 เจอว่าแก้ฝั่งดัชนีอย่างเดียวไม่พอ — ตัวเลือก "(ค่าเดิม)" ยังชิงถูกเลือก
+     *    ด้วยค่าช่องว่าง แล้วบังเรื่องที่ยังค้างอยู่) · ค่าแบบนี้ช่องบนจอสร้างไม่ได้
+     *    มาจากข้อมูลภายนอกเท่านั้น (เซลล์ในชีตที่มีสเปซ · `applyMerge`) */
+    const ownNote = todayNote.trim() ? todayNote : '';
     /* เหตุผลที่ค้างมาจากวันก่อน — ใช้เฉพาะตอนวันนี้ยังไม่ได้ใส่เอง
      * ⚠️ ห้ามโชว์เป็นค่าที่ถูกเลือกไว้เฉย ๆ · ต้องบอกด้วยว่ามาจากวันไหน ไม่งั้นคนอ่านจะเข้าใจว่า
      *    มีคนใส่ไว้ให้วันนี้แล้ว ทั้งที่ข้อมูลของวันนี้ยังว่าง (จอต้องไม่เล่าเกินข้อมูล) */
-    const carry = todayNote ? null : carryIndex[o.id+'|'+currentProcess];
-    const carried = carry && carry.note !== NOTE_CLEARED ? carry : null;
+    /* ⚠️ เทียบแบบตัดช่องว่างทั้งสองที่ ให้เป็นกติกาเดียวกับ `buildCarryIndex()`
+     *    ไม่งั้นหมายเหตุที่มีแต่ช่องว่างของวันนี้จะ **บัง** เรื่องที่ยังค้างอยู่ไปหนึ่งวัน
+     *    (ฝั่งดัชนีข้ามมันไปแล้ว แต่ฝั่งนี้ยังนับว่า "วันนี้ใส่เองแล้ว") ·
+     *    และคำปิดที่ติดช่องว่างมาจากการซิงค์/รวมไฟล์ต้องปิดได้เหมือนกัน
+     *    ค่าพวกนี้ช่องบนจอสร้างไม่ได้ มาจากข้อมูลภายนอกเท่านั้น (ผู้ตรวจ #117) */
+    const carry = ownNote ? null : carryIndex[o.id+'|'+currentProcess];
+    const carried = carry && carry.note.trim() !== NOTE_CLEARED ? carry : null;
     const prevCum = prevProc!=null ? ((allCum[o.id] && allCum[o.id][prevProc]) || 0) : null;
     const warn = prevProc!=null && cum > prevCum;
     const remaining = Math.max(0, o.orderQty - cum);
@@ -2281,15 +2292,15 @@ function renderEntryTable(){
         ? `<span class="row-note-na" title="ยอดส่งของคีย์ที่หน้าใบส่งสินค้า — ช่องหมายเหตุของแถวนั้นระบบใช้บอกที่มาของยอด">—</span>`
         : `<select class="row-note${carried ? ' carried' : ''}" data-order="${escapeHtml(o.id)}"`
           + `${carried ? ` title="ต่อเนื่องมาจากวันที่ ${escapeHtml(fmtDateTH(carried.date))} — เลือกใหม่เพื่อเปลี่ยน หรือเลือก ${escapeHtml(NOTE_CLEARED)} เพื่อปิดเรื่องนี้"` : ''}>`
-          + `<option value=""${todayNote ? '' : ' selected'}>`
+          + `<option value=""${ownNote ? '' : ' selected'}>`
           /* วันที่รูปสั้น วัน/เดือน — ตัวเต็มอยู่ใน title ของช่อง
            * ⚠️ `date` เป็นวันปฏิทินล้วนรูป YYYY-MM-DD (A2/C1) ตัดด้วยตำแหน่งได้ ไม่ต้องแปลงเป็น Date
            *    ซึ่งจะเลื่อนวันเพราะเขตเวลา · ปีหายจากป้ายแต่ยังอยู่ใน title ซึ่งพอสำหรับ
            *    เรื่องที่ค้างข้ามปี (พบยาก) และได้ที่คืนมา ~38px ให้ตัวเหตุผลที่คนต้องอ่าน */
           + `${carried ? `↩ ${escapeHtml(carried.note)} · ${escapeHtml(carried.date.slice(8,10)+'/'+carried.date.slice(5,7))}` : '— ไม่ระบุ —'}</option>`
-          + ENTRY_NOTES.map(x=>`<option value="${escapeHtml(x)}"${x===todayNote?' selected':''}>${escapeHtml(x)}</option>`).join('')
-          + (todayNote && !ENTRY_NOTES.includes(todayNote)
-              ? `<option value="${escapeHtml(todayNote)}" selected>${escapeHtml(todayNote)} (ค่าเดิม)</option>` : '')
+          + ENTRY_NOTES.map(x=>`<option value="${escapeHtml(x)}"${x===ownNote?' selected':''}>${escapeHtml(x)}</option>`).join('')
+          + (ownNote && !ENTRY_NOTES.includes(ownNote)
+              ? `<option value="${escapeHtml(ownNote)}" selected>${escapeHtml(ownNote)} (ค่าเดิม)</option>` : '')
           + `</select>`}</td>
     </tr>`;
   });
