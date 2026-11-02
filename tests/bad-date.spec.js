@@ -46,7 +46,7 @@ async function serve(page, gs) {
 }
 
 /** เปิดหน้าแบบเครื่องที่ถือแถวในเครื่องไว้แล้ว และต่อชีตอยู่ */
-async function open(page, gs, local) {
+async function open(page, gs, local, records = []) {
   const net = await serve(page, gs);
   await page.addInitScript(([k, sk, st, cfg]) => {
     if (sessionStorage.getItem('seeded')) return;
@@ -56,7 +56,7 @@ async function open(page, gs, local) {
   }, [K_STATE, K_SYNC, {
     version: 1, deviceName: 'เครื่องดูอย่างเดียว', deadlineOffsets: OFFSETS,
     chartPref: { mode: '14', from: '', to: '', hidden: [] },
-    orders: [local], records: [], deliveryNotes: [], deltaWip: [], importHistory: []
+    orders: [local], records, deliveryNotes: [], deltaWip: [], importHistory: []
   }, { url: 'https://example.test/exec', token: gs.api.TOKEN, auto: true }]);
   await page.goto(APP);
   await waitReady(page);
@@ -128,6 +128,41 @@ test('ใบที่ยังรอส่งและวันที่ถู�
   expect((await localOrder(page))._dirty).toBe(false);
 });
 
+test('ยกเลิกใบที่วันที่ผิด ต้องส่งขึ้นชีตได้ — ไม่งั้นการยกเลิกไม่ไปถึงเครื่องอื่น (ผู้ตรวจ #111)', async ({ page }) => {
+  // ใบเพี้ยนที่ขึ้นชีตไปแล้วจากเครื่องรุ่นก่อน · วิธีแก้ "นำเข้าผิด" ตาม CLAUDE.md คือกดยกเลิก
+  const gs = loadGs();
+  const stamp = gs.api.doPushRows('Orders', [Object.assign({}, ORDER, { orderDate: BAD })], 'เครื่องเก่า').serverTime;
+  const net = await open(page, gs, Object.assign({}, ORDER, { orderDate: BAD, voided: true, updatedAt: stamp, _dirty: true }));
+
+  await expect.poll(() => pushedOrders(net).length).toBe(1);
+  expect(serverOrder(gs).voided).toBe(true);
+  expect((await localOrder(page))._dirty).toBe(false);
+});
+
+test('วันแผนเพี้ยนแต่วันที่สั่งถูก ต้องส่งขึ้นตามปกติ — ด่านดูเฉพาะ orderDate (ผู้ตรวจ #111)', async ({ page }) => {
+  // วันแผนไม่ได้ใช้คิดกำหนดหรือสถานะ · ถ้ากันทั้งใบ จอขึ้นปกติแต่เครื่องอื่นไม่เคยเห็นใบนี้
+  const gs = loadGs();
+  const stamp = seedServer(gs);
+  const net = await open(page, gs, Object.assign({}, ORDER, { planWinding: BAD, updatedAt: stamp, _dirty: true }));
+
+  await expect.poll(() => pushedOrders(net).length).toBe(1);
+  expect((await localOrder(page))._dirty).toBe(false);
+});
+
+test('ใบที่ส่งครบแล้วและวันที่ผิด — สีช่อง Aging ต้องไม่ขัดกับสถานะ (ผู้ตรวจ #111)', async ({ page }) => {
+  const gs = loadGs();
+  const stamp = seedServer(gs);
+  await open(page, gs, Object.assign({}, ORDER, { orderDate: BAD, updatedAt: stamp, _dirty: false }), [
+    { id: 'R1', date: daysAgo(1), orderId: ORDER.id, process: 'shipping', qty: ORDER.orderQty, note: '', deviceName: 't',
+      createdAt: stamp, updatedAt: stamp, voided: false, _dirty: false }
+  ]);
+
+  const { aging, row } = await dashRow(page);
+  await page.uncheck('#dashHideDone');   // ใบที่ส่งครบถูกซ่อนเป็นค่าตั้งต้น
+  await expect(row).toContainText('ส่งของครบแล้ว');
+  await expect(aging.locator('.badge.green')).toHaveText('วันที่ผิด');
+});
+
 test('นำเข้าไฟล์แผนที่วันที่เป็นไปไม่ได้ — หน้าตรวจก่อนนำเข้าต้องเตือนก่อนกดยืนยัน', async ({ page }) => {
   await forgetSavedOnEveryLoad(page);
   await page.addInitScript(k => localStorage.removeItem(k), K_STATE);
@@ -142,6 +177,6 @@ test('นำเข้าไฟล์แผนที่วันที่เป�
   await expect(page.locator('#btnParseSheet')).toBeEnabled();
   await page.click('#btnParseSheet');
   await expect(page.locator('#previewPanel')).toBeVisible();
-  await expect(page.locator('#previewSummary')).toContainText('มี 1 รายการที่วันที่เป็นไปไม่ได้');
+  await expect(page.locator('#previewSummary')).toContainText('มี 1 รายการที่วันที่สั่งเป็นไปไม่ได้');
   await expect(page.locator('#previewTable tbody tr', { hasText: 'ZZ-1' }).locator('.badge.red', { hasText: BAD })).toBeVisible();
 });

@@ -746,11 +746,14 @@ async function doSync(silent = true){
   syncing = true; syncCfg.state = 'busy'; syncCfg.error = ''; renderSyncBadge();
   const serverWins = syncServerWins; syncServerWins = false;
   try{
-    // ⚠️ ใบที่วันที่เป็นไปไม่ได้ไม่ส่งขึ้น — ส่งแล้วทุกเครื่องได้ค่าผิดตามไปหมด · ค้าง "รอส่ง" จนกว่าจะนำเข้าไฟล์ที่ถูกทับ
-    const badDate = o => ORDER_DATE_FIELDS.some(f => implausibleDate(o[f], todayISO()));
-    const heldOrders = state.orders.filter(o=>o._dirty && badDate(o));
-    if(heldOrders.length) console.warn('ไม่ส่งใบสั่งที่วันที่ผิดขึ้นเซิร์ฟเวอร์', heldOrders.map(o=>o.poNo));
-    const dirtyOrders = state.orders.filter(o=>o._dirty && !badDate(o));
+    /* ⚠️ ใบที่ orderDate เป็นไปไม่ได้ไม่ส่งขึ้น — ส่งแล้วทุกเครื่องได้ค่าผิดตามไปหมด · ค้าง "รอส่ง" จนกว่าจะนำเข้าไฟล์ที่ถูกทับ
+     *    ดูเฉพาะ orderDate — วันแผนไม่ได้ใช้คิดกำหนดหรือสถานะ และจอไม่ได้ชี้ว่าใบไหน ถ้ากันด้วยใบจะหายจากเครื่องอื่นเงียบ ๆ
+     *    ใบที่ยกเลิกแล้วต้องส่งได้เสมอ — การยกเลิกคือวิธีแก้ "นำเข้าผิด" (ผู้ตรวจ #111 รันเจอว่าค้างในเครื่องตลอดไป)
+     *    และใบที่ยกเลิกไม่อยู่ใน activeOrders() วันที่ของมันจึงไม่โผล่ที่เครื่องไหน */
+    const today = todayISO();
+    const heldBack = o => !o.voided && implausibleDate(o.orderDate, today);
+    const heldOrders = state.orders.filter(o=>o._dirty && heldBack(o));
+    const dirtyOrders = state.orders.filter(o=>o._dirty && !heldBack(o));
     if(dirtyOrders.length){
       const res = await gsApi('pushRows', {table:'Orders', rows: dirtyOrders.map(r=>cleanForPush(r, 'Orders'))});
       dirtyOrders.forEach(o=>{ o._dirty=false; if(res.serverTime) o.updatedAt=res.serverTime; });
@@ -2069,9 +2072,9 @@ function renderPreview(parsed){
   }
   /* ⚠️ วันที่เป็นไปไม่ได้ (เช่น ปี 1901 = ตัวเลขที่ถูกอ่านเป็นวันที่) ต้องบอกก่อนกดยืนยัน
    *    นำเข้าได้ แต่ใบพวกนี้จะไม่ถูกส่งขึ้น Google Sheets (doSync กันไว้) และขึ้น "วันที่ผิด" แทน Aging */
-  const badDate = parsed.items.filter(it => ORDER_DATE_FIELDS.some(f => implausibleDate(it[f], today))).length;
+  const badDate = parsed.items.filter(it => implausibleDate(it.orderDate, today)).length;
   if(badDate){
-    summary += ` — ⚠️ มี ${numFmt(badDate)} รายการที่วันที่เป็นไปไม่ได้ (ก่อนปี 2000 หรือเลยไปเกินหนึ่งปี)`
+    summary += ` — ⚠️ มี ${numFmt(badDate)} รายการที่วันที่สั่งเป็นไปไม่ได้ (ก่อนปี 2000 หรือเลยไปเกินหนึ่งปี)`
              + ` ตรวจไฟล์ก่อน · ถ้านำเข้า รายการเหล่านี้จะไม่ถูกส่งขึ้น Google Sheets จนกว่าจะนำเข้าไฟล์ที่ถูกทับ`;
   }
   if(parsed.reportedTotal!=null){
@@ -3079,7 +3082,7 @@ function progressCell(cum, split, qty){
  * computeStatus เพื่อไม่ให้สีของสองคอลัมน์ขัดกันเอง */
 function agingCell(orderDate, ref, statusCode){
   if(implausibleDate(orderDate, ref))
-    return `<span class="badge red" title="วันที่สั่ง ${escapeHtml(String(orderDate))} เป็นไปไม่ได้ — ตรวจไฟล์แผน แล้วกด &quot;ดึงข้อมูลใหม่ทั้งหมด&quot; ในหน้าข้อมูล &amp; แชร์">วันที่ผิด</span>`;
+    return `<span class="badge ${statusCode==='done' ? 'green' : 'red'}" title="วันที่สั่ง ${escapeHtml(String(orderDate))} เป็นไปไม่ได้ — ตรวจไฟล์แผน แล้วกด &quot;ดึงข้อมูลใหม่ทั้งหมด&quot; ในหน้าข้อมูล &amp; แชร์">วันที่ผิด</span>`;
   const aging = daysBetween(orderDate, ref);
   if(aging==null) return '—';
   const txt = numFmt(aging);
