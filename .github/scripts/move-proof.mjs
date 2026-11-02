@@ -46,7 +46,8 @@ import { execFileSync } from 'node:child_process';
 
 // บรรทัดที่ "โผล่มาใหม่ได้" โดยไม่ต้องมาจากของเดิม — เท่าที่การแยกไฟล์ต้องใช้จริงเท่านั้น
 // ⚠️ เพิ่มรายการที่นี่ = ขยายช่องให้โค้ดใหม่เข้ามาได้ ต้องมีเทสคุมทุกรายการ
-const SCRIPT_SRC = /^<script src="([^"]*)"><\/script>$/;
+// ต่อท้าย ?v=<เลขรุ่น> ได้ (INVARIANTS F4 — บัสต์แคชของไฟล์ที่หน้าโหลด) · กลุ่มที่ 1 คือ path ล้วนไม่รวม query
+const SCRIPT_SRC = /^<script src="([^"?]*)(?:\?v=[^"]*)?"><\/script>$/;
 const ALLOW_ADDED = [
   // แท็กโหลดไฟล์ — ต้องชี้ไปที่ "ไฟล์แอป" ที่มีอยู่จริงเท่านั้น (ตรวจเพิ่มใน checkSrc)
   // ไม่งั้นแท็กที่ชี้ไป tests/ หรือไฟล์ที่ไม่อยู่ใน diff จะพาโค้ดที่ไม่ผ่านการพิสูจน์เข้าไปรันในแอป
@@ -66,6 +67,9 @@ const ALLOW_REMOVED = [
   /^<script>$/,
   /^<\/script>$/,
   /^<meta name="app-version" content="[^"]*">$/,
+  // แท็กโหลดไฟล์ — หายได้เฉพาะเมื่อแท็กของไฟล์เดียวกันกลับมาที่ลำดับเดิม (บัมป์ ?v=) ตรวจทั้งไฟล์ใน main
+  // เอาแท็กออกเฉย ๆ = โค้ดในไฟล์นั้นไม่ถูกโหลดอีก ทั้งที่ตัวโค้ดไม่ได้หายจาก repo
+  SCRIPT_SRC,
 ];
 
 // ── ไฟล์นอกขอบเขตการพิสูจน์ ──────────────────────────────────────
@@ -270,6 +274,26 @@ function main(argv) {
         bucket.push(u);
         count.set(u.path, (count.get(u.path) || 0) + 1);
       }
+    }
+  }
+
+  // ── แท็กโหลดไฟล์: เทียบลำดับทั้งไฟล์ก่อน/หลัง ไม่ใช่แค่นับคู่ (ผู้ตรวจ #109) ──
+  // แท็กเดิมทุกตัวต้องยังอยู่ในไฟล์เดียวกัน และ **ลำดับเดิม** (ลำดับแท็ก = ลำดับการทำงาน)
+  // ใบย้ายเพิ่มแท็กใหม่แทรกได้ และบัมป์ ?v= ได้ · ถอดแท็ก / ย้ายไปไฟล์อื่น / สลับลำดับ = ตก
+  const srcList = lines => lines.map(s => SCRIPT_SRC.exec(s)).filter(Boolean).map(m => m[1]);
+  for (const f of files) {
+    if (f.binary || !f.oldPath || !f.newPath) continue;
+    const before = srcList(linesAt(mb, f.oldPath));
+    if (!before.length) continue;
+    const after = srcList(linesAt('HEAD', f.newPath));
+    const left = new Map();
+    for (const s of before) left.set(s, (left.get(s) || 0) + 1);
+    const kept = after.filter(s => { const n = left.get(s) || 0; if (!n) return false; left.set(s, n - 1); return true; });
+    for (const [s, n] of left) {
+      if (n > 0) problems.push({ path: f.newPath, line: 1, msg: `เอาแท็กโหลด "${s}" ออก — โค้ดในไฟล์นั้นจะไม่ถูกโหลดอีก ทั้งที่ยังอยู่ใน repo` });
+    }
+    if (kept.length === before.length && kept.some((s, k) => s !== before[k])) {
+      problems.push({ path: f.newPath, line: 1, msg: `สลับลำดับแท็กโหลดไฟล์ (เดิม ${before.join(' → ')} · ใหม่ ${kept.join(' → ')}) — ลำดับแท็กคือลำดับการทำงาน` });
     }
   }
 

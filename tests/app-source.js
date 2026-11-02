@@ -17,7 +17,13 @@ const ROOT = path.resolve(__dirname, '..');
 const APP_FILE = path.join(ROOT, 'production_plan_tracker.html');
 
 // แท็กโหลดไฟล์รูปแบบเดียวที่ด่านพิสูจน์ย้ายอย่างเดียวยอมรับ — ตรงกันกับ .github/scripts/move-proof.mjs
-const SCRIPT_SRC = /^<script src="([^"]*)"><\/script>\r?$/gm;
+// กลุ่มที่ 1 = path ล้วน · กลุ่มที่ 2 = เลขรุ่นใน ?v= (INVARIANTS F4 — บัสต์แคชของแต่ละไฟล์)
+const SCRIPT_SRC = /^<script src="([^"?]*)(?:\?v=([^"]*))?"><\/script>\r?$/gm;
+
+/** แท็กโหลดไฟล์ทุกตัวในหน้า ตามลำดับ — [{file, v}] · v เป็น null ถ้าไม่มี ?v= */
+function scriptTags() {
+  return [...appHtml().matchAll(SCRIPT_SRC)].map(m => ({ file: m[1], v: m[2] ?? null }));
+}
 
 /** ไฟล์ HTML ของแอป (ใช้เฉพาะเรื่องของ HTML เอง เช่น <meta name="app-version">) */
 function appHtml() {
@@ -107,4 +113,4 @@ async function patchAppSource(page, anchor, replacement) {
   return () => files.size;
 }
 
-module.exports = { ROOT, APP_FILE, appHtml, appSources, appSource, fnSource, topLevelNames, patchAppSource };
+module.exports = { ROOT, APP_FILE, appHtml, appSources, appSource, fnSource, topLevelNames, patchAppSource, scriptTags };
