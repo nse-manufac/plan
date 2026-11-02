@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-10-23.1">
+<meta name="app-version" content="2026-11-02.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -76,7 +76,9 @@
      ช่องที่ merge คร่อมทุกใบสั่งของ P/N เดียวกัน = ช่องที่ merge ไว้ในกระดาษ
      เส้นหนาคั่นระหว่างกลุ่ม = เส้นตารางในกระดาษ ทำให้กวาดตาหากลุ่มได้เร็ว */
   #dnTable td.dn-pn{background:var(--primary-light);vertical-align:middle;}
-  #dnTable td.dn-merge{background:var(--gray-light);vertical-align:middle;}
+  #dnTable td.dn-merge,#dnPreviewTable td.dn-merge{background:var(--gray-light);vertical-align:middle;}
+  /* ตารางของหน้า preview มี 11 ช่องเท่ากระดาษ จึงกว้างกว่ากล่องมาตรฐาน 560px */
+  .modal.wide{max-width:900px;}
   #dnTable tr.dn-group > td{border-top:2px solid var(--text-dim);}
   /* หัวตารางสองแถว — แถวล่างต้องเลื่อนลงมาเท่าความสูงของแถวบน ไม่งั้นทับกันตอนเลื่อนดู
      ค่า 31px เป็นค่าตั้งต้นเผื่อวัดความสูงจริงไม่ได้ (ตอนแท็บยังซ่อนอยู่ ความสูงเป็น 0)
@@ -134,12 +136,36 @@
   #entryTable th{font-size:14px;padding:11px 8px;}
   #entryTable td{padding:9px 8px;}
   #entryTable .row-input{font-size:19px;font-weight:700;width:130px;min-width:0;padding:10px 8px;}
+  /* ยอดส่งของโชว์แทนช่องกรอก — ต้องกินที่ "เท่าช่องกรอก" ไม่ใช่เท่าแค่ขนาดตัวอักษร
+     ⚠️ ขาด width กับ display คอลัมน์จะหุบตอนสลับไปขั้นส่งของแล้วกางกลับตอนสลับออก
+        (ผู้ตรวจ #110 วัดได้ 246px → 207px → 246px) · padding ของช่องกรอกอยู่ในกรอบ
+        จึงบวกเข้า width ด้วย box-sizing เดียวกัน */
+  /* ช่องเลือกเหตุผลท้ายแถว — กว้างพอให้อ่านคำที่ยาวสุดในรายการออกโดยไม่ดันตารางทั้งตาราง
+     (คำยาวสุดคือ "รองาน/รอชิ้นส่วนจากขั้นก่อน") */
+  /* ⚠️ ช่องเลือกกับช่องว่างของแถวส่งของต้องกินที่เท่ากันเป๊ะ ไม่งั้นคอลัมน์นี้หุบตอนสลับ
+     ไปขั้นส่งของ แล้วความกว้างที่เหลือไปดันคอลัมน์อื่นขยับทั้งตาราง
+     เป็นของที่คนคีย์ยอดเห็นทุกครั้งที่สลับขั้น — ตระกูลเดียวกับที่ผู้ตรวจ #110 วัดได้ 246→207→246px
+     (เทสคุมไว้ที่ tests/entry-ui.spec.js และ tests/entry-note.spec.js) */
+  /* ช่องที่โชว์เหตุผลซึ่งต่อเนื่องมาจากวันก่อน — ข้อมูลของวันนี้ยังว่าง จึงต้องดูต่างจากของที่ใส่เอง
+     (ตัวเอียง + สีจาง + ลูกศรย้อนหน้าคำ) ไม่งั้นคนอ่านจะเข้าใจว่าวันนี้มีคนใส่ไว้แล้ว */
+  #entryTable select.row-note.carried{font-style:italic;color:var(--text-dim);}
+  /* ⚠️ ความกว้างต้อง **คงที่** และเท่ากันทั้งช่องเลือกกับช่องว่างของแถวส่งของ
+     ใช้ width:100% ไม่ได้ — คอลัมน์จะกว้างตามเนื้อ แล้วหุบตอนสลับไปขั้นส่งของ
+     (ด่าน #110 จับได้ 235 → 218px) · 210px เลือกจากที่ผู้ตรวจ #117 วัดความกว้างข้อความมา
+     วัดซ้ำหลังเปลี่ยนไปใช้วันที่รูปสั้น (ฟอนต์เอียงจริง · ที่ว่างในช่อง 180px):
+     ป้ายสืบทอดกว้าง 86–150px จึง **พอดี 8 จาก 9 คำ** เหลือ `รองาน/รอชิ้นส่วนจากขั้นก่อน`
+     ที่ 222px ซึ่งยังถูกตัด — ตัวเต็มอยู่ใน title */
+  #entryTable select.row-note,
+  #entryTable .row-note-na{font-size:13px;padding:7px 4px;width:210px;box-sizing:border-box;display:inline-block;}
+  #entryTable .row-note-na{color:var(--text-dim);text-align:center;}
+  #entryTable .ship-today{font-size:19px;font-weight:700;width:130px;display:inline-block;
+    box-sizing:border-box;padding:10px 8px;}
   /* บนมือถือบีบ "ระยะห่าง" คืน แต่ไม่แตะขนาดตัวอักษร
      ⚠️ คนที่ต้องใช้ตัวใหญ่คือคนกลุ่มเดียวกับที่ถือมือถือ ลดฟอนต์ตรงนี้เท่ากับยกเลิกสิ่งที่เพิ่งทำ
         ตารางเลื่อนแนวนอนในกรอบของตัวเอง (.table-wrap) ทั้งหน้าต้องไม่เลื่อนตาม */
   @media (max-width:600px){
     #entryTable th,#entryTable td{padding-left:5px;padding-right:5px;}
-    #entryTable .row-input{width:92px;}
+    #entryTable .row-input,#entryTable .ship-today{width:92px;}
   }
   .process-warn{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
     background:var(--red-light);border:1px solid var(--red);color:var(--red);border-radius:10px;
@@ -160,6 +186,13 @@
   .modal{background:#fff;border-radius:var(--radius);padding:20px 24px;max-width:560px;width:92%;max-height:80vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.25);}
   .modal h3{margin-top:0;}
   .modal .modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;}
+  /* .desc มีสไตล์แค่ใน .panel กับ .gs-panel — ในกล่องจึงต้องประกาศเอง
+     ไม่งั้นย่อหน้าคำอธิบายของหน้ารายละเอียดใบส่งสินค้าจะติดกันหมด (ผู้ตรวจ #113) */
+  .modal .desc{color:var(--text-dim);font-size:12.5px;margin-bottom:10px;}
+  /* ตัวกล่องเลื่อนอยู่แล้ว (max-height:80vh;overflow:auto) ถ้าปล่อยให้ .table-wrap
+     เลื่อนด้วยจะได้แถบเลื่อนสองชั้นเมื่อรายการยาว — ปล่อยให้สูงเท่าเนื้อ แล้วกล่องเลื่อนทีเดียว
+     ส่วนการเลื่อนแนวนอนยังอยู่ เพราะตาราง 11 ช่องกว้างกว่ากล่องบนจอแคบ (ผู้ตรวจ #113) */
+  .modal .table-wrap{max-height:none;}
   .chart-wrap{overflow-x:auto;}
   .legend{display:flex;gap:16px;font-size:12.5px;margin-bottom:6px;align-items:center;}
   .legend span{display:inline-flex;align-items:center;gap:5px;}
@@ -337,6 +370,17 @@
         <label style="font-weight:500;"><input type="checkbox" id="entryHideDone"> ซ่อนที่เสร็จ Process นี้แล้ว</label>
       </div>
     </div>
+    <!-- ขึ้นเฉพาะตอนเลือกขั้น "ส่งของ" — renderEntryTable() เปิด/ปิดด้วย hidden
+         ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (INVARIANTS A2) หน้านี้แสดงผลอย่างเดียว
+         ⚠️ ต้องบอกด้วยว่าไปแก้ที่ไหน ไม่ใช่บอกแค่ว่าแก้ที่นี่ไม่ได้ -->
+    <div class="desc" id="entryShipNote" hidden>
+      🚚 <b>ยอดส่งของคีย์ที่หน้า &quot;ใบส่งสินค้า&quot; ทางเดียว</b> — ตารางนี้แสดงยอดที่ตัดเข้าใบ
+      ของวันที่เลือกไว้ เพื่อให้ตรวจทานคู่กับขั้นอื่นได้ · จะแก้ให้ไปที่หน้าใบส่งสินค้า
+      เลือกวันกับหน่วยเดียวกัน แล้วแก้ช่อง &quot;จำนวนที่ส่ง&quot; ของ PO นั้น
+      <!-- ใบที่บอกหน่วยไม่ได้จะไม่ขึ้นในหน้าใบส่งสินค้าของหน่วยไหนเลย = ส่งของไม่ได้
+           หน้าตรวจก่อนนำเข้าเตือนครั้งเดียวตอนกดยืนยันแล้วหายไป ตรงนี้เตือนทุกวันที่เปิดดู -->
+      <div id="entryShipNoUnit" hidden style="margin-top:8px"></div>
+    </div>
     <div class="table-wrap">
       <table id="entryTable"></table>
     </div>
@@ -443,6 +487,12 @@
       <div class="field">
         <label>ไฟล์ฟอร์ม (.xlsx)</label>
         <input type="file" id="dnTemplateInput" accept=".xlsx">
+        <!-- ฟอร์มที่เครื่องนี้จำไว้ — ต้องเห็นชื่อไฟล์กับวันที่ ไม่ใช่จำเงียบ ๆ
+             บริษัทแก้ฟอร์มเมื่อไหร่ เครื่องที่ยังใช้ของเก่าจะออกใบด้วยผังเก่าโดยไม่มีอะไรฟ้อง -->
+        <div class="desc small" id="dnTplInfo" hidden style="margin-top:6px">
+          <span id="dnTplInfoText"></span>
+          <button class="btn small" id="btnDnTplForget" type="button">ล้างฟอร์มที่จำไว้</button>
+        </div>
       </div>
       <div class="field">
         <label>&nbsp;</label>
@@ -458,6 +508,10 @@
       <br>
       <b>กดที่เลขที่ใบเพื่อออกไฟล์ใบนั้นอีกครั้ง</b> — ระบบไม่ได้เก็บไฟล์ไว้ แต่สร้างใหม่จากยอดบรรจุของหน่วยและวันนั้น
       จึงต้องเลือกไฟล์ฟอร์มไว้ก่อน เหมือนตอนออกใบครั้งแรก
+      <br>
+      <b>กด "ดูรายละเอียด" เพื่ออ่านรายการบนใบนั้นบนจอ โดยไม่ต้องมีไฟล์ฟอร์ม</b>
+      สำหรับคนที่ไม่มีฟอร์ม FM-ST-07 ในมือ · เห็นช่องเดียวกับบนกระดาษทุกช่อง
+      แต่เป็นข้อมูล<b>ณ ตอนที่กดเปิด</b> ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว
       <br>
       ป้าย <span class="badge amber">ข้อมูลเปลี่ยนหลังออกใบ</span> แปลว่า<b>ยอดรวมของใบนี้ไม่เท่ากับตอนออกใบ</b>
       ด้วยเหตุใดก็ได้ — แก้ยอดบรรจุ · แก้ยอดที่ตัดเข้าใบ · หรือใบสั่งถูกยกเลิก
@@ -768,10 +822,20 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="dnPreviewModal">
+  <div class="modal wide">
+    <h3 id="dnPreviewTitle">รายละเอียดใบส่งสินค้า</h3>
+    <div id="dnPreviewBody"></div>
+    <div class="modal-actions">
+      <button class="btn" id="dnPreviewCloseBtn">ปิด</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
-<script src="lib/jszip.min.js"></script>
-<script src="lib/exceljs.min.js"></script>
-<script src="app.js"></script>
+<script src="lib/jszip.min.js?v=2c75f9c4"></script>
+<script src="lib/exceljs.min.js?v=1b114472"></script>
+<script src="app.js?v=2026-11-02.4"></script>
 </body>
 </html>

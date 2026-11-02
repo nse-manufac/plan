@@ -159,6 +159,50 @@ function downloadBlob(content, filename, type){
 const SOURCE_SHIP_IMPORT = 'นำเข้าจากใบส่งงาน';
 const SOURCE_DELIVERY = 'จากใบส่งสินค้า';
 
+/** เหตุผลสำเร็จรูปของช่องหมายเหตุในหน้าคีย์ยอดรายวัน (เจ้าของเลือกชุดนี้ 27 ต.ค. 2026)
+ *  ⚠️ **ที่เดียวที่กำหนดรายการ** — แก้ที่นี่แล้วทั้งโปรแกรมเปลี่ยนตาม (แบบเดียวกับ DEFAULT_PROCESSES)
+ *
+ *  ⚠️ **ห้ามมีค่าใดซ้ำกับ SOURCE_SHIP_IMPORT หรือ SOURCE_DELIVERY สองบรรทัดข้างบน**
+ *     ช่อง `note` ช่องเดียวกันนี้ถูกใช้บอก "ที่มาของยอด" ด้วย — คอลัมน์แหล่งที่มาในหน้าแก้ไขรายการ
+ *     กับตัวกรองของมันตัดสินจากค่านี้ตรง ๆ · **ผลของการซ้ำไม่เหมือนกันสองคำ**
+ *       ซ้ำกับ SOURCE_DELIVERY    → แหล่งที่มาแสดงผิดเป็น "ใบส่งสินค้า" แต่ยังอยู่ในตัวกรอง "กรอกมือ"
+ *       ซ้ำกับ SOURCE_SHIP_IMPORT → หายจากตัวกรอง "กรอกมือ" ไปเลย เพราะตัวกรองนั้นคัดด้วยคำนี้คำเดียว
+ *     ทั้งคู่พังแบบเงียบและตามหายาก · มีเทสคุมทั้งสองคำ
+ *
+ *  ⚠️ **ทางที่คนหน้างานใช้จริงคือเลื่อนหา ไม่ใช่พิมพ์** (เจ้าของยืนยัน 30 ต.ค. 2026 —
+ *     พนักงานพิมพ์ภาษาไทยหาไม่ได้) · **รายการจึงต้องสั้นพอให้กวาดตาหาได้** เก้าคำถือว่ายังไหว
+ *     ตามที่เจ้าของเคาะ · จะเพิ่มคำเรื่อย ๆ จนยาวเกินกวาดตาไม่ได้ ต้องถามเจ้าของก่อน
+ *
+ *     type-ahead (พิมพ์ตัวอักษรเพื่อกระโดด) ยังทำงาน — แปดคำแรกขึ้นต้นไม่ซ้ำกัน (เ ข ร ค ห ง ผ อ)
+ *     ส่วนคำที่เก้า `NOTE_CLEARED` ขึ้นต้น เ ซ้ำกับ `เครื่องเสีย` จึงต้องกด เ สองครั้ง
+ *     **เจ้าของรับข้อนี้แล้ว 30 ต.ค. 2026** เพราะทางนั้นไม่ใช่ทางที่หน้างานใช้ —
+ *     อย่าเอาเรื่องตัวอักษรซ้ำมาเป็นเหตุผลขวางการตั้งชื่อคำใหม่อีก
+ *     (ของเดิมเคยเขียนว่า type-ahead "เป็นทางที่คนใช้จริง" ซึ่งเป็นการเดาของ agent ไม่ใช่ข้อเท็จจริง)
+ *
+ *  เพิ่ม/แก้คำได้ตามปกติ แต่ **คำที่เคยถูกเลือกไว้แล้วจะยังอยู่ในข้อมูล** — หน้าจอจึงต้อง
+ *  แสดงค่าเดิมที่ไม่อยู่ในรายการได้ด้วย ไม่ใช่ทำให้มันหายไปเงียบ ๆ (ดู renderEntryTable) */
+const ENTRY_NOTES = ['เครื่องเสีย', 'ขาดวัตถุดิบ', 'รองาน/รอชิ้นส่วนจากขั้นก่อน', 'คนไม่พอ',
+                     'หยุดงาน/วันหยุด', 'งานแก้ไข/ซ่อม', 'ผลิตเกินแผน', 'อื่น ๆ', 'เคลียร์แล้ว'];
+
+/** คำปิดเรื่องของช่องหมายเหตุ (เจ้าของเลือก 29 ต.ค. 2026)
+ *
+ *  เหตุผลที่ใส่ไว้วันหนึ่ง **สืบทอดไปแสดงในวันถัด ๆ ไป** จนกว่าจะมีคนเปลี่ยนหรือกดปิด
+ *  (เจ้าของสั่ง — ของเดิมหายทุกครั้งที่เปลี่ยนวัน เพราะหมายเหตุผูกกับ `orderId|process|date`)
+ *  คำนี้คือตัวปิด · เป็นสมาชิกของ `ENTRY_NOTES` เหมือนคำอื่น จึงถูกบันทึกลงรายการของวันที่กดปิด
+ *  = **มีหลักฐานว่าปิดเมื่อไหร่** ต่างจากการล้างเป็นค่าว่าง ซึ่งแยกจาก "ยังไม่เคยใส่" ไม่ออก
+ *
+ *  ⚠️ **ได้ "เมื่อไหร่" เสมอ แต่ไม่ได้ "ใคร" เสมอ** — ปิดบนแถวที่มีรายการอยู่แล้ว (กรณีส่วนใหญ่
+ *     เพราะคนคีย์ยอดก่อน) `saveEntryNote()` ไม่ทับ `deviceName` โดยตั้งใจ ชื่อที่เห็นจึงเป็นของ
+ *     คนที่คีย์ยอด ไม่ใช่คนที่กดปิด · ได้ชื่อคนปิดเฉพาะตอนที่การปิดสร้างแถวใหม่ขึ้นมาเอง
+ *     (ผู้ตรวจ #117 ทักว่าคอมเมนต์สองที่ในไฟล์นี้ขัดกันเรื่องนี้) · จะเก็บ "ใครปิด" ให้ครบ
+ *     ต้องเพิ่มคอลัมน์ = แก้ contract การซิงค์ + redeploy ซึ่งต้องถามเจ้าของก่อน (§7)
+ *
+ *  ⚠️ ขึ้นต้นด้วย "เ" ซ้ำกับ `เครื่องเสีย` จึงต้องกด เ สองครั้งถ้าใช้ type-ahead
+ *     **เจ้าของรับข้อนี้แล้ว 30 ต.ค. 2026** เพราะหน้างานเลื่อนหา ไม่ได้พิมพ์ (ดูบล็อกข้างบน)
+ *     อย่ายกเรื่องตัวอักษรซ้ำมาเป็นเหตุผลเปลี่ยนคำนี้อีก — ถ้าจะเปลี่ยน ต้องมีเหตุผลอื่น
+ *     และเป็นการตัดสินใจเรื่องถ้อยคำของเจ้าของ · แก้ได้ที่บรรทัดนี้จุดเดียว */
+const NOTE_CLEARED = 'เคลียร์แล้ว';
+
 /* ---------- รายการขั้นการผลิต — มีที่เดียวคือ DEFAULT_PROCESSES (INVARIANTS A3) ----------
  * เจ้าของสั่ง 12 ก.ย. 2026 ให้เพิ่มขั้นได้จากในโปรแกรม
  * ข้างล่างคือห้าขั้นตั้งต้น · ขั้นที่เพิ่ม/เปลี่ยนชื่อ/ซ่อนจากหน้าจัดการขั้น ซิงค์มาเก็บใน state.processes
@@ -372,6 +416,10 @@ const STORAGE_KEY = 'tue_order_tracker_v1';
 const IDB_NAME = 'tue_order_tracker', IDB_STORE = 'kv';
 const LEGACY_COPY_KEY = STORAGE_KEY + ':localStorage';   // สำเนาดิบของ localStorage ตอนย้าย (ใน IndexedDB)
 const MOVED_KEY = STORAGE_KEY + ':moved';   // ธงใน localStorage: เครื่องนี้ย้ายเข้า IndexedDB แล้ว · localStorage ว่างแล้ว
+/* ฟอร์ม FM-ST-07 ที่เครื่องนี้จำไว้ — **คีย์ของตัวเอง ไม่ปนกับ state**
+ * ถ้าไปอยู่ใน state ก้อนที่เขียนทุกครั้งที่คีย์ยอดจะโตขึ้นเป็นเมกะ แล้วชนเพดานพื้นที่
+ * ซึ่งเคยเกิดมาแล้วตอนยังใช้ localStorage · และมันเป็นไฟล์ของเครื่องใครเครื่องมัน ห้ามซิงค์ */
+const DN_TPL_KEY = STORAGE_KEY + ':dnTemplate';
 let stateDb = null;      // null = ใช้ localStorage แบบเดิม
 let stateReady = false;  // ก่อนโหลดเสร็จ ห้ามบันทึกและห้ามซิงค์ — ไม่งั้น state ว่างจะไปทับของจริง
 let syncWaiting;         // มีคนขอซิงค์ระหว่างรอโหลด · ค่าคือ silent ที่ขอ (false ชนะ) · ซิงค์ให้ใน openState
@@ -516,6 +564,7 @@ async function openState(){
     loadSettingsIntoForm();
     renderAll();
     renderSyncBadge();   // ตัวนับ "รอส่ง" ต้องนับจากข้อมูลจริง ไม่ใช่ state ว่างตอนเปิดหน้า
+    restoreDnTemplate(); // ไม่ await — ฟอร์มที่จำไว้ไม่ควรถ่วงการเปิดหน้า และพังแล้วต้องไม่ลากหน้าไปด้วย
   }catch(e){
     toast('เปิดหน้าไม่สมบูรณ์ — บางส่วนอาจแสดงผิด กรุณาแจ้งหัวหน้า');
     throw e;   // ปล่อยให้ error หลุดออกไปเหมือนเดิม — เทสที่ตรวจ "ต้องไม่มี error" ยังจับได้
@@ -1872,6 +1921,57 @@ function buildRecordIndex(records){
   for(const r of records){ if(!r.voided) idx[r.orderId+'|'+r.process+'|'+r.date] = r.qty; }
   return idx;
 }
+
+/** หมายเหตุของรายการ ตามกุญแจ orderId|process|date เดียวกับ buildRecordIndex (A2)
+ *  แยก map เพราะตัวนั้นคืนยอด และที่เรียกใช้ต้องการทั้งสองอย่างคนละช่องกัน */
+function buildNoteIndex(records){
+  const idx = {};
+  for(const r of records){
+    if(!r.voided) idx[r.orderId+'|'+r.process+'|'+r.date] = String(r.note==null?'':r.note);
+  }
+  return idx;
+}
+
+/** เหตุผลล่าสุดของแต่ละ `orderId|process` ที่ยัง "ค้างอยู่" ณ วันที่เลือกบนจอ
+ *  → `{note, date}` ของวันที่ใส่ไว้ หรือ `undefined` ถ้าไม่มีอะไรค้าง
+ *
+ *  เจ้าของสั่ง 29 ต.ค. 2026 — เหตุผลต้องตามไปวันถัด ๆ ไปจนกว่าจะเปลี่ยนหรือกดปิด
+ *  ไม่งั้นต้องมาใส่ใหม่ทุกวันทั้งที่เรื่องเดิมยังไม่จบ
+ *
+ *  ⚠️ **นับเฉพาะวันที่ไม่เกินวันที่เลือกอยู่** · ย้อนไปดูวันเก่าต้องไม่เห็นเหตุผลที่เพิ่งใส่ทีหลัง
+ *     ไม่งั้นจอจะเล่าอดีตด้วยข้อมูลของอนาคต (C1 — วันที่เป็นวันปฏิทินล้วน เทียบเป็นข้อความได้)
+ *  ⚠️ **ข้ามรายการที่ยกเลิกไว้ และข้ามหมายเหตุที่ว่าง** · ว่าง = "ไม่เคยใส่" ไม่ใช่ "ปิดแล้ว"
+ *     เพราะรายการที่เกิดจากการคีย์ยอดตามปกติก็มี `note` ว่าง ถ้านับว่าเป็นการปิด
+ *     เรื่องที่ยังไม่จบจะหายไปทุกวันที่มีคนคีย์ยอด ซึ่งคือทุกวัน
+ *  ⚠️ **ตัวปิดคือ `NOTE_CLEARED`** — เจอเป็นตัวล่าสุดแล้วถือว่าไม่มีอะไรค้าง
+ *     (ยังคืนค่าออกไปด้วย เพื่อให้ผู้เรียกแยกได้ว่า "ปิดแล้ว" กับ "ไม่เคยมี")
+ *  ⚠️ วันเดียวกันซ้ำกัน (สองรายการกุญแจเดียวกัน) หยิบตัวที่เจอทีหลัง **เฉพาะตอนที่มันมีหมายเหตุ**
+ *     ถ้าตัวหลังหมายเหตุว่าง ด่าน "ข้ามหมายเหตุที่ว่าง" ข้างบนจะข้ามมัน แล้วย้อนไปได้ตัวแรกแทน
+ *     ซึ่งต่างจาก `buildNoteIndex` ที่เอาตัวหลังเสมอ — ผลคือป้ายสืบทอดอาจขึ้นทับวันของตัวเอง
+ *     (ผู้ตรวจ #117 รันเจอ: ยืนอยู่วันที่ 29/08 แล้วเห็น "ต่อเนื่องมาจาก 29/08")
+ *     **ไม่แก้ที่นี่** — สภาพ "สองแถวกุญแจเดียวกัน" ละเมิด A2 อยู่แล้ว และตอนนั้น `buildCumMap()`
+ *     นับยอดซ้ำสองเท่า ซึ่งหนักกว่ามากและเป็นของเดิม · ที่ต้องแก้คือต้นเหตุ (`mergeRowsInto`
+ *     จับคู่ด้วย `id` ไม่ใช่กุญแจ) ไม่ใช่ปลายทางตรงนี้ */
+function buildCarryIndex(records, onDate){
+  const idx = {};
+  for(const r of records){
+    if(r.voided) continue;
+    const note = String(r.note==null?'':r.note);
+    /* ⚠️ `trim()` ที่นี่ไม่ใช่ของแต่ง — หมายเหตุที่มีแต่อักขระช่องว่างมาได้จากข้อมูลภายนอก
+     *    (เซลล์ในชีตที่มีสเปซ · `applyMerge`) ช่องเขียนเองไม่มีทางสร้างค่านี้
+     *    ถ้าไม่ตัด ป้ายจะกลายเป็น `↩    · 29/08` คือเอียงสีจางแต่ไม่มีเหตุผลให้อ่าน
+     *    **แล้วตามไปทุกวันจนกว่าจะมีคนกดปิด** — การสืบทอดทำให้ของเสียชิ้นเดียวกวนได้ยาวกว่าเดิมมาก
+     *    (ผู้ตรวจ #117 รันเจอ) · ของวันตัวเองยังโชว์ตามเดิมผ่าน `buildNoteIndex` ซึ่งเป็นพฤติกรรมเดิม
+     *    ที่ใบนี้ไม่แตะ — ตรงนั้นอย่างน้อยก็อยู่แค่วันเดียว */
+    if(!note.trim()) continue;
+    const d = String(r.date==null?'':r.date);
+    if(!d || d > onDate) continue;
+    const key = r.orderId+'|'+r.process;
+    const cur = idx[key];
+    if(!cur || d >= cur.date) idx[key] = {note, date: d};
+  }
+  return idx;
+}
 /** เหมือน buildCumMap แต่แยกยอดสะสมออกเป็น "ทันกำหนด" (บันทึกในหรือก่อนวัน deadline ของขั้นนั้น)
  *  กับ "เกินกำหนด" (บันทึกหลังวัน deadline) — ใช้วาดแถบ progress 2 สีในตาราง Dashboard
  *  ต้องใช้ orderById เพราะ deadline คำนวณจาก orderDate ของแต่ละ order เอง ไม่ใช่ค่าคงที่ */
@@ -1950,7 +2050,7 @@ function renderPreview(parsed){
       <td class="left">${escapeHtml(it.osc)}</td>
       <td class="left">${escapeHtml(it.pc)}</td>
       <td>${numFmt(it.orderQty)}</td>
-      <td>${implausibleDate(it.orderDate, today) ? `<span class="badge red">${escapeHtml(String(it.orderDate))}</span>` : fmtDateTH(it.orderDate)}</td>
+      <td>${implausibleDate(it.orderDate, today) ? `<span class="badge red">${escapeHtml(String(it.orderDate))}</span>` : escapeHtml(fmtDateTH(it.orderDate))}</td>
     </tr>`;
   }).join('');
   document.getElementById('previewTable').innerHTML =
@@ -2014,7 +2114,7 @@ function renderOrderVoidTable(){
       <td class="left">${escapeHtml(o.poNo)}</td>
       <td class="left">${escapeHtml(o.pn)}</td>
       <td class="left">${escapeHtml(o.subName||'—')}</td>
-      <td>${fmtDateTH(o.orderDate)}</td>
+      <td>${escapeHtml(fmtDateTH(o.orderDate))}</td>
       <td>${numFmt(o.orderQty)}</td>
       <td>${n ? numFmt(n) : '—'}</td>
       <td>${o.voided?'<span class="badge gray">ยกเลิกแล้ว</span> ':''}${btn}</td>
@@ -2085,7 +2185,7 @@ function renderImportHistory(){
         // entry เก่าก่อนมี batchId — จับคู่ด้วยวันที่ที่ฝังอยู่ใน week ("ส่งของ YYYY-MM-DD")
         const m = (entry.week||'').match(/^ส่งของ (\d{4}-\d{2}-\d{2})$/);
         if(m) idsToVoid = state.records
-          .filter(r=>r.process==='shipping' && r.note==='นำเข้าจากใบส่งงาน' && r.date===m[1] && !r.voided)
+          .filter(r=>r.process==='shipping' && r.note===SOURCE_SHIP_IMPORT && r.date===m[1] && !r.voided)
           .map(r=>r.id);
       }
       if(!idsToVoid.length){ toast('ไม่พบรายการที่จะลบ (อาจถูกลบหรือแก้ไขไปแล้ว)'); return; }
@@ -2112,8 +2212,55 @@ function renderEntryTable(){
 
   const allCum = buildCumMap(state.records);
   const recIndex = buildRecordIndex(state.records);
+  const noteIndex = buildNoteIndex(state.records);
+  const carryIndex = buildCarryIndex(state.records, date);
   const prevProc = PREV_PROCESS[currentProcess];
   const procLabel = PROCESS_LABELS[currentProcess];
+  /* ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (A2) — หน้านี้โชว์อย่างเดียว
+   * เจ้าของสั่งปิดช่องกรอกเมื่อ 23 ต.ค. 2026 · ก่อนหน้านี้เปิดไว้เป็นทางสำรองระหว่างเปลี่ยนผ่าน
+   * แล้วสองทางเขียนกุญแจ orderId|shipping|date เดียวกัน ทับกันเงียบ ๆ โดยไม่มีใครรู้ว่าอันไหนถูก */
+  const isShip = currentProcess === 'shipping';
+  document.getElementById('entryShipNote').hidden = !isShip;
+  /* ใบที่บอกหน่วยไม่ได้จาก `subNameFromPo()` จะไม่ขึ้นในหน้าใบส่งสินค้าของหน่วยไหนเลย
+   * (`deliveryGroups()` กรอง `o.subName === unit` · `renderDnUnits()` ทิ้งค่าว่าง)
+   * = ส่งของใบนั้นไม่ได้ ยอดค้าง 0 ตลอดไป Dashboard ขึ้นล่าช้าถาวร FG ไม่ลด
+   *
+   * ⚠️ หน้าตรวจก่อนนำเข้าเตือนครั้งเดียวตอนกดยืนยันแล้วหายไป — ตรงนี้คือที่ที่คนจะมาหา
+   *    คำตอบว่า "ทำไมใบนี้ไม่มียอดส่งของ" จึงต้องเตือนทุกวันที่เปิดดู
+   *    ตรวจ 25 ต.ค. 2026 ของจริงมี 0 ใบ · ที่ต้องระวังคือตอนเพิ่มนิติบุคคลตัวถัดไป
+   *    แล้วลืมเติมตัวอักษรเข้า SUB_BY_LETTER — ทุกใบของหน่วยนั้นจะเงียบหายไปทั้งหน่วย */
+  if(isShip){
+    /* ⚠️ นับเฉพาะใบที่ยังมียอดค้างส่ง — ใบที่ส่งครบแล้วไม่ต้องใช้หน้าใบส่งสินค้าอีก
+     *    ถ้านับมันด้วย แถบจะติดค้างถาวรแล้วคนเลิกอ่าน ซึ่งตรงข้ามกับเหตุผลที่มีแถบนี้ */
+    const noUnit = activeOrders().filter(o=>
+      !String(o.subName==null?'':o.subName).trim() && wipBalance(o, allCum[o.id]) > 0);
+    /* ⚠️ สองพวกนี้แก้คนละทาง ห้ามรวมเป็นข้อความเดียว
+     *    ปุ่ม "คำนวณ Sub-Name ใหม่" **ข้ามใบที่รหัส PO ตัดสินไม่ได้** (ดู btnRecalcSubName)
+     *    แนะปุ่มให้พวกหลังคือส่งคนไปกดของที่ไม่เกิดอะไร แล้วเขาจะคิดว่าตัวเองทำผิด
+     *    (ผู้ตรวจ #110 รันพิสูจน์: กดแล้ว subName ยังว่างเหมือนเดิม) */
+    const byPo  = noUnit.filter(o=> subNameFromPo(o.poNo));
+    const stuck = noUnit.filter(o=> !subNameFromPo(o.poNo));
+    const box = document.getElementById('entryShipNoUnit');
+    box.hidden = !noUnit.length;
+    if(noUnit.length){
+      const list = a => escapeHtml(a.slice(0,5).map(o=>o.poNo).join(' · '))
+        + (a.length>5 ? ' และอีก ' + numFmt(a.length-5) + ' ใบ' : '');
+      const parts = [];
+      /* ⚠️ ต้องบอกว่าปุ่มนั้นเป็น "งานเหมา" — มันเขียน subName ใหม่ให้ทุกใบที่รหัส PO ตัดสินได้
+       *    รวมใบที่มีหน่วยอยู่แล้วแต่ไม่ตรงรหัส · กล่องยืนยันสรุปครบก่อนเปลี่ยน ไม่เงียบ
+       *    แต่แถบนี้ส่งคนหน้างานไปกด ไม่ใช่เจ้าของ จึงต้องรู้ก่อนว่ากำลังจะกดอะไร (ผู้ตรวจ #110) */
+      if(byPo.length) parts.push(`<b>${numFmt(byPo.length)} ใบ</b> ช่อง Sub-Name ว่าง `
+        + `แต่รหัส PO บอกหน่วยได้ (${list(byPo)}) — กดปุ่ม "คำนวณ Sub-Name ใหม่" `
+        + 'ที่หน้า "ข้อมูล \u0026 แชร์" · ปุ่มนั้นแก้ทุกใบที่รหัส PO ตัดสินได้พร้อมกัน '
+        + 'และสรุปให้ดูก่อนยืนยัน');
+      if(stuck.length) parts.push(`<b>${numFmt(stuck.length)} ใบ</b> รหัส PO บอกหน่วยไม่ได้ `
+        + `(${list(stuck)}) — <b>ปุ่มคำนวณ Sub-Name ใหม่ช่วยไม่ได้</b> `
+        + 'ถ้ารหัส PO พิมพ์ผิดให้แก้แล้วนำเข้าใหม่ · ถ้ารหัสถูกอยู่แล้ว '
+        + 'แปลว่ามีหน่วยใหม่ที่โปรแกรมยังไม่รู้จัก ต้องแจ้งผู้ดูแลให้เพิ่มตัวอักษรหน่วยเข้าโปรแกรม');
+      box.innerHTML = `<span class="badge red">ส่งของไม่ได้ ${numFmt(noUnit.length)} ใบ</span> `
+        + 'ไม่ขึ้นในหน้าใบส่งสินค้าของหน่วยไหนเลย<br>' + parts.join('<br>');
+    }
+  }
 
   let orders = activeOrders().filter(o=>o.status!=='closed');
   if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
@@ -2134,6 +2281,23 @@ function renderEntryTable(){
     if(hideDone && cum>=o.orderQty) return;
     const todayKey = o.id+'|'+currentProcess+'|'+date;
     const todayVal = recIndex[todayKey];
+    const todayNote = noteIndex[todayKey] || '';
+    /* ⚠️ "หมายเหตุที่วันนี้ใส่เอง" — **ช่องว่างล้วนนับเป็นไม่ได้ใส่** ทุกที่ในเซลล์นี้
+     *    ต้องเป็นกติกาเดียวกับ `buildCarryIndex()` ไม่งั้นสองฝั่งเล่าคนละเรื่อง
+     *    (ผู้ตรวจ #117 เจอว่าแก้ฝั่งดัชนีอย่างเดียวไม่พอ — ตัวเลือก "(ค่าเดิม)" ยังชิงถูกเลือก
+     *    ด้วยค่าช่องว่าง แล้วบังเรื่องที่ยังค้างอยู่) · ค่าแบบนี้ช่องบนจอสร้างไม่ได้
+     *    มาจากข้อมูลภายนอกเท่านั้น (เซลล์ในชีตที่มีสเปซ · `applyMerge`) */
+    const ownNote = todayNote.trim() ? todayNote : '';
+    /* เหตุผลที่ค้างมาจากวันก่อน — ใช้เฉพาะตอนวันนี้ยังไม่ได้ใส่เอง
+     * ⚠️ ห้ามโชว์เป็นค่าที่ถูกเลือกไว้เฉย ๆ · ต้องบอกด้วยว่ามาจากวันไหน ไม่งั้นคนอ่านจะเข้าใจว่า
+     *    มีคนใส่ไว้ให้วันนี้แล้ว ทั้งที่ข้อมูลของวันนี้ยังว่าง (จอต้องไม่เล่าเกินข้อมูล) */
+    /* ⚠️ เทียบแบบตัดช่องว่างทั้งสองที่ ให้เป็นกติกาเดียวกับ `buildCarryIndex()`
+     *    ไม่งั้นหมายเหตุที่มีแต่ช่องว่างของวันนี้จะ **บัง** เรื่องที่ยังค้างอยู่ไปหนึ่งวัน
+     *    (ฝั่งดัชนีข้ามมันไปแล้ว แต่ฝั่งนี้ยังนับว่า "วันนี้ใส่เองแล้ว") ·
+     *    และคำปิดที่ติดช่องว่างมาจากการซิงค์/รวมไฟล์ต้องปิดได้เหมือนกัน
+     *    ค่าพวกนี้ช่องบนจอสร้างไม่ได้ มาจากข้อมูลภายนอกเท่านั้น (ผู้ตรวจ #117) */
+    const carry = ownNote ? null : carryIndex[o.id+'|'+currentProcess];
+    const carried = carry && carry.note.trim() !== NOTE_CLEARED ? carry : null;
     const prevCum = prevProc!=null ? ((allCum[o.id] && allCum[o.id][prevProc]) || 0) : null;
     const warn = prevProc!=null && cum > prevCum;
     const remaining = Math.max(0, o.orderQty - cum);
@@ -2151,14 +2315,35 @@ function renderEntryTable(){
       <td data-aging>${agingCell(o.orderDate, ref, st.code)}</td>
       <td><span class="cum">${numFmt(cum)}</span>${warn?' <span class="badge amber" title="ยอดสะสมเกินขั้นตอนก่อนหน้า">⚠</span>':''}</td>
       <td class="rem">${numFmt(remaining)}</td>
-      <td><input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}"></td>
+      <td>${isShip
+        ? `<span class="ship-today">${todayVal!=null ? numFmt(todayVal) : '—'}</span>`
+        : `<input type="number" min="0" class="row-input" data-order="${escapeHtml(o.id)}" value="${todayVal!=null?todayVal:''}">`}</td>
+      ${/* ⚠️ แถวส่งของไม่มีช่องเลือก · note ของแถวนั้นคือคำว่า "จากใบส่งสินค้า" ที่ระบบใช้บอกที่มา
+             ทับแล้วคอลัมน์แหล่งที่มากับตัวกรองของหน้าแก้ไขรายการจะนับยอดนั้นเป็นยอดคีย์มือ
+           ⚠️ ค่าเดิมที่ไม่อยู่ใน ENTRY_NOTES ต้องยังเลือกค้างและอ่านออก — เกิดได้จริงเมื่อ
+             เครื่องอื่นใช้รายการคนละชุด หรือรายการถูกแก้ทีหลัง · ทำให้หายคือทำข้อมูลของคนอื่นหาย */''}
+      <td>${isShip
+        ? `<span class="row-note-na" title="ยอดส่งของคีย์ที่หน้าใบส่งสินค้า — ช่องหมายเหตุของแถวนั้นระบบใช้บอกที่มาของยอด">—</span>`
+        : `<select class="row-note${carried ? ' carried' : ''}" data-order="${escapeHtml(o.id)}"`
+          + `${carried ? ` title="ต่อเนื่องมาจากวันที่ ${escapeHtml(fmtDateTH(carried.date))} — เลือกใหม่เพื่อเปลี่ยน หรือเลือก ${escapeHtml(NOTE_CLEARED)} เพื่อปิดเรื่องนี้"` : ''}>`
+          + `<option value=""${ownNote ? '' : ' selected'}>`
+          /* วันที่รูปสั้น วัน/เดือน — ตัวเต็มอยู่ใน title ของช่อง
+           * ⚠️ `date` เป็นวันปฏิทินล้วนรูป YYYY-MM-DD (A2/C1) ตัดด้วยตำแหน่งได้ ไม่ต้องแปลงเป็น Date
+           *    ซึ่งจะเลื่อนวันเพราะเขตเวลา · ปีหายจากป้ายแต่ยังอยู่ใน title ซึ่งพอสำหรับ
+           *    เรื่องที่ค้างข้ามปี (พบยาก) และได้ที่คืนมา ~38px ให้ตัวเหตุผลที่คนต้องอ่าน */
+          + `${carried ? `↩ ${escapeHtml(carried.note)} · ${escapeHtml(carried.date.slice(8,10)+'/'+carried.date.slice(5,7))}` : '— ไม่ระบุ —'}</option>`
+          + ENTRY_NOTES.map(x=>`<option value="${escapeHtml(x)}"${x===ownNote?' selected':''}>${escapeHtml(x)}</option>`).join('')
+          + (ownNote && !ENTRY_NOTES.includes(ownNote)
+              ? `<option value="${escapeHtml(ownNote)}" selected>${escapeHtml(ownNote)} (ค่าเดิม)</option>` : '')
+          + `</select>`}</td>
     </tr>`;
   });
 
   document.getElementById('entryTable').innerHTML =
     `<thead><tr><th>#</th><th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Order Qty</th><th>Aging<br>(วัน)</th>
-     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนี้</th></tr></thead>
-     <tbody>${rowsHtml || emptyRow(9,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
+     <th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>${isShip ? 'ยอดวันนี้<br><span class="small">(แก้ที่ใบส่งสินค้า)</span>' : 'ยอดวันนี้'}</th>
+     <th>หมายเหตุ</th></tr></thead>
+     <tbody>${rowsHtml || emptyRow(10,'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง')}</tbody>`;
 
   document.querySelectorAll('#entryTable input.row-input').forEach(inputEl=>{
     inputEl.addEventListener('keydown', function(e){
@@ -2181,6 +2366,43 @@ function renderEntryTable(){
       }
     });
   });
+
+  /* ช่องเลือกเหตุผล
+   *
+   * ⚠️ วาดตารางใหม่ **เฉพาะตอนที่หน้าตาของตารางเปลี่ยนจริง** — `saveEntryNote()` บอกมาเอง
+   *    เปลี่ยนเหตุผลของรายการที่มีอยู่แล้วไม่ทำให้ช่องไหนบนตารางเปลี่ยนเลย (เหตุผลอยู่ในตัว
+   *    `select` ซึ่งเบราว์เซอร์อัปเดตให้แล้ว) การวาดใหม่จึงเป็นงานเปล่า
+   *    และไม่ใช่งานเปล่าที่ถูก ๆ — ตารางขนาดของจริง (712 ใบ) วาดครั้งละ ~95 ms
+   *    ส่วนการกดลูกศรยิง change **ทุกครั้ง** ต่างจากช่องยอดที่ยิงครั้งเดียวตอนออกจากช่อง
+   *    ไล่เหตุผลจากตัวแรกถึงตัวท้ายจึงเคยเสียเวลาวาดตารางเปล่า ๆ เจ็ดรอบ
+   *    (ผู้ตรวจ #115 วัดได้ 274 ms ต่อการกดลูกศรหนึ่งครั้งบนตาราง 712 ใบ)
+   *
+   * ⚠️ แต่ตอนที่ **ต้อง** วาดก็ต้องวาดจริง ๆ — **เงื่อนไขอยู่ที่ค่าที่ `saveEntryNote()` คืน
+   *    ที่เดียว ไปอ่านที่นั่น** · หลักการคือวาดใหม่เมื่อสิ่งที่ตาเห็นในแถวเปลี่ยน
+   *    (ช่อง "ยอดวันนี้" · ป้ายสืบทอด · ตัวเลือก "(ค่าเดิม)") ดู `CLAUDE.md` ประกอบ
+   *
+   *    ⚠️ **ห้ามเขียนรายการกรณีไว้ตรงนี้** — เคยเขียนแล้วสามรอบ และนับไม่ครบทั้งสามรอบ
+   *    (#115 ตกข้อ "ค่าเดิมนอกรายการ" · #117 ตกทั้งสองทิศของความว่าง รอบละทิศ)
+   *    รายการที่ต้องนับมือให้ตรงกับโค้ดที่อยู่คนละที่ คือของที่จะหลุดเสมอ */
+  document.querySelectorAll('#entryTable select.row-note').forEach(sel=>{
+    sel.addEventListener('change', function(){
+      const oid = this.dataset.order;
+      const redraw = saveEntryNote(oid, this.value, date);
+      renderRecordEditor();
+      renderSyncBadge();
+      if(!redraw) return;
+      renderEntryTable();
+      /* ⚠️ ต้องคืนโฟกัสเอง — วาดตารางใหม่แล้วอิลิเมนต์เดิมหายไปพร้อมโฟกัส
+       *    Chrome ยิง change **ทุกครั้งที่กดลูกศร** บน select ที่ยังไม่เปิดรายการ
+       *    พอโฟกัสหลุดตั้งแต่ลูกศรครั้งแรก ลูกศรครั้งต่อไปไม่ถึงช่องนี้แล้ว
+       *    เหตุผลตัวที่สองเป็นต้นไปจึงเอื้อมไม่ถึงด้วยแป้นพิมพ์ และค่าที่ค้างอยู่คือ
+       *    ตัวแรกของรายการซึ่งเขาไม่ได้ตั้งใจเลือก (ผู้ตรวจ #115 รันพิสูจน์บน Chromium)
+       *    ช่องยอดมี pendingFocusOrderId คืนให้อยู่แล้ว ช่องนี้ต้องมีของตัวเอง (G2) */
+      const again = document.querySelector(
+        `#entryTable select.row-note[data-order="${CSS.escape(oid)}"]`);
+      if(again) again.focus();
+    });
+  });
 }
 
 /* ---------- Record editor: แก้ไข/ลบรายการที่บันทึกแล้ว ---------- */
@@ -2197,8 +2419,8 @@ function renderRecordEditor(){
   let rows = state.records.filter(r=>showVoided ? true : !r.voided);
   if(dateF) rows = rows.filter(r=>r.date===dateF);
   if(procF) rows = rows.filter(r=>r.process===procF);
-  if(srcF==='ship') rows = rows.filter(r=>r.note==='นำเข้าจากใบส่งงาน');
-  if(srcF==='manual') rows = rows.filter(r=>r.note!=='นำเข้าจากใบส่งงาน');
+  if(srcF==='ship') rows = rows.filter(r=>r.note===SOURCE_SHIP_IMPORT);
+  if(srcF==='manual') rows = rows.filter(r=>r.note!==SOURCE_SHIP_IMPORT);
   if(search){
     rows = rows.filter(r=>{
       const o = orderById[r.orderId];
@@ -2219,15 +2441,15 @@ function renderRecordEditor(){
     const source = r.note===SOURCE_SHIP_IMPORT ? 'ใบส่งงาน'
                  : r.note===SOURCE_DELIVERY ? 'ใบส่งสินค้า' : 'กรอกมือ';
     const actionBtn = r.voided
-      ? `<button class="btn small" data-restore="${r.id}">↩️ กู้คืน</button>`
-      : `<button class="btn danger small" data-delete="${r.id}">🗑️ ลบ</button>`;
+      ? `<button class="btn small" data-restore="${escapeHtml(r.id)}">↩️ กู้คืน</button>`
+      : `<button class="btn danger small" data-delete="${escapeHtml(r.id)}">🗑️ ลบ</button>`;
     return `<tr class="${r.voided?'row-voided':''}">
-      <td><input type="checkbox" class="rec-chk" data-id="${r.id}" ${recSelectedIds.has(r.id)?'checked':''}></td>
-      <td>${fmtDateTH(r.date)}</td>
+      <td><input type="checkbox" class="rec-chk" data-id="${escapeHtml(r.id)}" ${recSelectedIds.has(r.id)?'checked':''}></td>
+      <td>${escapeHtml(fmtDateTH(r.date))}</td>
       <td class="left">${escapeHtml(PROCESS_LABELS[r.process]||r.process)}</td>
       <td class="left">${escapeHtml(o?o.poNo:'?')}</td>
       <td class="left">${escapeHtml(o?o.pn:'?')}</td>
-      <td><input type="number" min="0" class="row-input rec-qty-input" data-id="${r.id}" value="${r.qty}" ${r.voided?'disabled':''}></td>
+      <td><input type="number" min="0" class="row-input rec-qty-input" data-id="${escapeHtml(r.id)}" value="${escapeHtml(r.qty)}" ${r.voided?'disabled':''}></td>
       <td class="left">${source}${r.voided?' <span class="badge gray">ลบแล้ว</span>':''}</td>
       <td class="left">${escapeHtml(r.deviceName||'-')}</td>
       <td>${actionBtn}</td>
@@ -2299,6 +2521,14 @@ function voidRecords(ids){
 }
 
 function saveEntryValue(orderId, rawVal, date){
+  /* ⚠️ ด่านนี้ไม่ใช่ของซ้ำกับการไม่วาดช่องกรอก — มันกันทางที่เหลือ
+   *    ยอดส่งของต้องมีทางเขียนทางเดียวคือ saveAllocation() ของหน้าใบส่งสินค้า (A2)
+   *    ถ้าวันหนึ่งมีใครวาดช่องกรอกกลับมา หรือเรียกฟังก์ชันนี้จากที่อื่น
+   *    กุญแจ orderId|shipping|date จะถูกเขียนจากสองที่แล้วทับกันเงียบ ๆ อีกรอบ */
+  if(currentProcess === 'shipping'){
+    toast('ยอดส่งของคีย์ที่หน้าใบส่งสินค้า — หน้านี้แสดงผลอย่างเดียว');
+    return;
+  }
   const idx = state.records.findIndex(r=>r.orderId===orderId && r.process===currentProcess && r.date===date);
   if(rawVal===''||rawVal==null){
     // เจตนาไม่ลบบันทึกเดิมเมื่อเคลียร์ช่องว่าง (ต่างจากเดิม) — เพื่อไม่ให้ขัดกับการซิงค์ข้าม
@@ -2334,6 +2564,97 @@ function saveEntryValue(orderId, rawVal, date){
   }
   saveState();
   doSync();
+}
+
+/** บันทึกเหตุผลของแถวในหน้าคีย์ยอดรายวัน — เขียนช่อง `note` ของรายการวันนั้น
+ *
+ *  คืน `true` เมื่อ **ตารางต้องถูกวาดใหม่** — สร้างรายการยอด 0 ขึ้นใหม่ หรือการเลือกถูกปฏิเสธ
+ *  จนต้องดีดช่องกลับ · คืน `false` เมื่อไม่มีอะไรบนตารางเปลี่ยน (ดูเหตุผลที่ตัวจับ change)
+ *
+ *  ⚠️ ด่านเดียวกับ saveEntryValue — ยอดส่งของมีทางเขียนทางเดียวคือหน้าใบส่งสินค้า (A2)
+ *     และ `note` ของแถว shipping คือคำว่า "จากใบส่งสินค้า" ที่ระบบใช้บอกที่มาของยอด
+ *     ทับแล้วคอลัมน์แหล่งที่มากับตัวกรองของหน้าแก้ไขรายการจะนับยอดนั้นเป็นยอดคีย์มือ
+ *     ด่านนี้ไม่ใช่ของซ้ำกับการไม่วาดช่องเลือก — มันกันทางที่เหลือถ้ามีใครเรียกฟังก์ชันนี้จากที่อื่น */
+function saveEntryNote(orderId, value, date){
+  if(currentProcess === 'shipping'){
+    toast('แถวส่งของแก้ที่หน้าใบส่งสินค้า — หน้านี้แสดงผลอย่างเดียว');
+    return false;   // แถวส่งของไม่มีช่องเลือกอยู่แล้ว ไม่มีอะไรต้องดีดกลับ
+  }
+  const note = String(value==null?'':value);
+  const idx = state.records.findIndex(r=>r.orderId===orderId && r.process===currentProcess && r.date===date);
+  const cur = idx>-1 ? String(state.records[idx].note==null?'':state.records[idx].note) : '';
+  /* ⚠️ ด่าน voided ต้องมา **ก่อน** ด่าน "ค่าไม่เปลี่ยน" ข้างล่าง
+   *    ไม่งั้นการเลือกค่าที่บังเอิญตรงกับเหตุผลเดิมของแถวที่ยกเลิกไว้ จะคืนค่าเงียบสนิท
+   *    ไม่มีข้อความอะไรเลย แล้วช่องเด้งกลับเป็น "— ไม่ระบุ —" เอง (เพราะแถวที่ยกเลิกไม่เข้าดัชนี)
+   *    คนกดจึงไม่รู้ว่าเกิดอะไรขึ้น · เลือกค่าอื่นได้ข้อความเตือน แต่ตัวที่ตรงกับของเก่าไม่ได้
+   *    = พฤติกรรมสองแบบบนการกดเดียวกัน (ผู้ตรวจ #115 รันเจอ)
+   *
+   *    saveEntryValue ปลุกรายการที่ยกเลิกให้เมื่อพิมพ์ยอดทับ เพราะนั่นคือการกู้คืนโดยเจตนา
+   *    แต่การใส่เหตุผลไม่ใช่ — ปลุกแล้วยอดที่ถูกยกเลิกจะกลับเข้ายอดสะสมโดยคนกดไม่ได้สั่ง (B1) */
+  if(idx>-1 && state.records[idx].voided){
+    toast('รายการของวันนี้ถูกยกเลิกไว้ — ถ้าต้องการใช้อีกครั้ง ให้คีย์ยอดทับก่อน');
+    return true;    // ต้องดีดช่องกลับ ไม่งั้นจอโชว์เหตุผลที่ไม่ได้บันทึก
+  }
+  /* รับเฉพาะค่าว่าง (ล้างหมายเหตุ) · ค่าที่อยู่ในรายการ · หรือค่าเดิมของแถวนั้นเอง
+   * ค่าเดิมที่ไม่อยู่ในรายการเกิดได้จริงเมื่อเครื่องอื่นใช้รายการคนละชุด จึงต้องเลือกค้างไว้ได้
+   * ห้ามรับค่าอื่น ไม่งั้นช่องนี้กลายเป็นทางเขียนข้อความอะไรก็ได้ลง note ซึ่งชนกับที่มาของยอด */
+  if(note !== '' && note !== cur && !ENTRY_NOTES.includes(note)){
+    toast('เหตุผลนี้ไม่อยู่ในรายการ');
+    return true;    // เช่นเดียวกัน ต้องดีดกลับ
+  }
+  if(idx>-1 && cur === note) return false;
+  const now = new Date().toISOString();
+  if(idx>-1){
+    /* ⚠️ ห้ามแตะ `deviceName` ตรงนี้ — คอลัมน์ในหน้าแก้ไขรายการชื่อ "เครื่องที่กรอก"
+     *    และสิ่งที่คนไปหาคำตอบคือ **ใครคีย์ยอดจำนวนนี้** · การที่อีกคนมาเลือกเหตุผล
+     *    ให้แถวนั้นแล้วชื่อเครื่องเปลี่ยนตาม = คำตอบนั้นผิดโดยไม่มีใครรู้
+     *
+     *    ⚠️ **สามทางที่แก้ record เขียนช่องนี้ไม่เหมือนกัน และยังไม่มีกฎกลาง**
+     *      `saveEntryValue()` (คีย์ยอดบนหน้านี้) — **ทับ**
+     *      ช่องแก้ยอดในหน้าแก้ไขรายการ — **ไม่ทับ**
+     *      `saveEntryNote()` (ที่นี่) — **ไม่ทับ**
+     *    อย่าสรุปว่ากฎคือ "ใครพิมพ์ยอดเป็นเจ้าของช่องนี้" — ไม่จริงในโค้ดวันนี้
+     *    (ผู้ตรวจ #115 รันยืนยันทั้งสามทาง) · จะตั้งกฎกลางต้องแก้ทั้งสามทางพร้อมกัน
+     *    ไม่ใช่แก้ทางเดียวให้ต่างจากที่เหลือ ซึ่งจะยิ่งเพิ่มความไม่ตรงกัน
+     *
+     *    ตอนสร้างแถวใหม่ข้างล่างยังบันทึกชื่อเครื่องตามเดิม เพราะคนนั้นสร้างแถวจริง
+     *    ผลที่ยอมรับไว้: ไม่มีที่เก็บว่า "ใครเลือกเหตุผล" — จะเก็บต้องเพิ่มคอลัมน์ = แก้ contract
+     *    การซิงค์ + redeploy Apps Script ซึ่งต้องถามเจ้าของก่อน (§7) */
+    state.records[idx].note = note;
+    state.records[idx].updatedAt = now;
+    state.records[idx]._dirty = true;
+    saveState();
+    doSync();
+    /* ⚠️ ค่าเดิมที่เป็นค่านอกรายการต้องวาดใหม่ — ตัวเลือก "(ค่าเดิม)" ถูกวาดไว้เฉพาะตอนที่
+     *    มันเป็นค่าปัจจุบันของแถว · เปลี่ยนไปค่าอื่นแล้วไม่วาดใหม่ มันจะค้างอยู่ในรายการ
+     *    แล้วถ้าคนเลือกย้อนกลับไปหามัน จะได้ข้อความ "เหตุผลนี้ไม่อยู่ในรายการ"
+     *    ทั้งที่มันอยู่บนจอตรงหน้า = จอกับพฤติกรรมไม่ตรงกัน ซึ่งเป็นสิ่งที่การประหยัด
+     *    การวาดใหม่ต้องไม่สร้างขึ้นมา (ผู้ตรวจ #115 รันเจอ) */
+    /* ⚠️ **ป้ายสืบทอดขึ้นกับ "หมายเหตุของวันนี้ว่างหรือไม่" ตัวเดียว**
+     *    (ดู `carried` ใน renderEntryTable) · ความว่างนั้นเปลี่ยนเมื่อไหร่ จอต้องวาดใหม่ทันที
+     *    ไม่งั้นช่องจะค้างอยู่คนละสถานะกับข้อมูล — ผู้ตรวจ #117 เจอทั้งสองทิศ รอบละทิศ
+     *      ว่าง → มีค่า   ช่องค้างเป็นตัวเอียงสีจางพร้อม tooltip ของวันเก่า ทั้งที่เป็นของวันนี้แล้ว
+     *                     (ทางนี้คือเส้นทางที่คนใช้จริงมากที่สุด: คีย์ยอดก่อน แล้วค่อยใส่เหตุผล)
+     *      มีค่า → ว่าง   ช่องค้างเป็น "— ไม่ระบุ —" ทั้งที่เรื่องของวันก่อนยังไม่ปิด
+     *
+     *    ⚠️ อย่าเขียนเป็นรายการกรณี แล้วไล่เติมทีละข้อ — สองรอบก่อนทำแบบนั้นแล้วตกทั้งสองรอบ
+     *    เงื่อนไขคือ "ความว่างเปลี่ยน" บวกกรณีค่าเดิมนอกรายการ (ตัวเลือก "(ค่าเดิม)" ต้องหาย)
+     *    ส่วนการเปลี่ยนจากคำหนึ่งไปอีกคำในรายการ ไม่มีอะไรบนตารางเปลี่ยน จึงไม่ต้องวาด
+     *    (ผู้ตรวจวัดแล้ว: กดลูกศรรัว 7 ครั้ง วาดใหม่ครั้งเดียว — ครั้งที่ออกจากค่าว่าง) */
+    return note === '' || cur === '' || !ENTRY_NOTES.includes(cur);
+  } else {
+    if(note === '') return false;   // ไม่มีรายการ และไม่ได้เลือกอะไร = ไม่ต้องสร้างแถวเปล่า
+    /* ⚠️ เจ้าของเลือก 27 ต.ค. 2026 ให้เลือกเหตุผลได้แม้ยังไม่คีย์ยอด แล้ว **บันทึกยอดเป็น 0**
+     *    เพราะเหตุผลมักจำเป็นตอน "วันนี้ไม่ได้ผลิต" ซึ่งคือตอนที่ยังไม่มียอด
+     *    ผลที่ตามมาและยอมรับไว้: เกิดรายการยอด 0 ขึ้นจริง ซึ่งมีความหมายว่า "วันนี้ผลิต 0"
+     *    ไม่ใช่ "ยังไม่ได้คีย์" · โผล่ในหน้าแก้ไขรายการ และนับเป็นการคีย์ของวันนั้น
+     *    ยอดสะสมไม่ขยับเพราะบวก 0 · ล้างเหตุผลทีหลังจะเหลือรายการยอด 0 ไว้ ไม่ลบให้ (B1) */
+    state.records.push({id:uid(), date, orderId, process:currentProcess, qty:0, note,
+      deviceName:state.deviceName, createdAt:now, updatedAt:now, voided:false, _dirty:true});
+  }
+  saveState();
+  doSync();
+  return true;      // แถวใหม่โผล่บนตาราง ช่อง "ยอดวันนี้" เปลี่ยนจากว่างเป็น 0
 }
 
 /* ---------- Render: ยอดคงคลัง FG ---------- */
@@ -2427,7 +2748,7 @@ function renderFgCard(pn, unit){
       <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>
       <th style="width:110px">คงเหลือ</th></tr></thead><tbody>` +
     (moves.map(m=>`<tr>
-      <td>${fmtDateTH(m.date)}</td>
+      <td>${escapeHtml(fmtDateTH(m.date))}</td>
       <td class="left">${escapeHtml(m.po)}</td>
       <td>${m.kind==='inspection' ? numFmt(m.qty) : ''}</td>
       <td>${m.kind==='shipping' ? numFmt(m.qty) : ''}</td>
@@ -2821,7 +3142,7 @@ function renderDashTable(){
       <td class="left">${escapeHtml(o.pn)}</td>
       <td class="left">${escapeHtml(o.subName)}</td>
       <td>${numFmt(o.orderQty)}</td>
-      <td>${fmtDateTH(o.orderDate)}</td>
+      <td>${escapeHtml(fmtDateTH(o.orderDate))}</td>
       <td data-aging>${agingCell(o.orderDate, ref, st.code)}</td>
       ${PROCESSES.map(p=>`<td>${progressCell(c[p]||0, split[p], o.orderQty)}</td>`).join('')}
       <td><span class="badge ${st.color}">${escapeHtml(st.label)}</span>${anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
@@ -2893,7 +3214,7 @@ function showMergeModal(plan){
     html += `<div class="small muted">ตัวอย่างรายการขัดแย้ง:<br>` +
       plan.conflictRecords.slice(0,6).map(c=>{
         const winVal = c.winner==='incoming'? c.incoming.qty : c.local.qty;
-        return `${escapeHtml(c.local.orderId)} (${escapeHtml(c.local.process)}, ${c.local.date}): ${c.local.qty} vs ${c.incoming.qty} → ใช้ ${winVal}`;
+        return `${escapeHtml(c.local.orderId)} (${escapeHtml(c.local.process)}, ${escapeHtml(c.local.date)}): ${escapeHtml(c.local.qty)} vs ${escapeHtml(c.incoming.qty)} → ใช้ ${escapeHtml(winVal)}`;
       }).join('<br>') + `</div>`;
   }
   if(!plan.newOrders.length && !plan.updOrders.length && !plan.newRecords.length && !plan.conflictRecords.length){
@@ -3391,7 +3712,7 @@ function renderDeliveryNote(){
              <div class="hint">${span} ใบสั่ง</div></td>` : '')
         + `<td>${itemOf.get(o.id)}</td>
         <td class="left">${escapeHtml(o.poNo)}</td>
-        <td>${fmtDateTH(o.orderDate)}</td>
+        <td>${escapeHtml(fmtDateTH(o.orderDate))}</td>
         <td>${numFmt(o.orderQty)}</td>
         <td data-ourwip="${escapeHtml(o.id)}">${numFmt(wip)}</td>
         <td data-deltawip="${escapeHtml(o.id)}">${dnDeltaCell(deltaWip, deltaWeek, wip, inCallIn, deltaRow)}</td>
@@ -3737,30 +4058,168 @@ function refreshDnGroup(pn){
  *
  *    plan ลอกวิธีของ bincard v2 ที่สร้างไฟล์ใหม่จากศูนย์ไม่ได้ — ExcelJS เขียนไฟล์ใหม่ทั้งไฟล์
  *    แล้ว xl/drawings/ หายจนโลโก้บริษัทไม่ขึ้น · ทางที่เหลือคือโหลดใหม่จากไบต์ดิบทุกครั้ง */
-let dnTemplate = null;   // {buf, sheetMap, fileName}
+let dnTemplate = null;   // {buf, sheetMap, fileName, savedAt}
+
+/** รับไบต์ของฟอร์มเข้ามาเป็นเทมเพลตที่ใช้งานอยู่
+ *  ใช้ร่วมกันระหว่าง "เลือกไฟล์" กับ "กู้คืนของที่จำไว้" — ต้องเป็นเส้นทางเดียวกัน
+ *  ไม่งั้นฟอร์มที่กู้คืนมาอาจผ่านด่านคนละชุดกับฟอร์มที่เพิ่งเลือก
+ *
+ *  ⚠️ ไม่เก็บ sheetMap ลงฐานข้อมูล — คิดใหม่จากไบต์ทุกครั้ง
+ *     กติกาเดียวกับกล่อง/เศษ: ห้ามเก็บของที่คิดได้ ไม่งั้นมันค้างไม่ตรงกับไฟล์จริง */
+async function useDnTemplate(buf, fileName, savedAt, fromMemory){
+  const zip = await JSZip.loadAsync(buf);
+  if(!zip.file('xl/workbook.xml')) throw new Error('ไม่ใช่ไฟล์ Excel (.xlsx)');
+  const sheetMap = await sheetPathMap(zip);
+  /* เลข WK เป็นสัปดาห์การผลิตของโรงงาน ไม่ตรงกับสัปดาห์ ISO ที่คำนวณเองได้
+   * จึงอ่านจากฟอร์มที่เจ้าของ "เพิ่งเลือก" มาเป็นค่าตั้งต้น แล้วให้แก้บนหน้าจอได้
+   *
+   * ⚠️ **ห้ามเติมจากฟอร์มที่จำไว้** — เจตนาเดิมคือ "ไฟล์ที่เพิ่งหยิบมาคือฟอร์มของสัปดาห์นี้"
+   *    ซึ่งไม่จริงกับไฟล์ที่ค้างอยู่ในเครื่องมาหลายสัปดาห์ · ถ้าเติมให้ทุกครั้งที่เปิดโปรแกรม
+   *    ด่าน "กรอกเลขสัปดาห์ (WK) ก่อนครับ" จะไม่มีโอกาสทำงานอีกเลย แล้ว WK ของสัปดาห์เก่า
+   *    จะไหลลงกระดาษที่ส่ง Delta เองโดยไม่มีใครพิมพ์ (ผู้ตรวจ #112 รันเจอ) */
+  if(!fromMemory){
+    const wk = await weekFromTemplate(zip, sheetMap);
+    if(wk && !dnWeek()) document.getElementById('dnWeek').value = wk;
+  }
+  /* ⚠️ **ตั้ง `dnTemplate` เป็นบรรทัดท้ายสุด** หลังงานที่โยนได้ทั้งหมด
+   *    ไฟล์ .xlsx ที่ผ่านด่าน xl/workbook.xml แต่พังทีหลัง (ขาด rels · โดนตัดครึ่ง)
+   *    เคยทิ้ง dnTemplate ที่ใช้ไม่ได้ไว้ก่อนโยน · แล้วด่านกันแข่งจังหวะใน
+   *    restoreDnTemplate() (`if(dnTemplate) return;`) เห็นว่ามีของอยู่แล้วเลยไม่กู้ของดีกลับมา
+   *
+   *    ผลคือเลือกไฟล์เสียมาทับครั้งเดียว แล้วออกใบไม่ได้ทั้งปุ่มหลักและลิงก์ออกไฟล์ซ้ำ
+   *    จนกว่าจะรีเฟรช — ลิงก์ใน log เช็กแค่ `if(!dnTemplate)` ซึ่งไม่ null แต่เป็นของพัง
+   *    จึงหลุดด่านไปตายข้างในแล้วได้ข้อความอังกฤษ (ผู้ตรวจ #112 รันเจอ)
+   *
+   *    ตั้งท้ายสุดแล้ว ด่านกันแข่งจังหวะยังทำงานเหมือนเดิม เพราะการเลือกไฟล์ที่สำเร็จ
+   *    ยังตั้งค่าให้ก่อนที่ restoreDnTemplate() จะอ่านฐานข้อมูลเสร็จอยู่ดี */
+  dnTemplate = {buf, sheetMap, fileName, savedAt: savedAt || null};
+  document.getElementById('btnDnExport').disabled = false;
+  /* ⚠️ ไม่วาดกล่องที่นี่ — ตอนนี้ `savedAt` ยังว่างเสมอบนเส้นทางเลือกไฟล์
+   *    วาดเลยจะขึ้น "เครื่องนี้จำไว้ให้ไม่ได้" แวบหนึ่งทุกครั้ง ซึ่งเห็นได้จริงถ้าฟอร์มใหญ่
+   *    ให้ผู้เรียกวาดหลังรู้ผลการจำแล้ว (ผู้ตรวจ #112 ทัก) */
+}
+
+/** บอกบนจอว่าเครื่องนี้จำฟอร์มไหนไว้ และจำไว้เมื่อไหร่
+ *  ⚠️ ห้ามจำเงียบ ๆ — บริษัทแก้ฟอร์มเมื่อไหร่ เครื่องที่ยังใช้ของเก่าจะออกใบด้วยผังเก่า
+ *     โดยไม่มีอะไรฟ้องเลย · ชื่อไฟล์กับวันที่คือสิ่งเดียวที่ทำให้คนสังเกตได้
+ *
+ *  ⚠️ และห้ามบอกว่า "จำแล้ว" ตอนที่จำไม่สำเร็จ — `savedAt` ต้องมาจากการเขียนลงฐานข้อมูล
+ *     ที่สำเร็จจริงเท่านั้น ไม่ใช่จากเวลาที่กดเลือกไฟล์ · เครื่องที่เปิด IndexedDB ไม่ได้ (E3)
+ *     หรือพื้นที่เต็ม ต้องรู้ว่าตัวเองต้องเลือกไฟล์ใหม่ทุกครั้ง ไม่ใช่เชื่อว่าจำให้แล้ว
+ *     (ผู้ตรวจ #112 รันเจอ — ของเดิมกลับด้านกับเจตนาของใบนี้เอง) */
+function renderDnTplInfo(){
+  const box = document.getElementById('dnTplInfo');
+  const txt = document.getElementById('dnTplInfoText');
+  box.hidden = !dnTemplate;
+  if(box.hidden) return;
+  txt.textContent = dnTemplate.savedAt
+    ? `จำฟอร์มไว้แล้ว: ${dnTemplate.fileName} (เลือกเมื่อ ${fmtDateTimeTH(dnTemplate.savedAt)})`
+      + ' — ไม่ต้องเลือกไฟล์ใหม่ทุกครั้ง · ถ้าบริษัทแก้ฟอร์ม ให้เลือกไฟล์ใหม่ทับ'
+    : `ใช้ฟอร์ม ${dnTemplate.fileName} ได้ในรอบนี้ แต่เครื่องนี้จำไว้ให้ไม่ได้`
+      + ' — เปิดโปรแกรมใหม่ครั้งหน้าต้องเลือกไฟล์ฟอร์มอีกครั้ง';
+  document.getElementById('btnDnTplForget').hidden = !dnTemplate.savedAt;
+}
+
+/** วันเวลาตามนาฬิกาเครื่อง — ห้ามตัดสิบตัวแรกของ ISO มาใช้ นั่นเป็นวันแบบ UTC (C1)
+ *  เลือกไฟล์ตอนเช้าก่อนเจ็ดโมงจะโชว์วันก่อนหน้าหนึ่งวัน (ผู้ตรวจ #112 ทัก) */
+function fmtDateTimeTH(iso){
+  const d = new Date(iso);
+  return isNaN(d) ? String(iso||'') : d.toLocaleString('th-TH');
+}
+
+/** จำไว้ในเครื่องนี้ — ล้มเหลวได้โดยไม่พังอะไร เทมเพลตยังใช้ได้ในรอบนี้อยู่ดี
+ *  ⚠️ ไม่มี IndexedDB = ไม่จำ · ห้ามยัด ArrayBuffer ลง localStorage เด็ดขาด
+ *     มันเก็บได้แต่ข้อความ ต้องแปลงเป็น base64 ซึ่งโตขึ้นหนึ่งในสามและชนเพดานทันที */
+async function rememberDnTemplate(){
+  if(!dnTemplate) return false;
+  // เครื่องที่เปิด IndexedDB ไม่ได้ยังใช้ localStorage อยู่ (E3) — จำฟอร์มให้ไม่ได้ และต้องบอก ไม่ใช่เงียบ
+  if(!stateDb) return false;
+  try{
+    const savedAt = new Date().toISOString();
+    await idbTx('readwrite', st => st.put(
+      {buf: dnTemplate.buf, fileName: dnTemplate.fileName, savedAt}, DN_TPL_KEY));
+    dnTemplate.savedAt = savedAt;   // ตั้งหลังเขียนสำเร็จเท่านั้น — กล่องบนจออ่านค่านี้
+    return true;
+  }catch(err){
+    /* ⚠️ **จำของใหม่ไม่ได้ ก็ต้องไม่เหลือของเก่าไว้ให้กู้**
+     *    ไม่งั้นแถวของฟอร์มเก่ายังอยู่ แล้วรอบถัดไปโปรแกรมกู้ "ฟอร์มเก่า" ขึ้นมาให้ออกใบได้ทันที
+     *    ทั้งที่เพิ่งบอกผู้ใช้ไปว่าครั้งหน้าต้องเลือกไฟล์ใหม่ — เขาจะไม่พกไฟล์มา
+     *    แล้วกระดาษออกจากผังฟอร์มเก่า ซึ่งคือความเสี่ยงที่ใบนี้ตั้งใจกันทั้งใบ
+     *    (ผู้ตรวจ #112 รันเจอ) · การลบยังช่วยคืนพื้นที่ให้ด้วย ซึ่งมักเป็นสาเหตุที่เขียนไม่สำเร็จ */
+    try{ await idbTx('readwrite', st => st.delete(DN_TPL_KEY)); }catch(e){}
+    return false;
+  }
+}
+
+/** กู้ฟอร์มที่จำไว้ตอนเปิดโปรแกรม
+ *  ⚠️ ห้ามให้ตัวนี้ถ่วงหรือทำให้การเปิดหน้าพัง — ฟอร์มเสียต้องแค่ "ไม่มีฟอร์ม" ไม่ใช่เปิดโปรแกรมไม่ได้
+ *     (กฎเดียวกับ #100 ที่วาดจอพังแล้วห้ามทำทั้งหน้าค้างจาง) */
+async function restoreDnTemplate(){
+  let saved = null;
+  try{
+    if(stateDb) saved = await idbTx('readonly', st => st.get(DN_TPL_KEY));
+  }catch(err){ saved = null; }   // อ่านพลาดชั่วคราว — ห้ามลบของที่จำไว้ทิ้ง
+  try{
+    /* ⚠️ restoreDnTemplate() ถูกเรียกแบบไม่ await ตอนเปิดหน้า — ถ้ามีคนเลือกไฟล์แทรกเข้ามา
+     *    ระหว่างที่กำลังอ่านฐานข้อมูล **ของใหม่ต้องชนะ** ห้ามเอาฟอร์มเก่าทับ
+     *    ไม่งั้นคนเลือกไฟล์ใหม่แล้วออกใบด้วยฟอร์มเก่าโดยไม่รู้ตัว ซึ่งเป็นบั๊กชนิดเดียว
+     *    กับที่ใบนี้ตั้งใจกัน (ผู้ตรวจ #112 จดว่าเป็นมุมที่ยังไม่ได้ดู) */
+    if(dnTemplate) return;
+    /* แถวที่เขียนค้างครึ่ง ๆ (ไม่มี buf) กู้ไม่ได้ — ล้างทิ้ง
+     * ⚠️ ต้องอยู่ **หลัง** ด่านข้างบน · เคยวางไว้ก่อนแล้วผู้ตรวจ #112 ทักว่าได้การแข่งจังหวะอีกทิศ
+     *    คือถ้ามีคนเลือกไฟล์แล้วจำสำเร็จพอดีในช่วงนั้น แถวใหม่จะถูกลบ
+     *    ระหว่าง "ลบแถวใหม่ของคนอื่น" กับ "แถวเสียค้างอยู่เฉย ๆ" อย่างหลังปลอดภัยกว่าชัดเจน */
+    if(saved && !saved.buf){ try{ await idbTx('readwrite', st => st.delete(DN_TPL_KEY)); }catch(e){} }
+    if(saved && saved.buf) await useDnTemplate(saved.buf, saved.fileName, saved.savedAt, true);
+    renderDnTplInfo();
+  }catch(err){
+    /* ถึงตรงนี้แปลว่าไบต์ที่เก็บไว้เปิดเป็นไฟล์ Excel ไม่ได้จริง — เก็บไว้ก็ไม่มีประโยชน์ */
+    dnTemplate = null;
+    try{ await idbTx('readwrite', st => st.delete(DN_TPL_KEY)); }catch(e){}
+    renderDnTplInfo();
+    toast('ฟอร์มที่จำไว้เปิดไม่ได้ — กรุณาเลือกไฟล์ฟอร์มใหม่');
+  }finally{
+    document.documentElement.dataset.dnTplReady = '1';   // ป้ายให้เทสรู้ว่าลองกู้คืนจบแล้ว (ได้หรือไม่ได้ก็ตาม)
+  }
+}
 
 document.getElementById('dnTemplateInput').addEventListener('change', async (e)=>{
   const file = e.target.files[0];
   dnTemplate = null;
   document.getElementById('btnDnExport').disabled = true;
-  if(!file) return;
-  if(rejectLegacyXls(file)) return;
+  renderDnTplInfo();
+  /* ⚠️ **ทุกทางออก**ของตัวจับนี้ต้องกู้ฟอร์มที่จำไว้กลับมา ไม่ใช่เฉพาะทางที่แกะ zip ไม่ผ่าน
+   *    เลือก .xls มาทับ หรือกดยกเลิกหน้าต่างเลือกไฟล์ ก็ไม่ควรทำให้ของที่จำไว้หายไปจากจอ
+   *    ทั้งที่ยังอยู่ในฐานข้อมูล แล้วต้องให้คนไปรีเฟรชเอง (ผู้ตรวจ #112 รันเจอ สองรอบติด) */
+  if(!file || rejectLegacyXls(file)){ await restoreDnTemplate(); return; }
   toast('กำลังอ่านไฟล์...');
   try{
-    const buf = await file.arrayBuffer();
-    const zip = await JSZip.loadAsync(buf);
-    if(!zip.file('xl/workbook.xml')) throw new Error('ไม่ใช่ไฟล์ Excel (.xlsx)');
-    dnTemplate = {buf, sheetMap: await sheetPathMap(zip), fileName: file.name};
-    // เลข WK เป็นสัปดาห์การผลิตของโรงงาน ไม่ตรงกับสัปดาห์ ISO ที่คำนวณเองได้
-    // จึงอ่านจากฟอร์มที่เจ้าของเลือกมาเป็นค่าตั้งต้น แล้วให้แก้บนหน้าจอได้
-    const wk = await weekFromTemplate(zip, await sheetPathMap(zip));
-    if(wk && !dnWeek()) document.getElementById('dnWeek').value = wk;
+    await useDnTemplate(await file.arrayBuffer(), file.name, null, false);
   }catch(err){
     toast('เปิดไฟล์ไม่สำเร็จ: '+err.message);
+    /* ⚠️ เลือกไฟล์เสียมาทับ ไม่ควรทำให้ฟอร์มที่จำไว้หายไปจากหน้าจอด้วย
+     *    ของที่จำไว้ยังอยู่ในฐานข้อมูล แค่หลุดจากหน่วยความจำ — ดึงกลับมาเลย
+     *    ไม่ใช่ให้คนไปรีเฟรชเอง (ผู้ตรวจ #112 ทัก) */
+    await restoreDnTemplate();
     return;
   }
-  document.getElementById('btnDnExport').disabled = false;
-  toast('อ่านเทมเพลตแล้ว — กดออกใบส่งสินค้าได้');
+  const kept = await rememberDnTemplate();
+  renderDnTplInfo();
+  toast(kept ? 'อ่านเทมเพลตแล้ว และจำไว้ให้ — ครั้งหน้าไม่ต้องเลือกไฟล์อีก'
+             : 'อ่านเทมเพลตแล้ว — แต่เครื่องนี้จำไว้ให้ไม่ได้ ครั้งหน้าต้องเลือกไฟล์อีกครั้ง');
+});
+
+document.getElementById('btnDnTplForget').addEventListener('click', async ()=>{
+  // ไม่ใช้ตัวขึ้นบรรทัดใหม่ตรง ๆ — กติกาเดียวกับที่อื่นในไฟล์ เคยถูกกลืนจนสตริงไม่ปิดมาแล้ว
+  if(!confirm('ล้างฟอร์มที่จำไว้ในเครื่องนี้?'
+    + String.fromCharCode(10) + String.fromCharCode(10)
+    + 'ครั้งหน้าที่เปิดโปรแกรมต้องเลือกไฟล์ฟอร์มใหม่')) return;
+  try{ if(stateDb) await idbTx('readwrite', st => st.delete(DN_TPL_KEY)); }catch(e){}
+  dnTemplate = null;
+  document.getElementById('btnDnExport').disabled = true;
+  document.getElementById('dnTemplateInput').value = '';
+  renderDnTplInfo();
+  toast('ล้างฟอร์มที่จำไว้แล้ว');
 });
 
 /** เลขที่ใบส่งสินค้า — คิดจากหน่วย+วัน ไม่ใช่เลขรัน (เจ้าของเลือก 10 ต.ค. 2026)
@@ -3855,6 +4314,150 @@ function dnLogStale(entry){
   return now !== (Number(entry.qty)||0);
 }
 
+/** รายละเอียดของใบที่ออกไปแล้ว อ่านได้บนจอ **โดยไม่ต้องมีไฟล์ฟอร์ม FM-ST-07**
+ *  (เจ้าของสั่ง 25 ต.ค. 2026 — คนที่ไม่มีฟอร์มในมือก็ต้องตามได้ว่าใบนั้นส่งอะไรไป)
+ *
+ *  ⚠️ สิ่งที่หน้านี้แสดงคือข้อมูลของใบนั้น **ณ วันนี้ ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว**
+ *     ระบบไม่เก็บไฟล์และไม่เก็บเนื้อของกระดาษไว้เลย ทุกช่องคิดใหม่จากยอดบรรจุของหน่วย
+ *     และวันนั้นทุกครั้ง (เหตุผลเดียวกับ writeDeliveryFile) · หน้านี้ต้องพูดเรื่องนี้ออกมาตรง ๆ
+ *     เพราะคนที่เปิดดูคือคนที่ไม่มีฟอร์ม จึงเทียบกับไฟล์เองไม่ได้ และจะไม่รู้เลยว่า
+ *     เลขที่เห็นอาจไม่ใช่เลขบนกระดาษ — ที่เปลี่ยนเองเงียบที่สุดคือ Wip bal. ของ Delta
+ *
+ *  ⚠️ ต้องผ่าน dnReissueGroups() เท่านั้น ห้ามเรียก deliveryGroups() ตรง ๆ ที่นี่
+ *     เหตุผลอยู่ที่คอมเมนต์ของ dnReissueGroups — ช่องติ๊ก dnExtraRows เป็นของวันที่เลือก
+ *     อยู่บนจอ ไม่ใช่วันของแถว log · ใบที่ติ๊กไว้ของวันอื่นจะไหลมาโชว์บนใบนี้เงียบ ๆ
+ *     (ตระกูลเดียวกับที่ผู้ตรวจ #103 รันเจอบนเส้นทางออกไฟล์ซ้ำ)
+ *
+ *  ช่องที่โชว์เรียงตามกระดาษ (ดู fillDeliveryForm) — ราย PO: P/N · PO No. · Order Date ·
+ *  PO QTY · Wip bal. · ยอดส่งงาน · ของทั้งกลุ่ม: ต่อกล่อง · กล่อง · เศษ · จำนวน/PCS · Remark
+ *  ⚠️ ป้ายหัวคอลัมน์ทุกช่องต้องเป็นคำที่ **มีใช้อยู่จริงบนกระดาษ (`DN_HEAD`) หรือบนตาราง
+ *     `#dnTable`** ที่พนักงานคีย์ทุกวัน · สองที่นั้นใช้คำไม่เหมือนกันทุกช่อง (กระดาษ `ยอดส่งงาน`
+ *     จอ `จำนวนที่ส่ง` · กระดาษ `จำนวนต่อกล่อง` จอ `ต่อกล่อง`) จึงไม่มีชุดคำที่ "ตรงทั้งคู่"
+ *     ที่ห้ามคือคำที่ไม่มีใครในสายใบส่งสินค้าใช้ — เช่น `Order Q'ty` ซึ่งเป็นป้ายของ
+ *     **ไฟล์แผนงานฝั่งลูกค้า** (`PLAN_HEAD`) คนละเอกสารกัน (ผู้ตรวจ #113 ทักทั้งสองรอบ)
+ *     เทสบังคับกฎนี้ด้วยการอ่าน `DN_HEAD` กับหัวตาราง `#dnTable` มาเทียบ ไม่ใช่รายการที่พิมพ์ไว้เอง
+ *
+ *  ⚠️ **ทุกค่าที่ลง `innerHTML` ต้องผ่าน `escapeHtml()` รวมวันที่** (G3)
+ *     `fmtDateTH()` ไม่ใช่ตัวทำให้ปลอดภัย — `normalizeDateOnly()` คืนค่าเดิมให้สตริงที่ไม่ใช่รูปวันที่
+ *     ค่าเพี้ยนจากชีต `DeliveryLog` หรือจากไฟล์นำเข้าจึงไหลผ่าน `prepareState()` กับการ pull
+ *     มาถึง `innerHTML` ได้ครบ · ผู้ตรวจ #113 รันพิสูจน์แล้วว่าโค้ดเดิมของใบนี้รัน `onerror` ได้จริง
+ *     ใบนี้เป็นที่แรกที่วาด `deliveryLog.date` ลงจอ จึงเป็นรูที่ใบนี้สร้างเอง ไม่ใช่ของเดิม */
+function dnPreviewHtml(entry){
+  const groups = dnReissueGroups(entry.date, entry.unit);
+  const head = `<div class="desc">
+      หน่วย <b>${escapeHtml(entry.unit)}</b> · วันที่ <b>${escapeHtml(fmtDateTH(entry.date))}</b>
+      · WK บนใบ <b>${escapeHtml(String(entry.week||'') || '—')}</b><br>
+      ออกเมื่อ ${escapeHtml(entry.createdAt ? new Date(entry.createdAt).toLocaleString('th-TH') : '—')}
+      จากเครื่อง ${escapeHtml(entry.deviceName||'—')}</div>`;
+
+  /* ⚠️ "ณ ตอนที่กดเปิด" ไม่ใช่ "ณ วันนี้" — กล่องนี้เป็นภาพนิ่ง ไม่มีกลไกวาดใหม่
+   *    แก้ยอดหรือซิงค์เข้ามาขณะกล่องเปิดอยู่ ตัวเลขในกล่องไม่ขยับ (ผู้ตรวจ #113 รอบ 6 รันแล้ว)
+   *    ถ้าวันหนึ่งทำให้มันวาดใหม่ได้ ให้แก้คำนี้ด้วย ไม่ใช่ปล่อยให้คำกับพฤติกรรมคลาดกัน */
+  const why = `<div class="desc">⚠️ <b>นี่คือข้อมูลของใบนี้ ณ ตอนที่กดเปิด ไม่ใช่สำเนาของกระดาษที่ส่งไปแล้ว</b>
+      — ระบบไม่ได้เก็บไฟล์หรือเนื้อของกระดาษไว้ แต่คิดใหม่จากยอดบรรจุของหน่วยและวันนั้นทุกครั้ง
+      ถ้ามีอะไรเปลี่ยนไปหลังออกใบ ตัวเลขที่เห็นจะไม่เท่ากับกระดาษ โดยเฉพาะ <b>Wip bal.</b>
+      ซึ่งเป็นยอดของ <b>งวดล่าสุดที่นำเข้าไว้ ไม่ใช่ของ WK ที่เขียนบนใบ</b>
+      จึงเปลี่ยนเองทุกครั้งที่นำเข้าไฟล์ Call In งวดใหม่</div>`;
+
+  /* ⚠️ สภาพ "กลุ่มว่าง" มีได้สี่สาเหตุ และหน้านี้แยกจากกันไม่ได้ จึงต้องบอกครบทั้งสี่
+   *    ห้ามเขียนชี้แค่บางสาเหตุเหมือนรู้คำตอบ (ผู้ตรวจ #113 ทักสองรอบ รอบละสาเหตุ)
+   *    สาเหตุที่สามเกิดจาก `doSync()` ดึง `DeliveryLog` **ก่อน** `Orders`/`Records`
+   *    และบล็อกนั้นมี try/catch ของตัวเอง ส่วน Orders/Records ไม่มี — เน็ตหลุดหลังดึง log
+   *    ทั้งรอบจึงหลุดไป catch ชั้นนอกโดยที่แถว log เข้ามาอยู่ในหน่วยความจำแล้ว
+   *    และหน้านี้ทำมาเพื่อคนที่นั่งเครื่องอื่น ซึ่งคือเครื่องที่เจอสภาพนี้ง่ายที่สุด
+   *
+   *    สาเหตุที่สี่คือ **ใบถูกย้ายหน่วย** · `deliveryGroups()` กรองด้วย `o.subName === unit`
+   *    ใบที่ย้ายไปหน่วยอื่นจึงหายจากใบเดิมทันที · เกิดจากปุ่ม "คำนวณ Sub-Name ใหม่"
+   *    (เจ้าของกดของจริง 25 ต.ค. 2026 แล้วมี 1 ใบย้าย TUE-H→TUE-T) และจากการนำเข้า
+   *    ไฟล์แผนทับด้วยกฎ `subNameFromPo()` ที่เข้มขึ้น — สองทางนั้นไม่ได้แตะยอดอะไรเลย
+   *    ถ้าไม่บอกไว้ ข้อความจะไปโทษว่ามีคนแก้ยอดหรือยกเลิกใบ ทั้งที่ไม่มีใครทำ */
+  if(!groups.length){
+    return head + why + `<div class="desc"><b>ไม่เหลือยอดบรรจุของใบนี้แล้ว</b> —
+      ยอดที่ตัดเข้าใบถูกแก้เป็น 0 · ใบสั่งถูกยกเลิกไปหลังออกใบ · ใบสั่งถูกย้ายหน่วย
+      · หรือข้อมูลของวันนั้นยังไม่ซิงค์มาถึงเครื่องนี้ · จึงไม่มีรายการให้แสดง
+      และออกไฟล์ซ้ำไม่ได้ด้วย · ตัวกระดาษที่ส่งไปแล้วยังเป็นหลักฐานตามเดิม</div>`;
+  }
+
+  /* เทียบยอดรวมกับตอนออกใบ — ใช้ dnLogStale() เป็นตัวตัดสินจุดเดียว ไม่ตั้งเกณฑ์ใหม่ที่นี่
+   * ⚠️ แถวที่ไม่ได้บันทึก qty ไว้ (ซิงค์มาจากเครื่องรุ่นก่อน) เทียบไม่ได้ ต้องบอกว่าเทียบไม่ได้
+   *    ห้ามขึ้นว่า "เท่ากับตอนออกใบ" ซึ่งเป็นคำที่ไม่มีหลักฐานรองรับ — dnLogStale() คืน false
+   *    ทั้งกรณี "เท่ากัน" และ "ไม่มีอะไรให้เทียบ" แยกสองกรณีนี้จากค่าที่มันคืนไม่ได้ */
+  const now = groups.reduce((s,g)=> s + (Number(g.qty)||0), 0);
+  const cmp = entry.qty == null
+    ? `<div class="desc">แถวนี้ไม่ได้บันทึกยอดรวมตอนออกใบไว้ จึงเทียบไม่ได้ว่าข้อมูลเปลี่ยนไปหรือยัง
+        · ยอดรวมวันนี้ <b>${numFmt(now)}</b></div>`
+    : dnLogStale(entry)
+    ? `<div class="desc"><span class="badge amber">ข้อมูลเปลี่ยนหลังออกใบ</span>
+        ยอดรวมตอนออกใบ <b>${numFmt(Number(entry.qty)||0)}</b> · ยอดรวมวันนี้ <b>${numFmt(now)}</b></div>`
+    : `<div class="desc">ยอดรวม <b>${numFmt(now)}</b> เท่ากับตอนออกใบ</div>`;
+
+  /* ⚠️ ยอดรวมเท่าเดิมไม่ได้แปลว่ากระดาษเหมือนเดิม — จำนวนบรรทัดต่างกันได้โดยยอดรวมไม่ขยับ
+   *    เพราะใบที่ถูกติ๊กให้ขึ้นกระดาษทั้งที่รอบนั้นไม่ได้ส่งของมี `alloc = 0` จึงบวกยอดเป็นศูนย์
+   *    `dnLogStale()` มองไม่เห็นโดยออกแบบ (#103 บันทึกไว้แล้วว่าจะจับได้ต้องเพิ่มคอลัมน์)
+   *    แต่แถว log เก็บ `lines` ไว้อยู่แล้ว จึงเทียบได้ฟรีโดยไม่ต้องเพิ่มคอลัมน์และไม่ต้อง redeploy
+   *    ใบนี้เป็นที่แรกที่วางสองเลขนี้ไว้ใกล้กันให้คนเทียบ จึงต้องไม่ปล่อยให้ขัดกันเงียบ ๆ
+   *    (ผู้ตรวจ #113 รอบ 5 รันเจอ: log บอก 2 บรรทัด กล่องโชว์ 1 พร้อมคำว่า "เท่ากับตอนออกใบ")
+   * ⚠️ สาเหตุบอกแบบ "ที่พบบ่อยคือ" เท่านั้น — บรรทัดหายเพราะใบถูกยกเลิกหรือย้ายหน่วยก็ได้
+   *    ซึ่งกรณีนั้นยอดรวมมักเปลี่ยนตามด้วย และหน้านี้แยกสาเหตุจากกันไม่ได้ */
+  const nowLines = groups.reduce((s,g)=> s + shippedOrders(g).length, 0);
+  /* ⚠️ ต้องเป็นตัวเลขจริงเท่านั้น · ค่าที่ซิงค์กลับมาเป็นสตริงว่างให้ 0 และสตริงอื่นให้ NaN
+   *    ซึ่ง NaN !== nowLines เสมอ → ป้ายขึ้นพร้อมเลข 0 ที่ไม่มีใครเคยออกใบด้วย (ผู้ตรวจ #113) */
+  const keptNum = Number(entry.lines);
+  const keptLines = (entry.lines == null || entry.lines === '' || !isFinite(keptNum))
+    ? null : keptNum;
+  const lineCmp = (keptLines != null && keptLines !== nowLines)
+    ? `<div class="desc"><span class="badge amber">จำนวนบรรทัดไม่เท่าตอนออกใบ</span>
+        ตอนออกใบ <b>${numFmt(keptLines)}</b> บรรทัด · วันนี้ <b>${numFmt(nowLines)}</b> บรรทัด —
+        ถ้ายอดรวมเท่าเดิม สาเหตุที่พบบ่อยคือใบที่ถูกติ๊กให้ขึ้นกระดาษทั้งที่รอบนั้นไม่ได้ส่งของ
+        ซึ่งย้อนรู้ไม่ได้ว่าใบไหน</div>`
+    : '';
+
+  /* ด่านเดียวกับที่ writeDeliveryFile() กันไว้ก่อนออกไฟล์ — บอกที่นี่ด้วย
+   * เพราะคนที่ไม่มีฟอร์มกดออกไฟล์ซ้ำเพื่อดูเหตุไม่ได้ และนี่คือเหตุที่พบบ่อยที่สุด */
+  const bad = groups.filter(g => g.packQty !== g.qty);
+  const warn = bad.length ? `<div class="desc"><span class="badge red">กล่องกับเศษไม่ตรงกับยอด</span>
+      ${bad.map(g=>`P/N ${escapeHtml(g.pn)} กระดาษจะพิมพ์ ${numFmt(g.packQty)} แต่คีย์ไว้ ${numFmt(g.qty)}`).join(' · ')}
+      — ออกไฟล์ซ้ำไม่ได้จนกว่าจะแก้ให้ตรง</div>` : '';
+
+  const rows = groups.map(g=>{
+    /* shippedOrders() ปลอดภัยที่นี่เพราะ dnReissueGroups() ตัดเหลือเฉพาะ alloc > 0 แล้ว
+     * ช่องติ๊กจึงเพิ่มแถวอะไรไม่ได้ · และด้วยเหตุเดียวกัน qty ของทุกกลุ่มมากกว่า 0 เสมอ
+     * จึงไม่มีกรณี "กลุ่มที่ไม่ได้ส่งของเลย" ที่กระดาษเว้นช่องบรรจุไว้ ให้ต้องรองรับที่นี่
+     *
+     * ⚠️ Wip bal. ที่ Delta ไม่ได้ให้ยอดมา ต้องเว้นว่างเหมือนกระดาษ ห้ามโชว์ 0
+     *    เลข 0 แปลว่า "Delta บอกว่าไม่ค้างแล้ว" ซึ่งคนละเรื่องกับ "Delta ไม่ได้บอก" */
+    const lines = shippedOrders(g);
+    return lines.map((x,i)=>{
+      const grp = i > 0 ? `` : `
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.perBox)}</td>
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.boxes)}</td>
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.remainder)}</td>
+        <td class="dn-merge" rowspan="${lines.length}">${numFmt(g.packQty)}</td>
+        <td class="dn-merge left" rowspan="${lines.length}">${escapeHtml(g.remark)}</td>`;
+      return `<tr>
+        <td class="left">${escapeHtml(g.pn)}</td>
+        <td class="left">${escapeHtml(x.o.poNo)}</td>
+        <td>${x.o.orderDate ? escapeHtml(fmtDateTH(x.o.orderDate)) : '—'}</td>
+        <td>${numFmt(Number(x.o.orderQty)||0)}</td>
+        <td>${x.deltaWip == null ? '—' : numFmt(x.deltaWip)}</td>
+        <td>${numFmt(Number(x.alloc)||0)}</td>${grp}
+      </tr>`;
+    }).join('');
+  }).join('');
+
+  return head + why + cmp + lineCmp + warn + `<div class="table-wrap"><table id="dnPreviewTable">
+    <thead><tr><th class="left">P/N</th><th class="left">PO No.</th><th>Order Date</th>
+      <th>PO QTY</th><th>Wip bal.</th><th>ยอดส่งงาน</th><th>ต่อกล่อง</th><th>กล่อง</th>
+      <th>เศษ</th><th>จำนวน/PCS</th><th class="left">Remark</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function showDnPreview(entry){
+  document.getElementById('dnPreviewTitle').textContent = 'รายละเอียดใบ ' + entry.no;
+  document.getElementById('dnPreviewBody').innerHTML = dnPreviewHtml(entry);
+  document.getElementById('dnPreviewModal').classList.add('show');
+}
+
 function renderDnLog(){
   const table = document.getElementById('dnLogTable');
   if(!table) return;
@@ -3879,13 +4482,16 @@ function renderDnLog(){
         <td>${numFmt(Number(e.lines)||0)}</td>
         <td>${numFmt(Number(e.qty)||0)}</td>
         <td class="left">${escapeHtml(e.deviceName||'')}</td>
+        <td><a href="#" data-dn-preview="${escapeHtml(e.id)}"
+               title="ดูรายการบนใบนี้บนจอ — ไม่ต้องมีไฟล์ฟอร์ม">ดูรายละเอียด</a></td>
       </tr>`;
     }).join('');
 
   table.innerHTML =
     `<thead><tr><th class="left">เลขที่</th><th>เวลาที่ออก</th><th class="left">หน่วย</th><th>WK</th>
-       <th>กลุ่ม P/N</th><th>บรรทัด</th><th>ยอดรวม</th><th class="left">เครื่อง</th></tr></thead>
-     <tbody>${rows || emptyRow(8,'ยังไม่มีใบส่งสินค้าที่ออกไป')}</tbody>`;
+       <th>กลุ่ม P/N</th><th>บรรทัด</th><th>ยอดรวม</th><th class="left">เครื่อง</th>
+       <th class="left">รายละเอียด</th></tr></thead>
+     <tbody>${rows || emptyRow(9,'ยังไม่มีใบส่งสินค้าที่ออกไป')}</tbody>`;
 }
 
 /* กดเลขที่ใบ = ออกไฟล์ใบนั้นอีกครั้ง · สร้างใหม่จากยอดบรรจุของหน่วย+วันนั้น ไม่ได้เก็บไฟล์ไว้ */
@@ -3917,6 +4523,26 @@ document.getElementById('dnLogTable').addEventListener('click', async (e)=>{
     await writeDeliveryFile(entry.unit, entry.date, entry.week, groups);
     toast(`ออกไฟล์ใบ ${entry.no} อีกครั้งแล้ว`);
   }catch(err){ toast('ออกไฟล์ไม่สำเร็จ: '+err.message); }
+});
+
+/* กดดูรายละเอียด = อ่านบนจอ ไม่สร้างไฟล์ จึงไม่ต้องมีฟอร์มและไม่ต้องถามยืนยันอะไร
+ * แยกตัวจับคลิกจากของ "ออกไฟล์ซ้ำ" ตั้งใจ — ทางนั้นมีด่าน dnTemplate กับกล่องยืนยันอยู่ก่อน
+ * ถ้าเอามารวมกัน ทางนี้จะติดด่านที่ไม่เกี่ยวกับมันเลย */
+document.getElementById('dnLogTable').addEventListener('click', (e)=>{
+  const a = e.target.closest('[data-dn-preview]');
+  if(!a) return;
+  e.preventDefault();
+  const entry = (state.deliveryLog||[]).find(x=>x.id===a.dataset.dnPreview);
+  if(entry) showDnPreview(entry);
+});
+
+document.getElementById('dnPreviewCloseBtn').addEventListener('click', ()=>{
+  document.getElementById('dnPreviewModal').classList.remove('show');
+});
+
+// คลิกฉากหลังก็ปิด — รูปแบบเดียวกับ mergeModal · ไม่มีอะไรต้องเก็บ จึงไม่ต้องล้างสถานะ
+document.getElementById('dnPreviewModal').addEventListener('click', (e)=>{
+  if(e.target.id==='dnPreviewModal') e.currentTarget.classList.remove('show');
 });
 
 document.getElementById('btnDnExport').addEventListener('click', async ()=>{
@@ -4784,7 +5410,14 @@ document.getElementById('btnCallInCancel').addEventListener('click', ()=>{
 
 document.getElementById('btnClearAll').addEventListener('click', ()=>{
   if(!confirm('ยืนยันลบข้อมูลทั้งหมด? การกระทำนี้ไม่สามารถย้อนกลับได้')) return;
-  if(!confirm('ยืนยันอีกครั้ง: ต้องการลบข้อมูลแผนงานและบันทึกทั้งหมดในเครื่องนี้จริงหรือไม่?')) return;
+  /* ⚠️ **ฟอร์ม FM-ST-07 ที่จำไว้ไม่ถูกลบ** — เจ้าของเคาะเมื่อ 25 ต.ค. 2026
+   *    เป็นฟอร์มเปล่าของบริษัท ไม่ใช่ข้อมูลธุรกิจ จึงไม่อยู่ในความหมายของ "ลบข้อมูลทั้งหมด"
+   *    แต่ต้องเขียนไว้ในกล่องยืนยัน ไม่ใช่เหลือของไว้เงียบ ๆ ทั้งที่ปุ่มอ้างว่าลบทั้งหมด
+   *    (ผู้ตรวจ #112 ทักว่าคำกับของไม่ตรงกัน) · ล้างได้ที่ปุ่มของมันเองในหน้าใบส่งสินค้า */
+  if(!confirm('ยืนยันอีกครั้ง: ต้องการลบข้อมูลแผนงานและบันทึกทั้งหมดในเครื่องนี้จริงหรือไม่?'
+    + String.fromCharCode(10) + String.fromCharCode(10)
+    + 'หมายเหตุ: ฟอร์ม FM-ST-07 ที่เครื่องนี้จำไว้ จะไม่ถูกลบ'
+    + String.fromCharCode(10) + 'ถ้าต้องการล้างด้วย ให้กดปุ่มล้างฟอร์มที่จำไว้ในหน้าใบส่งสินค้า')) return;
   state = defaultState();
   saveState();
   if(stateDb) idbTx('readwrite', s=>s.delete(LEGACY_COPY_KEY)).catch(e=>console.error('ลบสำเนาตอนย้ายไม่ได้', e));   // สำเนาก็เป็นข้อมูลในเครื่อง
@@ -4837,7 +5470,8 @@ document.getElementById('syncBadge').addEventListener('click', ()=>doSync(false)
 /* เครื่องในโรงงานเปิดโปรแกรมค้างไว้ทั้งวัน และเบราว์เซอร์ก็ cache ไฟล์เก่าไว้ได้
    เลขรุ่นบนหัวจอคือสิ่งเดียวที่ใช้ตัดสินทางโทรศัพท์ได้ว่าสองเครื่องใช้ของเดียวกันไหม
    วิธีเช็กรุ่นใหม่: fetch ไฟล์ตัวเองแบบข้าม cache แล้วอ่าน <meta> จากข้อความที่ได้มา
-   — ไม่ต้องเพิ่มไฟล์ใหม่ ยังเป็นไฟล์เดียวเหมือนเดิม (INVARIANTS F2/F4) */
+   ⚠️ ?_v= ข้าม cache ได้แค่ไฟล์ HTML — ไฟล์ที่หน้าโหลด (app.js · lib/) ข้ามได้เพราะแท็ก <script src>
+   ต่อท้าย ?v=<เลขรุ่น> ไว้ HTML ใหม่จึงชี้ URL ใหม่เสมอ · ด่านคุมให้เลขตรงกับ <meta> (INVARIANTS F4) */
 const APP_VERSION = (document.querySelector('meta[name="app-version"]')||{}).content || '';
 const APP_VERSION_RE = /<meta\s+name="app-version"\s+content="([^"]*)"/i;
 const UPDATE_CHECK_MS = 30*60*1000;   // ไฟล์เกือบ 1 MB — เช็กถี่กว่านี้เน็ตโรงงานรับไม่ไหว
