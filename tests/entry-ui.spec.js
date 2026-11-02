@@ -57,10 +57,12 @@ const th = (page, col) => page.locator('#entryTable thead th').nth(COL[col]).inn
 
 // ── 1. สะสมกับคงเหลือเป็นคอลัมน์ของตัวเอง ─────────────────────────────
 
-test('ตารางมี 9 คอลัมน์ — Order Qty · Aging · สะสม · คงเหลือ แยกคอลัมน์กัน', async ({ page }) => {
+test('ตารางมี 10 คอลัมน์ — Order Qty · Aging · สะสม · คงเหลือ · หมายเหตุ แยกคอลัมน์กัน', async ({ page }) => {
+  // คอลัมน์หมายเหตุต่อท้ายเมื่อ 27 ต.ค. 2026 (เจ้าของสั่ง) — ดัชนีของคอลัมน์เดิมไม่ขยับ
   await openEntry(page, ORDERS, [rec('r1', 'PO-1', 'winding', 1000)]);
-  expect(await page.locator('#entryTable thead th').count(), 'ช่วงที่ยุบเป็นแถบเหลือ 6').toBe(9);
-  expect(await rowOf(page, 'PO-1').locator('td').count()).toBe(9);
+  expect(await page.locator('#entryTable thead th').count(), 'ช่วงที่ยุบเป็นแถบเหลือ 6 + หมายเหตุ').toBe(10);
+  expect(await rowOf(page, 'PO-1').locator('td').count()).toBe(10);
+  expect(await page.locator('#entryTable thead th').nth(9).innerText(), 'คอลัมน์ท้ายสุด').toContain('หมายเหตุ');
   expect(await th(page, 'aging')).toContain('Aging');
   expect(await th(page, 'cum')).toContain('สะสม');
   expect(await th(page, 'rem')).toContain('คงเหลือ');
