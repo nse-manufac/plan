@@ -267,3 +267,45 @@ test('กดเข้าแท็บแล้วตารางต้องว�
   await expect(page.locator('#dayTable thead th').first()).toBeVisible();
   expect(await cellOf(page, 'PO-1', 'winding').innerText()).toBe('777');
 });
+
+// ── 7. ข้อความตอนตารางว่าง ต้องไม่ยืนยันสิ่งที่ตัวกรองบังอยู่ ─────────
+//
+// ผู้ตรวจ #118 รันเจอ: วันนั้นคีย์ไว้จริง 2 ใบ แต่พิมพ์ค้นหาคำที่ไม่ตรงใบไหน
+// แล้วจอขึ้นว่า "วันนี้ยังไม่มีการคีย์ยอดเลย" ซึ่งไม่จริง · คนอ่านเป้าหมายของหน้านี้
+// คือคนที่ใช้คอมไม่เก่ง เชื่อข้อความบนจอก่อนอย่างอื่น แล้วจะสรุปว่าวันนั้นสายหยุด
+
+test('ตัวกรองบังทุกแถว — ห้ามขึ้นว่าวันนั้นไม่มีใครคีย์ ต้องชี้ไปที่ตัวกรอง', async ({ page }) => {
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 500)]);
+  await page.fill('#daySearch', 'PO-9999');
+  await page.waitForTimeout(250);
+  const msg = await page.locator('#dayTable tbody').innerText();
+  expect(msg).toContain('ตัวกรอง');
+  expect(msg).not.toContain('ยังไม่มีการคีย์ยอดเลย');
+});
+
+test('ตัวกรองสัปดาห์กับ Sub-Name ก็นับเป็นตัวกรอง ไม่ใช่แค่ช่องค้นหา', async ({ page }) => {
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 500)]);
+  await page.selectOption('#dayWeekFilter', 'WK 35');   // ใบของ WK 35 วันนั้นไม่มีใครคีย์
+  await page.waitForTimeout(250);
+  expect(await page.locator('#dayTable tbody').innerText()).toContain('ตัวกรอง');
+  await page.selectOption('#dayWeekFilter', '');
+  await page.selectOption('#daySubFilter', 'TUE-H');
+  await page.waitForTimeout(250);
+  expect(await page.locator('#dayTable tbody').innerText()).toContain('ตัวกรอง');
+});
+
+test('ไม่ได้ตั้งตัวกรองอะไรเลย — ข้อความยังต้องชวนไปติ๊ก "แสดงทุกใบ" หรือเปลี่ยนวัน', async ({ page }) => {
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 500)], D2);  // D2 ไม่มีใครคีย์
+  const msg = await page.locator('#dayTable tbody').innerText();
+  expect(msg).toContain('ยังไม่มีการคีย์ยอดเลย');
+  expect(msg).toContain('แสดงทุกใบ');
+});
+
+test('ติ๊ก "แสดงทุกใบ" แล้วยังว่าง = ไม่มีบรรทัดแผนงาน ไม่ใช่เรื่องตัวกรอง', async ({ page }) => {
+  await openDaily(page, [], []);
+  await page.check('#dayShowAll');
+  await page.waitForTimeout(250);
+  const msg = await page.locator('#dayTable tbody').innerText();
+  expect(msg).toContain('นำเข้าแผนงาน');
+  expect(msg).not.toContain('ตัวกรอง');
+});
