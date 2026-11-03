@@ -2755,6 +2755,88 @@ function renderFgCard(pn, unit){
   document.getElementById('fgCardPanel').scrollIntoView({block:'nearest'});
 }
 
+/* ---------- Render: ยอดรายวันทุกขั้น ----------
+ *
+ * เจ้าของสั่ง 3 พ.ย. 2026 — คนอ่านตัวจริงคือคุณพ่อของเจ้าของ ซึ่งไม่ได้อ่าน Dashboard
+ * เพราะมันบอก **ยอดสะสม** ตอบไม่ได้ว่า "วันนั้นทำได้เท่าไหร่" · ส่วนหน้าบันทึกยอดรายวัน
+ * ตอบได้แต่เห็น **ทีละขั้น** ต้องกดปุ่มไล่ทุกขั้นแล้วจำตัวเลขไว้ในหัว
+ * หน้านี้คือสองอย่างนั้นรวมกัน: หนึ่งวัน · ทุกขั้นพร้อมกัน · ยอดของวันนั้น
+ *
+ * ⚠️ **อ่านอย่างเดียว ห้ามใส่ช่องกรอกลงหน้านี้** · นี่เป็นเหตุผลครึ่งหนึ่งที่หน้านี้มีอยู่
+ *    หน้าบันทึกยอดรายวันมีช่องกรอกทุกแถว บันทึกทันทีที่ค่าเปลี่ยน และ**ไม่มีด่านกัน
+ *    ลูกกลิ้งเมาส์** — คนที่เปิดมา "ดู" คลิกเข้าช่องแล้วเลื่อนลูกกลิ้งหาแถวถัดไป
+ *    ยอดผลิตเปลี่ยนแล้วถูกบันทึกจริงโดยไม่มีอะไรฟ้อง · ใส่ช่องกรอกที่นี่เมื่อไหร่
+ *    = พาคนอ่านกลับไปเจอกับดักเดิม · ยอดขั้นส่งของยังเขียนได้ทางเดียวคือใบส่งสินค้า (A2)
+ *
+ * ⚠️ **ตั้งต้นโชว์เฉพาะใบที่วันนั้นมีการคีย์** — ของจริง 712 ใบ × ทุกขั้น = ช่องหลายพันช่อง
+ *    แต่วันหนึ่งคีย์กันไม่ถึงร้อยรายการ เพราะใบหนึ่งผ่านแต่ละขั้นครั้งเดียวในชีวิต
+ *    โชว์ทุกใบตั้งต้นจะได้กำแพง "—" ซึ่งอ่านยากกว่าของที่มีอยู่แล้ว = แพ้ตั้งแต่ยังไม่เริ่ม
+ *    เจ้าของเลือกให้มี **สวิตช์** เปิดดูทุกใบได้ (3 พ.ย. 2026) เพราะ "ใบที่ไม่ขึ้น" ก็เป็นข้อมูล
+ *
+ * ⚠️ **"—" กับ "0" ไม่ใช่อย่างเดียวกัน ห้ามรวบเป็นอันเดียว** · "—" = วันนั้นไม่มีใครคีย์
+ *    "0" = มีคนคีย์ไว้จริงว่าผลิตศูนย์ (เกิดได้เองจากการเลือกเหตุผลตอนยังไม่มียอด)
+ *    เขียนเงื่อนไขเป็น `v==null` ไม่ใช่ `!v` ไม่งั้นยอด 0 จะหายกลายเป็นขีด
+ *    แล้ว "วันนี้หยุดงาน" จะอ่านไม่ต่างจาก "ยังไม่ได้คีย์" ซึ่งเป็นคนละเรื่องกันคนละขั้ว
+ *
+ * ยอดอ่านจาก `buildRecordIndex()` ซึ่งหน้าบันทึกยอดรายวันสร้างอยู่แล้วทุกครั้งที่วาดจอ
+ * และมีครบทุกขั้นตั้งแต่แรก (กุญแจ orderId|process|date · A2) หน้านั้นอ่านแค่ช่องเดียวต่อแถว
+ * หน้านี้จึงไม่ได้คิดอะไรใหม่เลย แค่อ่านทุกช่องของแถวนั้นแทนช่องเดียว */
+function renderDayTable(){
+  const date = document.getElementById('dayDate').value || todayISO();
+  const search = document.getElementById('daySearch').value.trim().toLowerCase();
+  const weekFilter = document.getElementById('dayWeekFilter').value;
+  const subFilter = document.getElementById('daySubFilter').value;
+  const showAll = document.getElementById('dayShowAll').checked;
+
+  const recIndex = buildRecordIndex(state.records);
+
+  /* ตัวกรองชุดเดียวกับหน้าบันทึกยอดรายวันทุกข้อ รวมการเทียบ subName แบบตรงตัว
+   * (ห้ามเดาหน่วยจากรหัส PO ตรงนี้ ไม่งั้นจะกรองไม่ตรงกับหน้าอื่น) */
+  let orders = activeOrders().filter(o=>o.status!=='closed');
+  if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
+  if(subFilter) orders = orders.filter(o=>o.subName===subFilter);
+  if(search) orders = orders.filter(o=> String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
+  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week) || (a.poNo||'').localeCompare(b.poNo));
+
+  const total = {};
+  let n = 0, rowsHtml = '';
+  orders.forEach(o=>{
+    const vals = PROCESSES.map(p=>{
+      const v = recIndex[o.id+'|'+p+'|'+date];
+      return (v==null || v==='') ? null : v;
+    });
+    if(!vals.some(v=>v!=null) && !showAll) return;
+    /* ยอดรวมท้ายตารางนับเฉพาะช่องที่มีการคีย์จริง — ช่องขีดไม่ใช่ศูนย์ จึงไม่เอามาบวก
+     * numFmt() แปลงเป็นเลขเองอยู่แล้ว แต่ที่นี่ต้องบวก จึงต้องแปลงตรงนี้ด้วย */
+    vals.forEach((v,i)=>{ if(v!=null) total[PROCESSES[i]] = (total[PROCESSES[i]]||0) + (Number(v)||0); });
+    n++;
+    rowsHtml += `<tr>
+      <td>${n}</td>
+      <td class="left">${escapeHtml(o.week)}</td>
+      <td class="left">${escapeHtml(o.poNo)}</td>
+      <td class="left">${escapeHtml(o.pn)}</td>
+      <td class="left">${escapeHtml(o.subName)}</td>
+      <td>${numFmt(o.orderQty)}</td>
+      ${vals.map(v=> v==null ? '<td class="none">—</td>' : `<td>${numFmt(v)}</td>`).join('')}
+    </tr>`;
+  });
+
+  const cols = 6 + PROCESSES.length;
+  const emptyMsg = showAll
+    ? 'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน หรือปรับตัวกรอง'
+    : 'วันนี้ยังไม่มีการคีย์ยอดเลย — ติ๊ก "แสดงทุกใบ" เพื่อดูใบทั้งหมด หรือเลือกวันอื่น';
+  document.getElementById('dayTable').innerHTML = `<thead><tr>
+      <th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>
+      <th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th>
+      ${PROCESSES.map(p=>`<th>${processHeadHtml(p)}</th>`).join('')}
+    </tr></thead>
+    <tbody>${rowsHtml || emptyRow(cols, emptyMsg)}</tbody>
+    <tfoot><tr>
+      <td colspan="6">รวมทั้งหมดของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ</td>
+      ${PROCESSES.map(p=>`<td>${total[p]!=null ? numFmt(total[p]) : '—'}</td>`).join('')}
+    </tr></tfoot>`;
+}
+
 /* ---------- Render: Dashboard tab ---------- */
 
 /** Sub-Name ที่หน้า Dashboard กรองอยู่ · '' = ทุกหน่วย
@@ -3019,6 +3101,8 @@ function renderDashFilterOptions(){
   // เหมือนที่หน้า Dashboard กับหน้ายอดคงคลัง FG ทำอยู่
   fillSelect('entrySubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
   fillSelect('dashSubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
+  fillSelect('dayWeekFilter', uniqueSorted(activeOrders().map(o=>o.week)));
+  fillSelect('daySubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
 }
 
 /** แถบ progress 2 ส่วน: ฟ้า = ยอดที่บันทึกทันหรือก่อนวัน deadline ของขั้นนั้น, เหลือง = บันทึกหลังเลย
@@ -4618,6 +4702,9 @@ function renderAll(){
    *    ปล่อยให้วิ่งทุกครั้งที่ซิงค์ เครื่องที่นั่งอยู่หน้า Dashboard จะเสียเวลาฟรีทุกรอบ
    *    (ผู้ตรวจ #103 วัดได้ 121 ms ที่ log 300 แถว / 4,000 record) */
   if(document.getElementById('view-delivery').classList.contains('active')) renderDnLog();
+  /* เครื่องที่นั่งค้างหน้านี้ไว้ ต้องเห็นยอดที่เครื่องอื่นเพิ่งคีย์หลังซิงค์
+   * เช็กแท็บก่อนเหมือนสองบรรทัดบน — หน้านี้เดินผ่าน record ทั้งก้อนหนึ่งรอบต่อการวาด */
+  if(document.getElementById('view-daily').classList.contains('active')) renderDayTable();
   renderSyncBadge();
 }
 
@@ -4638,6 +4725,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
      * ถ้าไม่วาดตอนกดเข้ามา ตารางจะว่างทั้งหัวตาราง อ่านได้ว่า 'ยังไม่ออกใบ' แล้วคนออกกระดาษซ้ำ */
     if(tab==='delivery'){ renderDeliveryNote(); renderDnLog(); }
     if(tab==='fg'){ renderFg(); }
+    if(tab==='daily'){ renderDashFilterOptions(); renderDayTable(); }
   });
 });
 
@@ -5054,6 +5142,10 @@ document.getElementById('processTable').addEventListener('click', e=>{
 });
 
 document.getElementById('entryDate').addEventListener('change', renderEntryTable);
+['dayDate','daySearch','dayWeekFilter','daySubFilter','dayShowAll'].forEach(id=>{
+  const el = document.getElementById(id);
+  el.addEventListener(id==='daySearch' ? 'input' : 'change', renderDayTable);
+});
 document.getElementById('entrySearch').addEventListener('input', renderEntryTable);
 document.getElementById('entryWeekFilter').addEventListener('change', renderEntryTable);
 document.getElementById('entrySubFilter').addEventListener('change', renderEntryTable);
@@ -5473,6 +5565,7 @@ checkAppUpdate();
 
 /* ---------- Init ---------- */
 document.getElementById('entryDate').value = todayISO();
+document.getElementById('dayDate').value = todayISO();
 document.getElementById('dnDate').value = todayISO();
 
 // เครื่องใหม่เปิดผ่านลิงก์ตั้งค่า (#gsurl=...&gstoken=...) — ตั้งค่าและดึงข้อมูลให้อัตโนมัติ

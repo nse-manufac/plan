@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-02.3">
+<meta name="app-version" content="2026-11-03.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -158,6 +158,9 @@
   #entryTable select.row-note,
   #entryTable .row-note-na{font-size:13px;padding:7px 4px;width:210px;box-sizing:border-box;display:inline-block;}
   #entryTable .row-note-na{color:var(--text-dim);text-align:center;}
+  /* ช่องที่วันนั้นไม่มีการคีย์ — ต้องจางกว่าเลขจริงชัด ๆ เพราะทั้งตารางมีช่องแบบนี้เยอะกว่าเลข */
+  #dayTable td.none{color:var(--text-dim);}
+  #dayTable tfoot td{font-weight:700;background:var(--gray-light);}
   #entryTable .ship-today{font-size:19px;font-weight:700;width:130px;display:inline-block;
     box-sizing:border-box;padding:10px 8px;}
   /* บนมือถือบีบ "ระยะห่าง" คืน แต่ไม่แตะขนาดตัวอักษร
@@ -256,6 +259,7 @@
 <nav class="tabs">
   <button class="tab-btn active" data-tab="import">📥 นำเข้าแผน</button>
   <button class="tab-btn" data-tab="entry">✍️ บันทึกยอดรายวัน</button>
+  <button class="tab-btn" data-tab="daily">📅 ยอดรายวันทุกขั้น</button>
   <button class="tab-btn" data-tab="delivery">🚚 ใบส่งสินค้า</button>
   <button class="tab-btn" data-tab="fg">📦 ยอดคงคลัง FG</button>
   <button class="tab-btn" data-tab="dashboard">📊 Dashboard</button>
@@ -428,6 +432,43 @@
     </div>
     <div class="table-wrap">
       <table id="recordEditorTable"></table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= TAB: DAILY (ยอดรายวันทุกขั้น) ================= -->
+<section id="view-daily" class="view">
+  <div class="panel">
+    <h2>ยอดที่ทำแต่ละขั้น ในวันเดียว</h2>
+    <div class="desc">ตัวเลขในช่องคือ <b>ยอดที่คีย์ไว้ของวันนั้น</b> ไม่ใช่ยอดสะสม
+      (ยอดสะสมกับความคืบหน้าดูที่หน้า Dashboard) · <b>หน้านี้อ่านอย่างเดียว</b>
+      จะแก้ยอดให้ไปที่หน้า &quot;บันทึกยอดรายวัน&quot; เลือกวันกับขั้นเดียวกัน
+      · ช่อง &quot;—&quot; คือวันนั้นไม่มีใครคีย์ ส่วน &quot;0&quot; คือมีคนคีย์ไว้ว่าผลิตศูนย์</div>
+    <div class="row filters">
+      <div class="field">
+        <label>วันที่</label>
+        <input type="date" id="dayDate">
+      </div>
+      <div class="field">
+        <label>ค้นหา PO / P/N</label>
+        <input type="text" id="daySearch" placeholder="พิมพ์ PO หรือ P/N">
+      </div>
+      <div class="field">
+        <label>สัปดาห์</label>
+        <select id="dayWeekFilter"><option value="">ทั้งหมด</option></select>
+      </div>
+      <div class="field">
+        <label>Sub-Name</label>
+        <select id="daySubFilter" style="min-width:120px"><option value="">ทั้งหมด</option></select>
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <label style="font-weight:500;"><input type="checkbox" id="dayShowAll">
+          แสดงทุกใบ (รวมใบที่วันนั้นไม่ได้คีย์)</label>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="dayTable"></table>
     </div>
   </div>
 </section>
@@ -835,6 +876,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-02.3"></script>
+<script src="app.js?v=2026-11-03.1"></script>
 </body>
 </html>
