@@ -2273,7 +2273,10 @@ function renderEntryTable(){
    *    และจะไม่ตรงกับที่หน้า Dashboard กับใบส่งสินค้ากรอง */
   if(subFilter) orders = orders.filter(o=>o.subName===subFilter);
   if(search) orders = orders.filter(o=> String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
-  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week) || (a.orderDate||'').localeCompare(b.orderDate));
+  // ตัวตัดสินที่สามจำเป็น — ของจริง orderDate ซ้ำกันทั้งไฟล์ ถ้าเหลือสองชั้นลำดับจะตกไปเป็น
+  // ลำดับในอาร์เรย์ แล้วเครื่องที่นำเข้าเองกับที่ดึงจากเซิร์ฟเวอร์โชว์คนละลำดับ (ผู้ตรวจ #118 รอบห้า)
+  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week)
+    || (a.orderDate||'').localeCompare(b.orderDate) || (a.poNo||'').localeCompare(b.poNo));
 
   lastRenderedOrderIds = [];
   let rowsHtml = '';
@@ -2792,6 +2795,105 @@ function renderFgCard(pn, unit){
   document.getElementById('fgCardPanel').scrollIntoView({block:'nearest'});
 }
 
+/* ---------- Render: ยอดรายวันทุกขั้น ----------
+ *
+ * หน้าอ่านอย่างเดียวสำหรับคนอ่านตัวจริง (คุณพ่อของเจ้าของ · ใช้คอมไม่เก่ง)
+ * **อ่าน CLAUDE.md §1 บล็อกของหน้านี้ให้จบก่อนแก้** — มีคำตัดสินที่ลองแล้วตกมาสองรูปแบบ
+ * สิ่งที่ห้ามพังสั้น ๆ: เลขบนปุ่ม = ยอดรวมของวันนั้นทุกขั้น (ห้ามยุบทิ้ง) · ตารางดูทีละขั้น ·
+ * ขั้นยอด 0 ยังมีปุ่ม · ห้ามใส่ช่องกรอก · "—" ไม่ใช่ "0" · สถานะเป็นของทั้งใบ ณ วันนี้ */
+
+/** ขั้นที่หน้านี้กำลังดู · คนละตัวกับ `currentProcess` ของหน้าคีย์ยอดโดยตั้งใจ (G2) */
+let dayProcess = null;
+
+function renderDayTable(){
+  const date = document.getElementById('dayDate').value || todayISO();
+  const search = document.getElementById('daySearch').value.trim().toLowerCase();
+  const weekFilter = document.getElementById('dayWeekFilter').value;
+  const subFilter = document.getElementById('daySubFilter').value;
+  const showAll = document.getElementById('dayShowAll').checked;
+  // ขั้นที่กำลังดูถูกซ่อนจากเครื่องอื่น → ตกกลับไปขั้นแรกของสายการผลิต (A3 · แบบเดียวกับ renderProcessControls)
+  if(!PROCESSES.includes(dayProcess)) dayProcess = MAIN_PROCESSES[0];
+
+  const recIndex = buildRecordIndex(state.records);
+  const noteIndex = buildNoteIndex(state.records);
+  const allCum = buildCumMap(state.records);
+  const ref = todayISO();
+
+  // ตัวกรองชุดเดียวกับหน้าคีย์ยอดทุกข้อ รวมการเทียบ subName แบบตรงตัว (ห้ามเดาหน่วยจากรหัส PO ตรงนี้)
+  let orders = activeOrders().filter(o=>o.status!=='closed');
+  if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
+  if(subFilter) orders = orders.filter(o=>o.subName===subFilter);
+  if(search) orders = orders.filter(o=> String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
+  // สามชั้นและต้องตรงกับหน้าคีย์ยอด — ดู CLAUDE.md (ของจริง orderDate ซ้ำกันทั้งไฟล์)
+  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week)
+    || (a.orderDate||'').localeCompare(b.orderDate) || (a.poNo||'').localeCompare(b.poNo));
+
+  // เลขบนปุ่ม = ยอดรวมของวันนั้นทุกขั้น · คิดจากชุดใบที่กรองแล้ว จึงตรงกับตารางข้างล่างเสมอ
+  const dayTotals = {};
+  orders.forEach(o=> PROCESSES.forEach(p=>{
+    const v = recIndex[o.id+'|'+p+'|'+date];
+    if(v!=null && v!=='') dayTotals[p] = (dayTotals[p]||0) + (Number(v)||0);
+  }));
+  const btns = document.getElementById('dayProcBtns');
+  /* คืนโฟกัสให้ปุ่มเดิมหลังวาดแถบใหม่ — แถบถูกวาดใหม่ทั้งแถบทุกครั้งเพราะเลขบนปุ่มต้องขยับ
+   * ไม่คืนแล้วคนที่ไล่ด้วยแป้นพิมพ์จะตกไป BODY แล้วต้องเริ่มจากต้นหน้าใหม่ทุกครั้งที่เปลี่ยนขั้น
+   * (ผู้ตรวจ #118 รอบแปด · แบบเดียวกับ pendingFocusOrderId ของหน้าคีย์ยอด) */
+  const a = document.activeElement;
+  const refocus = a && a.dataset && a.dataset.proc && btns.contains(a) ? a.dataset.proc : null;
+  btns.innerHTML = PROCESSES.map(p=>{
+    const d = PROCESS_BY_ID[p], t = dayTotals[p];
+    return `<button type="button" class="btn${p===dayProcess?' primary':''}" data-proc="${escapeHtml(p)}">`
+      + `${escapeHtml(d.icon + ' ' + d.label)} <span class="day-n${t ? '' : ' zero'}">${t==null ? '—' : numFmt(t)}</span></button>`;
+  }).join('');
+  btns.querySelectorAll('button').forEach(b=> b.addEventListener('click', ()=>{
+    dayProcess = b.dataset.proc;
+    renderDayTable();
+  }));
+  if(refocus){
+    const back = btns.querySelector('button[data-proc="' + CSS.escape(refocus) + '"]');
+    if(back) back.focus();
+  }
+
+  const procLabel = PROCESS_BY_ID[dayProcess].label;
+  const dash = '<span class="none">—</span>';
+  let total = null, n = 0, rowsHtml = '';
+  orders.forEach(o=>{
+    const v = recIndex[o.id+'|'+dayProcess+'|'+date];
+    const todayVal = (v==null || v==='') ? null : v;   // "—" ไม่ใช่ "0" — ห้ามเขียน !v
+    if(todayVal==null && !showAll) return;
+    if(todayVal!=null) total = (total||0) + (Number(todayVal)||0);   // ช่องขีดไม่ใช่ศูนย์ จึงไม่บวก
+    const cum = (allCum[o.id] && allCum[o.id][dayProcess]) || 0;
+    const st = computeStatus(o, allCum[o.id] || emptyCum(), computeDeadlines(o), ref);
+    const note = (noteIndex[o.id+'|'+dayProcess+'|'+date] || '').trim();
+    n++;
+    rowsHtml += `<tr><td>${n}</td>`
+      + `<td class="left">${escapeHtml(o.week)}</td><td class="left">${escapeHtml(o.poNo)}</td>`
+      + `<td class="left">${escapeHtml(o.pn)}</td><td class="left">${escapeHtml(o.subName)}</td>`
+      + `<td>${numFmt(o.orderQty)}</td><td>${numFmt(cum)}</td>`
+      + `<td class="rem">${numFmt(Math.max(0, o.orderQty - cum))}</td>`
+      + `<td>${todayVal==null ? dash : `<b>${numFmt(todayVal)}</b>`}</td>`
+      + `<td class="left">${note ? escapeHtml(note) : dash}</td>`
+      + `<td><span class="badge ${st.color}">${escapeHtml(st.label)}</span></td></tr>`;
+  });
+
+  /* ข้อความต้องตัดสินจาก "มีใบที่ตรงกี่ใบ" ไม่ใช่จากปุ่มที่ถูกกด และต้องแนะทางที่กดแล้วได้ผล
+   * (ผู้ตรวจ #118 จับสองรอบ · เลขบนปุ่มบอกเองว่าขั้นไหนมีของ จึงชี้ไปที่ปุ่มด้วย) */
+  const emptyMsg = orders.length
+    ? `ขั้น${escapeHtml(procLabel)} ของวันนั้นยังไม่มีการคีย์ยอด — ดูเลขบนปุ่มด้านบนว่าขั้นไหนมีของ `
+      + `· ติ๊ก "แสดงทุกใบ" เพื่อดูทั้ง ${numFmt(orders.length)} ใบ · หรือเลือกวันอื่น`
+    : (search || weekFilter || subFilter)
+      ? 'ไม่มีใบที่ตรงกับตัวกรองที่ตั้งไว้ — ล้างช่องค้นหา สัปดาห์ หรือ Sub-Name แล้วดูอีกครั้ง'
+      : 'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน';
+  document.getElementById('dayTable').innerHTML = `<thead><tr>`
+    + `<th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>`
+    + `<th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th>`
+    + `<th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนั้น</th><th>หมายเหตุ</th>`
+    + `<th title="สถานะของทั้งใบ ณ วันนี้ ไม่ใช่ของวันที่เลือก">สถานะของใบ</th></tr></thead>`
+    + `<tbody>${rowsHtml || emptyRow(11, emptyMsg)}</tbody><tfoot><tr>`
+    + `<td colspan="8">รวมขั้น${escapeHtml(procLabel)} ของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ</td>`
+    + `<td>${total!=null ? numFmt(total) : '—'}</td><td colspan="2"></td></tr></tfoot>`;
+}
+
 /* ---------- Render: Dashboard tab ---------- */
 
 /** Sub-Name ที่หน้า Dashboard กรองอยู่ · '' = ทุกหน่วย
@@ -3056,6 +3158,8 @@ function renderDashFilterOptions(){
   // เหมือนที่หน้า Dashboard กับหน้ายอดคงคลัง FG ทำอยู่
   fillSelect('entrySubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
   fillSelect('dashSubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
+  fillSelect('dayWeekFilter', uniqueSorted(activeOrders().map(o=>o.week)));
+  fillSelect('daySubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
 }
 
 /** แถบ progress 2 ส่วน: ฟ้า = ยอดที่บันทึกทันหรือก่อนวัน deadline ของขั้นนั้น, เหลือง = บันทึกหลังเลย
@@ -4657,6 +4761,9 @@ function renderAll(){
    *    ปล่อยให้วิ่งทุกครั้งที่ซิงค์ เครื่องที่นั่งอยู่หน้า Dashboard จะเสียเวลาฟรีทุกรอบ
    *    (ผู้ตรวจ #103 วัดได้ 121 ms ที่ log 300 แถว / 4,000 record) */
   if(document.getElementById('view-delivery').classList.contains('active')) renderDnLog();
+  /* เครื่องที่นั่งค้างหน้านี้ไว้ ต้องเห็นยอดที่เครื่องอื่นเพิ่งคีย์หลังซิงค์
+   * เช็กแท็บก่อนเหมือนสองบรรทัดบน — หน้านี้เดินผ่าน record ทั้งก้อนหนึ่งรอบต่อการวาด */
+  if(document.getElementById('view-daily').classList.contains('active')) renderDayTable();
   renderSyncBadge();
 }
 
@@ -4677,6 +4784,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
      * ถ้าไม่วาดตอนกดเข้ามา ตารางจะว่างทั้งหัวตาราง อ่านได้ว่า 'ยังไม่ออกใบ' แล้วคนออกกระดาษซ้ำ */
     if(tab==='delivery'){ renderDeliveryNote(); renderDnLog(); }
     if(tab==='fg'){ renderFg(); }
+    if(tab==='daily'){ renderDashFilterOptions(); renderDayTable(); }
   });
 });
 
@@ -5093,6 +5201,10 @@ document.getElementById('processTable').addEventListener('click', e=>{
 });
 
 document.getElementById('entryDate').addEventListener('change', renderEntryTable);
+['dayDate','daySearch','dayWeekFilter','daySubFilter','dayShowAll'].forEach(id=>{
+  const el = document.getElementById(id);
+  el.addEventListener(id==='daySearch' ? 'input' : 'change', renderDayTable);
+});
 document.getElementById('entrySearch').addEventListener('input', renderEntryTable);
 document.getElementById('entryWeekFilter').addEventListener('change', renderEntryTable);
 document.getElementById('entrySubFilter').addEventListener('change', renderEntryTable);
@@ -5512,6 +5624,7 @@ checkAppUpdate();
 
 /* ---------- Init ---------- */
 document.getElementById('entryDate').value = todayISO();
+document.getElementById('dayDate').value = todayISO();
 document.getElementById('dnDate').value = todayISO();
 
 // เครื่องใหม่เปิดผ่านลิงก์ตั้งค่า (#gsurl=...&gstoken=...) — ตั้งค่าและดึงข้อมูลให้อัตโนมัติ

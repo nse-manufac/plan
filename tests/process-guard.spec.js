@@ -45,7 +45,9 @@ test('มียอดของขั้นที่รุ่นนี้ไม�
 
 test('แถบเตือนต้องเห็นได้ทุกหน้า ไม่ใช่แค่ Dashboard', async ({ page }) => {
   await open(page, [rec('r1', 'coating', 300)]);
-  for (const tab of ['entry', 'delivery', 'fg', 'dashboard', 'data']) {
+  // ⚠️ เพิ่มแท็บใหม่ทุกครั้งที่มีแท็บใหม่ — รายการนี้คือสิ่งเดียวที่คุมว่าแถบเห็นได้ทุกหน้า
+  //    (แท็บ daily ตกหล่นไปจนผู้ตรวจ #118 รอบเจ็ดจับได้ · ตัวแอปถูกอยู่ แถบอยู่นอกทุก .view)
+  for (const tab of ['entry', 'daily', 'delivery', 'fg', 'dashboard', 'data']) {
     await page.click(`.tab-btn[data-tab="${tab}"]`);
     await expect(warn(page), 'หน้า ' + tab).toBeVisible();
   }
