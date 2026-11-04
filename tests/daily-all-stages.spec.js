@@ -268,37 +268,56 @@ test('กดเข้าแท็บแล้วตารางต้องว�
   expect(await cellOf(page, 'PO-1', 'winding').innerText()).toBe('777');
 });
 
-// ── 7. ข้อความตอนตารางว่าง ต้องไม่ยืนยันสิ่งที่ตัวกรองบังอยู่ ─────────
+// ── 8. ข้อความตอนตารางว่าง ต้องตรงกับความจริง และทางที่มันแนะต้องได้ผล ──
 //
-// ผู้ตรวจ #118 รันเจอ: วันนั้นคีย์ไว้จริง 2 ใบ แต่พิมพ์ค้นหาคำที่ไม่ตรงใบไหน
-// แล้วจอขึ้นว่า "วันนี้ยังไม่มีการคีย์ยอดเลย" ซึ่งไม่จริง · คนอ่านเป้าหมายของหน้านี้
-// คือคนที่ใช้คอมไม่เก่ง เชื่อข้อความบนจอก่อนอย่างอื่น แล้วจะสรุปว่าวันนั้นสายหยุด
+// ผู้ตรวจ #118 จับสองรอบติด และรอบที่สองจับได้ว่า **เทสของรอบแรกล็อกข้อความผิดไว้เอง**
+// (ตรวจแค่ว่ามีคำว่า "ตัวกรอง" ซึ่งเป็นคำที่ผิดในฉากนั้นพอดี)
+//
+// ⚠️ อย่าเขียนเทสพวกนี้เป็น "มีคำนี้ไหม" อย่างเดียว · ของที่ต้องยืนยันคือ
+//    **ทางที่ข้อความแนะ กดแล้วได้ผลจริง** ซึ่งทดสอบได้ด้วยการกดตามแล้วดูว่ามีแถวโผล่
 
-test('ตัวกรองบังทุกแถว — ห้ามขึ้นว่าวันนั้นไม่มีใครคีย์ ต้องชี้ไปที่ตัวกรอง', async ({ page }) => {
+test('ใบที่ตรงตัวกรองมีอยู่ แต่วันนั้นไม่มีใครคีย์ — ห้ามบอกว่าไม่มีใบที่ตรงตัวกรอง', async ({ page }) => {
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 500)]);   // คีย์ไว้เฉพาะ PO-1 (WK 34)
+  await page.selectOption('#dayWeekFilter', 'WK 35');                   // PO-2 มีอยู่จริง แต่วันนั้นไม่ได้คีย์
+  await page.waitForTimeout(250);
+  const msg = await page.locator('#dayTable tbody').innerText();
+  expect(msg).not.toContain('ไม่มีใบที่ตรงกับตัวกรอง');
+  expect(msg).toContain('แสดงทุกใบ');
+  expect(msg).toContain('1 ใบ');                                        // บอกจำนวนที่ติ๊กแล้วจะเห็น
+});
+
+test('ทางที่ข้อความแนะต้องได้ผล — ติ๊ก "แสดงทุกใบ" แล้วใบนั้นต้องโผล่จริง', async ({ page }) => {
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 500)]);
+  await page.selectOption('#dayWeekFilter', 'WK 35');
+  await page.waitForTimeout(250);
+  await page.check('#dayShowAll');                                      // ทำตามที่ข้อความบอก
+  await page.waitForTimeout(250);
+  await expect(rowOf(page, 'PO-2')).toHaveCount(1);
+  expect(await cellOf(page, 'PO-2', 'winding').innerText()).toBe('—');
+});
+
+test('ไม่มีใบไหนตรงตัวกรองเลย — ตอนนั้นจึงบอกให้ล้างตัวกรองได้', async ({ page }) => {
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 500)]);
   await page.fill('#daySearch', 'PO-9999');
   await page.waitForTimeout(250);
   const msg = await page.locator('#dayTable tbody').innerText();
   expect(msg).toContain('ตัวกรอง');
-  expect(msg).not.toContain('ยังไม่มีการคีย์ยอดเลย');
+  expect(msg).not.toContain('แสดงทุกใบ');                               // ติ๊กแล้วก็ยังว่าง จึงห้ามแนะ
 });
 
-test('ตัวกรองสัปดาห์กับ Sub-Name ก็นับเป็นตัวกรอง ไม่ใช่แค่ช่องค้นหา', async ({ page }) => {
-  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 500)]);
-  await page.selectOption('#dayWeekFilter', 'WK 35');   // ใบของ WK 35 วันนั้นไม่มีใครคีย์
-  await page.waitForTimeout(250);
-  expect(await page.locator('#dayTable tbody').innerText()).toContain('ตัวกรอง');
-  await page.selectOption('#dayWeekFilter', '');
-  await page.selectOption('#daySubFilter', 'TUE-H');
-  await page.waitForTimeout(250);
-  expect(await page.locator('#dayTable tbody').innerText()).toContain('ตัวกรอง');
-});
-
-test('ไม่ได้ตั้งตัวกรองอะไรเลย — ข้อความยังต้องชวนไปติ๊ก "แสดงทุกใบ" หรือเปลี่ยนวัน', async ({ page }) => {
-  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 500)], D2);  // D2 ไม่มีใครคีย์
+test('ไม่ได้ตั้งตัวกรอง วันนั้นไม่มีใครคีย์ — บอกจำนวนใบทั้งหมดที่ติ๊กแล้วจะเห็น', async ({ page }) => {
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 500)], D2);
   const msg = await page.locator('#dayTable tbody').innerText();
-  expect(msg).toContain('ยังไม่มีการคีย์ยอดเลย');
   expect(msg).toContain('แสดงทุกใบ');
+  expect(msg).toContain('2 ใบ');
+  expect(msg).not.toContain('ตัวกรอง');
+});
+
+test('ยังไม่นำเข้าแผนเลย — ห้ามแนะให้ติ๊ก "แสดงทุกใบ" เพราะติ๊กแล้วก็ว่างเหมือนเดิม', async ({ page }) => {
+  await openDaily(page, [], []);
+  const msg = await page.locator('#dayTable tbody').innerText();
+  expect(msg).toContain('นำเข้าแผนงาน');
+  expect(msg).not.toContain('แสดงทุกใบ');
 });
 
 test('ติ๊ก "แสดงทุกใบ" แล้วยังว่าง = ไม่มีบรรทัดแผนงาน ไม่ใช่เรื่องตัวกรอง', async ({ page }) => {
