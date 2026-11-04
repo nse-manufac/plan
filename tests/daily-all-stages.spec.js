@@ -33,14 +33,14 @@ const rec = (id, orderId, process, qty, date = D1, extra = {}) => Object.assign(
 /** เปิดหน้า "ยอดรายวันทุกขั้น" แล้วตั้งวันที่ให้ตรงกับข้อมูลที่ใส่ไว้
  *  ⚠️ ต้องตั้ง #dayDate เอง — ค่าตั้งต้นของหน้าคือ "วันนี้" ตามเวลาเครื่อง
  *     ถ้าไม่ตั้ง ตารางจะว่างทุกข้อ แล้วเทสจะเขียวเพราะไม่มีอะไรให้ดู ไม่ใช่เพราะโค้ดถูก */
-async function openDaily(page, orders, records = [], date = D1) {
+async function openDaily(page, orders, records = [], date = D1, processes = null) {
   await page.setViewportSize({ width: 1400, height: 1000 });
-  await page.addInitScript(([k, o, r]) => localStorage.setItem(k, JSON.stringify({
-    version: 1, deviceName: 't',
+  await page.addInitScript(([k, o, r, p]) => localStorage.setItem(k, JSON.stringify({
+    version: 1, deviceName: 't', processes: p,
     deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
     chartPref: { mode: '14', from: '', to: '', hidden: [] },
     orders: o, records: r, deliveryNotes: [], deltaWip: [], importHistory: []
-  })), [K_STATE, orders, records]);
+  })), [K_STATE, orders, records, processes]);
   await page.goto(APP);
   await waitReady(page);
   await page.click('.tab-btn[data-tab="daily"]');
@@ -48,71 +48,90 @@ async function openDaily(page, orders, records = [], date = D1) {
   await page.waitForTimeout(250);
 }
 
-// ลำดับคอลัมน์ — # · สัปดาห์ · PO · P/N · Sub-Name · Order Qty · แล้วต่อด้วยทุกขั้น
-const COL = { qty: 5, winding: 6, assembly: 7, support: 8, inspection: 9, shipping: 10 };
+// ลำดับคอลัมน์ — # · สัปดาห์ · PO · P/N · Sub-Name · Order Qty · สะสม · คงเหลือ · ยอดวันนั้น · หมายเหตุ · สถานะ
+const COL = { qty: 5, cum: 6, rem: 7, today: 8, note: 9, status: 10 };
 const rowOf = (page, po) => page.locator('#dayTable tbody tr', { hasText: po });
 const cellOf = (page, po, col) => rowOf(page, po).locator('td').nth(COL[col]);
-// แถวรวมมีช่องแรกเป็น colspan="6" คลุมคอลัมน์ชื่อใบทั้งหมด ช่องของขั้นจึงเริ่มที่ td ตัวที่ 1
-const footOf = (page, col) => page.locator('#dayTable tfoot td').nth(COL[col] - 5);
+// แถวรวมมีช่องแรกเป็น colspan="8" ช่องยอดรวมจึงเป็น td ตัวที่ 1
+const footTotal = page => page.locator('#dayTable tfoot td').nth(1);
+
+/* ปุ่มขั้นอ้างด้วย "ลำดับ" ไม่ใช่ชื่อ — ชื่อขั้นเปลี่ยนได้จากแผงจัดการขั้น (A3)
+   ฝังชื่อไทยไว้ในเทสแล้วเทสจะแดงเพราะเจ้าของเปลี่ยนชื่อ ไม่ใช่เพราะโค้ดพัง */
+const PI = { winding: 0, assembly: 1, support: 2, inspection: 3, shipping: 4 };
+const procBtn = (page, p) => page.locator('#dayProcBtns button').nth(PI[p]);
+async function pick(page, p) {
+  await procBtn(page, p).click();
+  await page.waitForTimeout(200);
+}
+/** เลขบนปุ่มของขั้นนั้น (ยอดรวมของวันนั้นทุกขั้น = ครึ่งหนึ่งของเหตุผลที่หน้านี้มีอยู่) */
+const procNum = async (page, p) => (await procBtn(page, p).locator('.day-n').innerText()).trim();
 
 const ORDERS = [order('PO-1', 4000), order('PO-2', 5000, 'TUE-H', 'WK 35')];
 
 // ── 1. โครงตาราง: ทุกขั้นพร้อมกัน ───────────────────────────────────
 
-test('ทุกขั้นเป็นคอลัมน์ของตัวเอง — หัวคอลัมน์ต้องตรงกับที่หน้า Dashboard ใช้', async ({ page }) => {
+test('ปุ่มขั้นต้องเป็นรายการขั้นชุดเดียวกับหน้าคีย์ยอด', async ({ page }) => {
+  // อ่านปุ่มจากหน้าคีย์ยอดเองแล้วเทียบ — ไม่ฝังชื่อขั้นไว้ในเทส
+  // เจ้าของเพิ่ม/เปลี่ยนชื่อ/ซ่อนขั้นเมื่อไหร่ สองหน้าต้องเปลี่ยนตามกันทั้งคู่ (A3)
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 100)]);
-
-  // อ่านหัวคอลัมน์ของขั้นมาจากหน้า Dashboard เองแล้วเทียบ — ไม่ฝังข้อความไว้ในเทส
-  // ถ้าวันหนึ่งเจ้าของเปลี่ยนชื่อขั้น สองหน้าต้องเปลี่ยนตามกันทั้งคู่ (A3)
-  await page.click('.tab-btn[data-tab="dashboard"]');
+  const dayBtns = (await page.locator('#dayProcBtns button').allInnerTexts())
+    .map(t => t.replace(/[\d,]+\s*$/, '').trim());
+  await page.click('.tab-btn[data-tab="entry"]');
   await page.waitForTimeout(150);
-  const dashHeads = await page.locator('#dashTable thead th').allInnerTexts();
-  await page.click('.tab-btn[data-tab="daily"]');
-  await page.waitForTimeout(150);
-  const dayHeads = await page.locator('#dayTable thead th').allInnerTexts();
-
-  // Dashboard: Item No. · สัปดาห์ · PO · P/N · Sub-Name · Order Qty · Order Date · Aging · [ขั้น] · สถานะ
-  const dashProcHeads = dashHeads.slice(8, dashHeads.length - 1);
-  const dayProcHeads = dayHeads.slice(6);
-  expect(dayProcHeads.length).toBeGreaterThanOrEqual(5);
-  expect(dayProcHeads).toEqual(dashProcHeads);
+  const entryBtns = (await page.locator('#procButtons button').allInnerTexts()).map(t => t.trim());
+  expect(dayBtns.length).toBeGreaterThanOrEqual(5);
+  expect(dayBtns).toEqual(entryBtns);
 });
 
-test('ใบเดียวที่คีย์หลายขั้นในวันเดียว ต้องเห็นครบทุกขั้นในแถวเดียว', async ({ page }) => {
+test('ใบเดียวที่คีย์หลายขั้นในวันเดียว — เลขบนปุ่มบอกครบทุกขั้น กดดูได้ทีละขั้น', async ({ page }) => {
   await openDaily(page, ORDERS, [
     rec('r1', 'PO-1', 'winding', 100),
     rec('r2', 'PO-1', 'assembly', 80),
     rec('r3', 'PO-1', 'inspection', 70)
   ]);
-  expect(await cellOf(page, 'PO-1', 'winding').innerText()).toBe('100');
-  expect(await cellOf(page, 'PO-1', 'assembly').innerText()).toBe('80');
-  expect(await cellOf(page, 'PO-1', 'inspection').innerText()).toBe('70');
-  // ขั้นที่ไม่ได้คีย์ในวันนั้นต้องเป็นขีด ไม่ใช่ศูนย์
-  expect(await cellOf(page, 'PO-1', 'support').innerText()).toBe('—');
+  // "เห็นทุกขั้นพร้อมกัน" ที่เจ้าของขอ อยู่บนปุ่ม ไม่ใช่ในตาราง
+  expect(await procNum(page, 'winding')).toBe('100');
+  expect(await procNum(page, 'assembly')).toBe('80');
+  expect(await procNum(page, 'inspection')).toBe('70');
+  expect(await procNum(page, 'support')).toBe('0');
+
+  // ตารางโชว์ทีละขั้น
+  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('100');
+  await pick(page, 'assembly');
+  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('80');
+  await pick(page, 'inspection');
+  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('70');
+  // ขั้นที่วันนั้นไม่ได้คีย์ — ตารางว่าง ไม่ใช่โชว์ศูนย์
+  await pick(page, 'support');
+  await expect(rowOf(page, 'PO-1')).toHaveCount(0);
 });
 
-test('ยอดส่งของที่มาจากใบส่งสินค้า ต้องขึ้นในคอลัมน์ส่งของด้วย', async ({ page }) => {
+test('ยอดส่งของที่มาจากใบส่งสินค้า ต้องอ่านได้ที่ขั้นส่งของ', async ({ page }) => {
   // หน้าบันทึกยอดรายวันคีย์ขั้นนี้ไม่ได้ (A2) แต่ "อ่าน" ได้ — หน้านี้เป็นหน้าอ่าน จึงต้องเห็น
   await openDaily(page, ORDERS, [
     rec('r1', 'PO-1', 'shipping', 500, D1, { note: 'จากใบส่งสินค้า' })
   ]);
-  expect(await cellOf(page, 'PO-1', 'shipping').innerText()).toBe('500');
+  expect(await procNum(page, 'shipping')).toBe('500');
+  await pick(page, 'shipping');
+  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('500');
+  // คำบอกที่มาของยอดต้องอ่านออกบนจอ ไม่ใช่ซ่อนไว้
+  expect(await cellOf(page, 'PO-1', 'note').innerText()).toContain('ใบส่งสินค้า');
 });
 
 // ── 2. หัวใจข้อที่ 1: ยอดของวันนั้น ไม่ใช่ยอดสะสม ────────────────────
 
-test('ตัวเลขต้องเป็นยอดของวันที่เลือก ไม่ใช่ยอดสะสม', async ({ page }) => {
+test('ยอดวันนั้นกับยอดสะสมอยู่คนละช่อง และเป็นคนละเลข', async ({ page }) => {
   // คีย์ขั้นเดียวกันสองวัน — สะสมได้ 800 แต่ของวันที่ 21 คือ 300
-  const records = [
+  // หัวใจของหน้านี้: ถ้าเผลอเอายอดสะสมมาใส่ช่อง "ยอดวันนั้น" จอจะดูปกติทุกอย่าง แค่เลขใหญ่เกินจริง
+  await openDaily(page, ORDERS, [
     rec('r1', 'PO-1', 'winding', 500, D1),
     rec('r2', 'PO-1', 'winding', 300, D2)
-  ];
-  await openDaily(page, ORDERS, records, D2);
-  expect(await cellOf(page, 'PO-1', 'winding').innerText()).toBe('300');
-
-  await page.fill('#dayDate', D1);
-  await page.waitForTimeout(200);
-  expect(await cellOf(page, 'PO-1', 'winding').innerText()).toBe('500');
+  ], D2);
+  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('300');
+  expect(await cellOf(page, 'PO-1', 'cum').innerText()).toBe('800');
+  expect(await cellOf(page, 'PO-1', 'rem').innerText()).toBe('3,200');
+  expect(await procNum(page, 'winding')).toBe('300');
+  expect(await footTotal(page).innerText()).toBe('300');
 });
 
 test('เปลี่ยนวันไปวันที่ไม่ได้คีย์ แถวต้องหายไป ไม่ใช่ค้างเลขของวันก่อน', async ({ page }) => {
@@ -131,13 +150,17 @@ test('ยอด 0 ที่มีคนคีย์ไว้ ต้องขึ�
   // และมันแปลว่า "วันนี้ผลิต 0" ซึ่งเป็นข้อมูล ไม่ใช่ความว่าง
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 0, D1, { note: 'เครื่องเสีย' })]);
   await expect(rowOf(page, 'PO-1')).toHaveCount(1);
-  expect(await cellOf(page, 'PO-1', 'winding').innerText()).toBe('0');
+  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('0');
 });
 
 test('ใบที่มีแต่ยอด 0 ต้องนับว่า "วันนั้นมีการคีย์" และขึ้นในตารางตั้งต้น', async ({ page }) => {
-  await openDaily(page, ORDERS, [rec('r1', 'PO-2', 'assembly', 0, D1)]);
-  await expect(rowOf(page, 'PO-2')).toHaveCount(1);
-  await expect(rowOf(page, 'PO-1')).toHaveCount(0);
+  // record ยอด 0 เกิดเองได้จากการเลือกเหตุผลตอนยังไม่มียอด (27 ต.ค. 2026)
+  // ถ้านับว่า "ไม่มีการคีย์" ใบที่หยุดงานพร้อมเหตุผลจะหายไปจากหน้านี้ทั้งใบ
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 0, D1, { note: 'เครื่องเสีย' })]);
+  await expect(rowOf(page, 'PO-1')).toHaveCount(1);
+  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('0');
+  expect(await cellOf(page, 'PO-1', 'note').innerText()).toBe('เครื่องเสีย');
+  await expect(rowOf(page, 'PO-2')).toHaveCount(0);
 });
 
 // ── 4. สวิตช์ "แสดงทุกใบ" (เจ้าของเลือก 3 พ.ย. 2026) ────────────────
@@ -148,29 +171,34 @@ test('ค่าตั้งต้นโชว์เฉพาะใบที่�
   await expect(rowOf(page, 'PO-2')).toHaveCount(0);
 });
 
-test('ติ๊ก "แสดงทุกใบ" แล้วใบที่วันนั้นไม่ได้คีย์ต้องขึ้น พร้อมขีดทุกขั้น', async ({ page }) => {
-  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 100, D1)]);
+test('ติ๊ก "แสดงทุกใบ" แล้วใบที่ขั้นนั้นวันนั้นไม่ได้คีย์ต้องขึ้น พร้อมขีด', async ({ page }) => {
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 100)]);
+  await expect(rowOf(page, 'PO-2')).toHaveCount(0);
   await page.check('#dayShowAll');
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(250);
   await expect(rowOf(page, 'PO-2')).toHaveCount(1);
-  expect(await cellOf(page, 'PO-2', 'winding').innerText()).toBe('—');
-  expect(await cellOf(page, 'PO-2', 'inspection').innerText()).toBe('—');
-  // ใบที่คีย์ไว้ยังอยู่และยังถูก
-  expect(await cellOf(page, 'PO-1', 'winding').innerText()).toBe('100');
+  expect(await cellOf(page, 'PO-2', 'today').innerText()).toBe('—');
+  // ยอดสะสมกับคงเหลือยังต้องอ่านได้ แม้วันนั้นไม่ได้คีย์
+  expect(await cellOf(page, 'PO-2', 'cum').innerText()).toBe('0');
+  expect(await cellOf(page, 'PO-2', 'rem').innerText()).toBe('5,000');
+  // ขีดไม่ใช่ศูนย์ — ยอดรวมต้องไม่ขยับ
+  expect(await footTotal(page).innerText()).toBe('100');
 });
 
 // ── 5. แถวรวมท้ายตาราง ────────────────────────────────────────────
 
-test('แถวรวมท้ายตารางเป็นผลรวมของวันนั้นต่อขั้น และไม่นับช่องที่ไม่มีการคีย์', async ({ page }) => {
+test('แถวรวมท้ายตารางเป็นผลรวมของขั้นที่เลือก และไม่นับช่องที่ไม่มีการคีย์', async ({ page }) => {
   await openDaily(page, ORDERS, [
-    rec('r1', 'PO-1', 'winding', 100, D1),
-    rec('r2', 'PO-2', 'winding', 250, D1),
-    rec('r3', 'PO-1', 'assembly', 40, D1),
-    rec('r4', 'PO-1', 'winding', 999, D2)      // วันอื่น ต้องไม่ถูกนับ
+    rec('r1', 'PO-1', 'winding', 500),
+    rec('r2', 'PO-2', 'winding', 1200),
+    rec('r3', 'PO-1', 'assembly', 60)
   ]);
-  expect(await footOf(page, 'winding').innerText()).toBe('350');
-  expect(await footOf(page, 'assembly').innerText()).toBe('40');
-  expect(await footOf(page, 'support').innerText()).toBe('—');
+  expect(await footTotal(page).innerText()).toBe('1,700');
+  await pick(page, 'assembly');
+  expect(await footTotal(page).innerText()).toBe('60');
+  // ขั้นที่ไม่มีใครทำ — ยอดรวมต้องเป็นขีด ไม่ใช่ 0
+  await pick(page, 'support');
+  expect(await footTotal(page).innerText()).toBe('—');
 });
 
 // ── 6. รายการที่ยกเลิกไว้ (B1) ─────────────────────────────────────
@@ -181,7 +209,7 @@ test('รายการที่ยกเลิกไว้ต้องไม�
     rec('r2', 'PO-2', 'winding', 250, D1)
   ]);
   await expect(rowOf(page, 'PO-1')).toHaveCount(0);
-  expect(await footOf(page, 'winding').innerText()).toBe('250');
+  expect(await footTotal(page).innerText()).toBe('250');
 });
 
 // ── 7. อ่านอย่างเดียว — เหตุผลครึ่งหนึ่งที่หน้านี้มีอยู่ ──────────────
@@ -216,12 +244,12 @@ test('ค้นหา PO กรองแถวได้ และแถวรว
     rec('r1', 'PO-1', 'winding', 100, D1),
     rec('r2', 'PO-2', 'winding', 250, D1)
   ]);
-  expect(await footOf(page, 'winding').innerText()).toBe('350');
+  expect(await footTotal(page).innerText()).toBe('350');
 
   await page.fill('#daySearch', 'PO-2');
   await page.waitForTimeout(200);
   await expect(rowOf(page, 'PO-1')).toHaveCount(0);
-  expect(await footOf(page, 'winding').innerText()).toBe('250');
+  expect(await footTotal(page).innerText()).toBe('250');
 });
 
 test('กรองสัปดาห์กับ Sub-Name ได้ และตัวเลือกมาจากข้อมูลจริง', async ({ page }) => {
@@ -265,7 +293,7 @@ test('กดเข้าแท็บแล้วตารางต้องว�
   await page.click('.tab-btn[data-tab="daily"]');
   // ไม่แตะตัวกรองอะไรเลย — วันตั้งต้นของหน้าคือวันนี้
   await expect(page.locator('#dayTable thead th').first()).toBeVisible();
-  expect(await cellOf(page, 'PO-1', 'winding').innerText()).toBe('777');
+  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('777');
 });
 
 // ── 8. ข้อความตอนตารางว่าง ต้องตรงกับความจริง และทางที่มันแนะต้องได้ผล ──
@@ -293,7 +321,7 @@ test('ทางที่ข้อความแนะต้องได้ผ�
   await page.check('#dayShowAll');                                      // ทำตามที่ข้อความบอก
   await page.waitForTimeout(250);
   await expect(rowOf(page, 'PO-2')).toHaveCount(1);
-  expect(await cellOf(page, 'PO-2', 'winding').innerText()).toBe('—');
+  expect(await cellOf(page, 'PO-2', 'today').innerText()).toBe('—');
 });
 
 test('ไม่มีใบไหนตรงตัวกรองเลย — ตอนนั้นจึงบอกให้ล้างตัวกรองได้', async ({ page }) => {
@@ -356,7 +384,7 @@ test('แถวรวมต้องเห็นได้โดยไม่ต�
   });
   expect(seen.overflows).toBe(true);
   expect(seen.inside).toBe(true);
-  expect(await footOf(page, 'winding').innerText()).toBe('600');
+  expect(await footTotal(page).innerText()).toBe('600');
 });
 
 test('คำแนะนำวิธีแก้ยอดต้องบอกข้อยกเว้นของขั้นส่งของ', async ({ page }) => {
@@ -383,7 +411,7 @@ test('ตอนพิมพ์ แถวรวมต้องไม่ลอย�
   await page.emulateMedia({ media: 'print' });
   await page.waitForTimeout(150);
 
-  const foot = footOf(page, 'winding');
+  const foot = footTotal(page);
   expect(await foot.evaluate(el => getComputedStyle(el).position)).toBe('static');
   // ของที่ผู้ตรวจวัดจริง: แถวรวมต้องอยู่ "ใต้" แถวสุดท้าย ไม่ใช่ลอยค้างกลางตาราง
   const ok = await page.evaluate(() => {
@@ -400,23 +428,137 @@ test('ตอนพิมพ์ แถวรวมต้องไม่ลอย�
   expect(await foot.evaluate(el => getComputedStyle(el).position)).toBe('sticky');
 });
 
-test('ลำดับแถวต้องตรงกับหน้าบันทึกยอดรายวัน', async ({ page }) => {
-  // เรียงคนละแบบ (วันสั่ง vs เลข PO) ทำให้คนเปิดสองหน้าเทียบกันไล่บรรทัดตรงกันไม่ได้
-  // ตั้งใจให้ลำดับตามวันสั่งสลับกับลำดับตามเลข PO เพื่อให้เทสแดงถ้าใครเปลี่ยนกลับ
+test('ลำดับแถวต้องตรงกับหน้าบันทึกยอดรายวัน และนิ่งเมื่อวันสั่งซ้ำกัน', async ({ page }) => {
+  /* ⚠️ ของจริง orderDate ซ้ำกันทั้งไฟล์ · ถ้าเรียงแค่ week → orderDate ลำดับจะตกไปเป็น
+   *    ลำดับในอาร์เรย์ แล้วเครื่องที่นำเข้าเองกับที่ดึงจากเซิร์ฟเวอร์โชว์คนละลำดับ (ผู้ตรวจ #118 รอบห้า)
+   *    จึงต้องใส่ใบที่วันสั่งซ้ำกันและเรียงสลับไว้ในอาร์เรย์ ไม่งั้นตัวตัดสินที่สามไม่ถูกใช้เลย */
   const orders = [
-    { ...order('PO-A', 1000), orderDate: '2026-08-03' },
-    { ...order('PO-B', 1000), orderDate: '2026-08-01' },
-    { ...order('PO-C', 1000), orderDate: '2026-08-02' }
+    { ...order('PO-C', 1000), orderDate: '2026-08-02' },
+    { ...order('PO-A', 1000), orderDate: '2026-08-02' },
+    { ...order('PO-B', 1000), orderDate: '2026-08-01' }
   ];
   const recs = ['PO-A', 'PO-B', 'PO-C'].map((po, i) => rec('r' + i, po, 'winding', 10));
   await openDaily(page, orders, recs);
-  const onDay = await page.locator('#dayTable tbody tr td:nth-child(3)').allInnerTexts();
-  expect(onDay.map(s => s.trim())).toEqual(['PO-B', 'PO-C', 'PO-A']);
+  const onDay = (await page.locator('#dayTable tbody tr td:nth-child(3)').allInnerTexts()).map(s => s.trim());
+  expect(onDay).toEqual(['PO-B', 'PO-A', 'PO-C']);
 
   await page.click('.tab-btn[data-tab="entry"]');
   await page.fill('#entryDate', D1);
   await page.waitForTimeout(250);
   // ทั้งสองหน้าวางคอลัมน์ PO ไว้ช่องที่สามเหมือนกัน
-  const onEntry = await page.locator('#entryTable tbody tr td:nth-child(3)').allInnerTexts();
-  expect(onEntry.map(s => s.trim())).toEqual(onDay.map(s => s.trim()));
+  const onEntry = (await page.locator('#entryTable tbody tr td:nth-child(3)').allInnerTexts()).map(s => s.trim());
+  expect(onEntry).toEqual(onDay);
+});
+
+// ── 11. แบบ F — แถบปุ่มขั้นทำสองหน้าที่ (เจ้าของเคาะ 4 พ.ย. 2026) ─────
+//
+// ⚠️ เลขบนปุ่มคือครึ่งหนึ่งของเหตุผลที่หน้านี้มีอยู่ — มันคือ "เห็นทุกขั้นพร้อมกัน"
+//    ที่เจ้าของขอตอนแรก ย้ายจากคอลัมน์มาอยู่บนปุ่ม หลังพบว่าทำเป็นคอลัมน์แล้วเป็นกำแพงขีด
+//    ถอดเลขออกเมื่อไหร่ หน้านี้เหลือแค่หน้าคีย์ยอดที่กรอกไม่ได้
+
+test('ขั้นที่วันนั้นไม่มีใครคีย์ ต้องยังมีปุ่ม เลขเป็น 0 แบบจาง ไม่ใช่ปุ่มหาย', async ({ page }) => {
+  // ซ่อนปุ่มแล้วปุ่มจะหาย ๆ โผล่ ๆ ทุกวันจนจำตำแหน่งไม่ได้ ซึ่งแย่กว่าปุ่มที่กดแล้วตารางว่าง
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 100)]);
+  await expect(procBtn(page, 'support')).toHaveCount(1);
+  expect(await procNum(page, 'support')).toBe('0');
+  await expect(procBtn(page, 'support').locator('.day-n')).toHaveClass(/zero/);
+  await expect(procBtn(page, 'winding').locator('.day-n')).not.toHaveClass(/zero/);
+});
+
+test('เลขบนปุ่มต้องตรงกับตารางเสมอ — ขยับตามตัวกรองด้วย', async ({ page }) => {
+  // เลขบนปุ่มคิดจากชุดใบที่กรองแล้ว ไม่ใช่ของทั้งโรงงาน ไม่งั้นกดปุ่มแล้วตารางได้คนละเลข
+  await openDaily(page, ORDERS, [
+    rec('r1', 'PO-1', 'winding', 500),
+    rec('r2', 'PO-2', 'winding', 1200)
+  ]);
+  expect(await procNum(page, 'winding')).toBe('1,700');
+  expect(await footTotal(page).innerText()).toBe('1,700');
+  await page.selectOption('#dayWeekFilter', 'WK 35');   // เหลือ PO-2
+  await page.waitForTimeout(250);
+  expect(await procNum(page, 'winding')).toBe('1,200');
+  expect(await footTotal(page).innerText()).toBe('1,200');
+});
+
+test('หัวคอลัมน์ยอดสะสมต้องบอกชื่อขั้นที่กำลังดู', async ({ page }) => {
+  await openDaily(page, ORDERS, [
+    rec('r1', 'PO-1', 'winding', 100),
+    rec('r2', 'PO-1', 'assembly', 80)
+  ]);
+  const head = () => page.locator('#dayTable thead th').nth(COL.cum).innerText();
+  const first = await head();
+  await pick(page, 'assembly');
+  const second = await head();
+  expect(first).not.toBe(second);
+  // ชื่อขั้นต้องมาจากรายการขั้นจริง ไม่ใช่ข้อความฝังไว้ (A3)
+  const btnLabel = (await procBtn(page, 'assembly').innerText()).replace(/[\d,]+\s*$/, '').trim();
+  expect(second).toContain(btnLabel.replace(/^\S+\s/, ''));
+});
+
+test('คอลัมน์สถานะต้องขึ้นป้ายของทั้งใบ ไม่ใช่ของวันที่เลือก', async ({ page }) => {
+  // วันที่เลือกคือ 20 ส.ค. 2026 แต่ป้ายคิดจาก "วันนี้" — ใบที่คีย์ไปนิดเดียวต้องเป็นป้ายแดง
+  // ส่วนใบที่ส่งครบต้องเป็นเขียว แม้แถวนั้นจะมีแต่ยอด winding ของวันที่เลือก
+  // ⚠️ ไม่ผูกกับคำบนป้าย เพราะลำดับการตัดสินของ computeStatus เป็นของ A5 (ปลายน้ำก่อน)
+  //    ผูกคำแล้วเทสจะแดงเวลาใครแก้ A5 ให้ถูกขึ้น ซึ่งไม่ใช่เรื่องของหน้านี้
+  await openDaily(page, ORDERS, [
+    rec('r1', 'PO-1', 'winding', 100),
+    rec('r2', 'PO-2', 'winding', 200),
+    rec('r3', 'PO-2', 'shipping', 5000)
+  ]);
+  await expect(cellOf(page, 'PO-1', 'status').locator('.badge')).toHaveClass(/red/);
+  await expect(cellOf(page, 'PO-2', 'status').locator('.badge')).toHaveClass(/green/);
+  // ป้ายต้องมีข้อความจริง ไม่ใช่ป้ายเปล่า
+  expect((await cellOf(page, 'PO-1', 'status').innerText()).trim().length).toBeGreaterThan(2);
+});
+
+test('A3 — ขั้นที่ถูกซ่อนต้องไม่มีปุ่ม และต้องมีขั้นที่ถูกเลือกอยู่หนึ่งขั้นเสมอ', async ({ page }) => {
+  // ⚠️ เทสนี้โหลดหน้าครั้งเดียว — รอบสองแอปไม่อ่าน localStorage แล้ว เพราะย้ายเข้า IndexedDB ไปแล้ว
+  //    (ธง :moved) การ addInitScript ทับรอบสองจึงไม่มีผล แล้วเทสจะเขียว/แดงเพราะเหตุผลผิด
+  const PROCS = [
+    { id: 'winding', label: 'Winding/Trimming', short: 'Winding' },
+    { id: 'assembly', label: 'Assembly', short: 'Assembly', hidden: true },
+    { id: 'support', label: 'Support', short: 'Support' },
+    { id: 'inspection', label: 'Inspection', short: 'Inspection' },
+    { id: 'shipping', label: 'ส่งของ (Shipping)', short: 'Shipping' }
+  ];
+  await openDaily(page, ORDERS, [
+    rec('r1', 'PO-1', 'winding', 100),
+    rec('r2', 'PO-1', 'assembly', 80)
+  ], D1, PROCS);
+  const labels = (await page.locator('#dayProcBtns button').allInnerTexts()).join(' ');
+  expect(labels).not.toContain('Assembly');
+  expect(labels).toContain('Winding');
+  // ต้องมีขั้นที่ถูกเลือกอยู่เสมอ — ตั้งต้นเป็นขั้นแรกของสายการผลิต ไม่ใช่ไม่มีปุ่มไหนถูกเลือก
+  await expect(page.locator('#dayProcBtns button.primary')).toHaveCount(1);
+  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('100');
+  // ยอดของขั้นที่ซ่อนต้องไม่โผล่มาที่ไหนบนหน้านี้ (ตรงกับที่เหลือของแอป)
+  expect(labels).not.toContain('80');
+});
+
+test('กดปุ่มขั้นแล้วต้องไม่เขียนข้อมูลลงเครื่อง — ปุ่มเป็นทางใหม่ที่เพิ่มเข้ามา', async ({ page }) => {
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 100)]);
+  const before = await readSaved(page, K_STATE, { raw: true });
+  for (const p of ['assembly', 'support', 'inspection', 'shipping', 'winding']) await pick(page, p);
+  expect(await readSaved(page, K_STATE, { raw: true })).toBe(before);
+});
+
+test('เลือกขั้นที่นี่ต้องไม่ลากหน้าคีย์ยอดของพนักงานไปด้วย (G2)', async ({ page }) => {
+  // คนละตัวแปรโดยตั้งใจ — พนักงานกำลังคีย์อยู่ขั้นหนึ่ง คนอ่านเปิดดูอีกขั้น ต้องไม่ชนกัน
+  // ⚠️ ต้องดู "หัวคอลัมน์สะสมของหน้าคีย์ยอด" ซึ่งสะท้อนขั้นที่หน้านั้นกำลังคีย์จริง
+  //    ไม่ใช่ปุ่มที่ไฮไลต์ — การเข้าแท็บไม่ได้วาดปุ่มใหม่ ปุ่มจึงยังไฮไลต์อันเดิมอยู่ดี
+  //    (เขียนแบบนั้นแล้วเทสเขียวทั้งที่ตัวแปรถูกลากไปแล้ว — พิสูจน์ด้วย mutation)
+  await openDaily(page, ORDERS, [
+    rec('r1', 'PO-1', 'winding', 100),
+    rec('r2', 'PO-1', 'inspection', 70)
+  ]);
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForTimeout(250);
+  const before = await page.locator('#entryTable thead th').nth(6).innerText();
+
+  await page.click('.tab-btn[data-tab="daily"]');
+  await page.waitForTimeout(150);
+  await pick(page, 'inspection');
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForTimeout(250);
+  expect(await page.locator('#entryTable thead th').nth(6).innerText()).toBe(before);
+  expect(await page.locator('#entryTable tbody tr td').nth(6).innerText()).toBe('100');
 });

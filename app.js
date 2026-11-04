@@ -2235,7 +2235,10 @@ function renderEntryTable(){
    *    และจะไม่ตรงกับที่หน้า Dashboard กับใบส่งสินค้ากรอง */
   if(subFilter) orders = orders.filter(o=>o.subName===subFilter);
   if(search) orders = orders.filter(o=> String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
-  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week) || (a.orderDate||'').localeCompare(b.orderDate));
+  // ตัวตัดสินที่สามจำเป็น — ของจริง orderDate ซ้ำกันทั้งไฟล์ ถ้าเหลือสองชั้นลำดับจะตกไปเป็น
+  // ลำดับในอาร์เรย์ แล้วเครื่องที่นำเข้าเองกับที่ดึงจากเซิร์ฟเวอร์โชว์คนละลำดับ (ผู้ตรวจ #118 รอบห้า)
+  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week)
+    || (a.orderDate||'').localeCompare(b.orderDate) || (a.poNo||'').localeCompare(b.poNo));
 
   lastRenderedOrderIds = [];
   let rowsHtml = '';
@@ -2757,90 +2760,92 @@ function renderFgCard(pn, unit){
 
 /* ---------- Render: ยอดรายวันทุกขั้น ----------
  *
- * เจ้าของสั่ง 3 พ.ย. 2026 — คนอ่านตัวจริงคือคุณพ่อของเจ้าของ ซึ่งไม่ได้อ่าน Dashboard
- * เพราะมันบอก **ยอดสะสม** ตอบไม่ได้ว่า "วันนั้นทำได้เท่าไหร่" · ส่วนหน้าบันทึกยอดรายวัน
- * ตอบได้แต่เห็น **ทีละขั้น** ต้องกดปุ่มไล่ทุกขั้นแล้วจำตัวเลขไว้ในหัว
- * หน้านี้คือสองอย่างนั้นรวมกัน: หนึ่งวัน · ทุกขั้นพร้อมกัน · ยอดของวันนั้น
- *
- * ⚠️ **อ่านอย่างเดียว ห้ามใส่ช่องกรอกลงหน้านี้** · นี่เป็นเหตุผลครึ่งหนึ่งที่หน้านี้มีอยู่
- *    หน้าบันทึกยอดรายวันมีช่องกรอกทุกแถว บันทึกทันทีที่ค่าเปลี่ยน และ**ไม่มีด่านกัน
- *    ลูกกลิ้งเมาส์** — คนที่เปิดมา "ดู" คลิกเข้าช่องแล้วเลื่อนลูกกลิ้งหาแถวถัดไป
- *    ยอดผลิตเปลี่ยนแล้วถูกบันทึกจริงโดยไม่มีอะไรฟ้อง · ใส่ช่องกรอกที่นี่เมื่อไหร่
- *    = พาคนอ่านกลับไปเจอกับดักเดิม · ยอดขั้นส่งของยังเขียนได้ทางเดียวคือใบส่งสินค้า (A2)
- *
- * ⚠️ **ตั้งต้นโชว์เฉพาะใบที่วันนั้นมีการคีย์** — ของจริง 712 ใบ × ทุกขั้น = ช่องหลายพันช่อง
- *    แต่วันหนึ่งคีย์กันไม่ถึงร้อยรายการ เพราะใบหนึ่งผ่านแต่ละขั้นครั้งเดียวในชีวิต
- *    โชว์ทุกใบตั้งต้นจะได้กำแพง "—" ซึ่งอ่านยากกว่าของที่มีอยู่แล้ว = แพ้ตั้งแต่ยังไม่เริ่ม
- *    เจ้าของเลือกให้มี **สวิตช์** เปิดดูทุกใบได้ (3 พ.ย. 2026) เพราะ "ใบที่ไม่ขึ้น" ก็เป็นข้อมูล
- *
- * ⚠️ **"—" กับ "0" ไม่ใช่อย่างเดียวกัน ห้ามรวบเป็นอันเดียว** · "—" = วันนั้นไม่มีใครคีย์
- *    "0" = มีคนคีย์ไว้จริงว่าผลิตศูนย์ (เกิดได้เองจากการเลือกเหตุผลตอนยังไม่มียอด)
- *    เขียนเงื่อนไขเป็น `v==null` ไม่ใช่ `!v` ไม่งั้นยอด 0 จะหายกลายเป็นขีด
- *    แล้ว "วันนี้หยุดงาน" จะอ่านไม่ต่างจาก "ยังไม่ได้คีย์" ซึ่งเป็นคนละเรื่องกันคนละขั้ว
- *
- * ยอดอ่านจาก `buildRecordIndex()` ซึ่งหน้าบันทึกยอดรายวันสร้างอยู่แล้วทุกครั้งที่วาดจอ
- * และมีครบทุกขั้นตั้งแต่แรก (กุญแจ orderId|process|date · A2) หน้านั้นอ่านแค่ช่องเดียวต่อแถว
- * หน้านี้จึงไม่ได้คิดอะไรใหม่เลย แค่อ่านทุกช่องของแถวนั้นแทนช่องเดียว */
+ * หน้าอ่านอย่างเดียวสำหรับคนอ่านตัวจริง (คุณพ่อของเจ้าของ · ใช้คอมไม่เก่ง)
+ * **อ่าน CLAUDE.md §1 บล็อกของหน้านี้ให้จบก่อนแก้** — มีคำตัดสินที่ลองแล้วตกมาสองรูปแบบ
+ * สิ่งที่ห้ามพังสั้น ๆ: เลขบนปุ่ม = ยอดรวมของวันนั้นทุกขั้น (ห้ามยุบทิ้ง) · ตารางดูทีละขั้น ·
+ * ขั้นยอด 0 ยังมีปุ่ม · ห้ามใส่ช่องกรอก · "—" ไม่ใช่ "0" · สถานะเป็นของทั้งใบ ณ วันนี้ */
+
+/** ขั้นที่หน้านี้กำลังดู · คนละตัวกับ `currentProcess` ของหน้าคีย์ยอดโดยตั้งใจ (G2) */
+let dayProcess = null;
+
 function renderDayTable(){
   const date = document.getElementById('dayDate').value || todayISO();
   const search = document.getElementById('daySearch').value.trim().toLowerCase();
   const weekFilter = document.getElementById('dayWeekFilter').value;
   const subFilter = document.getElementById('daySubFilter').value;
   const showAll = document.getElementById('dayShowAll').checked;
+  // ขั้นที่กำลังดูถูกซ่อนจากเครื่องอื่น → ตกกลับไปขั้นแรกของสายการผลิต (A3 · แบบเดียวกับ renderProcessControls)
+  if(!PROCESSES.includes(dayProcess)) dayProcess = MAIN_PROCESSES[0];
 
   const recIndex = buildRecordIndex(state.records);
+  const noteIndex = buildNoteIndex(state.records);
+  const allCum = buildCumMap(state.records);
+  const ref = todayISO();
 
-  /* ตัวกรองชุดเดียวกับหน้าบันทึกยอดรายวันทุกข้อ รวมการเทียบ subName แบบตรงตัว
-   * (ห้ามเดาหน่วยจากรหัส PO ตรงนี้ ไม่งั้นจะกรองไม่ตรงกับหน้าอื่น) */
+  // ตัวกรองชุดเดียวกับหน้าคีย์ยอดทุกข้อ รวมการเทียบ subName แบบตรงตัว (ห้ามเดาหน่วยจากรหัส PO ตรงนี้)
   let orders = activeOrders().filter(o=>o.status!=='closed');
   if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
   if(subFilter) orders = orders.filter(o=>o.subName===subFilter);
   if(search) orders = orders.filter(o=> String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
-  // เรียงเหมือนหน้าบันทึกยอดรายวันเป๊ะ ๆ — คนเปิดสองหน้าเทียบกันต้องไล่บรรทัดตรงกันได้ (ผู้ตรวจ #118 รอบสี่)
-  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week) || (a.orderDate||'').localeCompare(b.orderDate));
+  // สามชั้นและต้องตรงกับหน้าคีย์ยอด — ดู CLAUDE.md (ของจริง orderDate ซ้ำกันทั้งไฟล์)
+  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week)
+    || (a.orderDate||'').localeCompare(b.orderDate) || (a.poNo||'').localeCompare(b.poNo));
 
-  const total = {};
-  let n = 0, rowsHtml = '';
+  // เลขบนปุ่ม = ยอดรวมของวันนั้นทุกขั้น · คิดจากชุดใบที่กรองแล้ว จึงตรงกับตารางข้างล่างเสมอ
+  const dayTotals = {};
+  orders.forEach(o=> PROCESSES.forEach(p=>{
+    const v = recIndex[o.id+'|'+p+'|'+date];
+    if(v!=null && v!=='') dayTotals[p] = (dayTotals[p]||0) + (Number(v)||0);
+  }));
+  const btns = document.getElementById('dayProcBtns');
+  btns.innerHTML = PROCESSES.map(p=>{
+    const d = PROCESS_BY_ID[p], t = dayTotals[p];
+    return `<button type="button" class="btn${p===dayProcess?' primary':''}" data-proc="${escapeHtml(p)}">`
+      + `${escapeHtml(d.icon + ' ' + d.label)} <span class="day-n${t ? '' : ' zero'}">${numFmt(t||0)}</span></button>`;
+  }).join('');
+  btns.querySelectorAll('button').forEach(b=> b.addEventListener('click', ()=>{
+    dayProcess = b.dataset.proc;
+    renderDayTable();
+  }));
+
+  const procLabel = PROCESS_BY_ID[dayProcess].label;
+  const dash = '<span class="none">—</span>';
+  let total = null, n = 0, rowsHtml = '';
   orders.forEach(o=>{
-    const vals = PROCESSES.map(p=>{
-      const v = recIndex[o.id+'|'+p+'|'+date];
-      return (v==null || v==='') ? null : v;
-    });
-    if(!vals.some(v=>v!=null) && !showAll) return;
-    /* ยอดรวมท้ายตารางนับเฉพาะช่องที่มีการคีย์จริง — ช่องขีดไม่ใช่ศูนย์ จึงไม่เอามาบวก
-     * numFmt() แปลงเป็นเลขเองอยู่แล้ว แต่ที่นี่ต้องบวก จึงต้องแปลงตรงนี้ด้วย */
-    vals.forEach((v,i)=>{ if(v!=null) total[PROCESSES[i]] = (total[PROCESSES[i]]||0) + (Number(v)||0); });
+    const v = recIndex[o.id+'|'+dayProcess+'|'+date];
+    const todayVal = (v==null || v==='') ? null : v;   // "—" ไม่ใช่ "0" — ห้ามเขียน !v
+    if(todayVal==null && !showAll) return;
+    if(todayVal!=null) total = (total||0) + (Number(todayVal)||0);   // ช่องขีดไม่ใช่ศูนย์ จึงไม่บวก
+    const cum = (allCum[o.id] && allCum[o.id][dayProcess]) || 0;
+    const st = computeStatus(o, allCum[o.id] || emptyCum(), computeDeadlines(o), ref);
+    const note = (noteIndex[o.id+'|'+dayProcess+'|'+date] || '').trim();
     n++;
-    rowsHtml += `<tr>
-      <td>${n}</td>
-      <td class="left">${escapeHtml(o.week)}</td>
-      <td class="left">${escapeHtml(o.poNo)}</td>
-      <td class="left">${escapeHtml(o.pn)}</td>
-      <td class="left">${escapeHtml(o.subName)}</td>
-      <td>${numFmt(o.orderQty)}</td>
-      ${vals.map(v=> v==null ? '<td class="none">—</td>' : `<td>${numFmt(v)}</td>`).join('')}
-    </tr>`;
+    rowsHtml += `<tr><td>${n}</td>`
+      + `<td class="left">${escapeHtml(o.week)}</td><td class="left">${escapeHtml(o.poNo)}</td>`
+      + `<td class="left">${escapeHtml(o.pn)}</td><td class="left">${escapeHtml(o.subName)}</td>`
+      + `<td>${numFmt(o.orderQty)}</td><td>${numFmt(cum)}</td>`
+      + `<td class="rem">${numFmt(Math.max(0, o.orderQty - cum))}</td>`
+      + `<td>${todayVal==null ? dash : `<b>${numFmt(todayVal)}</b>`}</td>`
+      + `<td class="left">${note ? escapeHtml(note) : dash}</td>`
+      + `<td><span class="badge ${st.color}">${escapeHtml(st.label)}</span></td></tr>`;
   });
 
-  const cols = 6 + PROCESSES.length;
-  /* ⚠️ ข้อความต้องตัดสินจาก "มีใบที่ตรงกี่ใบ" ไม่ใช่จากว่าปุ่มไหนถูกกด (ผู้ตรวจ #118 จับสองรอบ)
-   * ใบที่ตรงตัวกรองมีอยู่ แต่วันนั้นไม่มีใครคีย์ ไม่ใช่ "ไม่มีใบที่ตรงตัวกรอง"
-   * และการชี้ให้ล้างตัวกรองที่เขาตั้งไว้เองคือส่งคนไปกดทางที่ไม่ได้ผล */
+  /* ข้อความต้องตัดสินจาก "มีใบที่ตรงกี่ใบ" ไม่ใช่จากปุ่มที่ถูกกด และต้องแนะทางที่กดแล้วได้ผล
+   * (ผู้ตรวจ #118 จับสองรอบ · เลขบนปุ่มบอกเองว่าขั้นไหนมีของ จึงชี้ไปที่ปุ่มด้วย) */
   const emptyMsg = orders.length
-    ? `วันนั้นยังไม่มีการคีย์ยอดใบไหนเลย — ติ๊ก "แสดงทุกใบ" เพื่อดูทั้ง ${numFmt(orders.length)} ใบ หรือเลือกวันอื่น`
+    ? `ขั้น${procLabel} ของวันนั้นยังไม่มีการคีย์ยอด — ดูเลขบนปุ่มด้านบนว่าขั้นไหนมีของ `
+      + `· ติ๊ก "แสดงทุกใบ" เพื่อดูทั้ง ${numFmt(orders.length)} ใบ · หรือเลือกวันอื่น`
     : (search || weekFilter || subFilter)
       ? 'ไม่มีใบที่ตรงกับตัวกรองที่ตั้งไว้ — ล้างช่องค้นหา สัปดาห์ หรือ Sub-Name แล้วดูอีกครั้ง'
       : 'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน';
-  document.getElementById('dayTable').innerHTML = `<thead><tr>
-      <th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>
-      <th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th>
-      ${PROCESSES.map(p=>`<th>${processHeadHtml(p)}</th>`).join('')}
-    </tr></thead>
-    <tbody>${rowsHtml || emptyRow(cols, emptyMsg)}</tbody>
-    <tfoot><tr>
-      <td colspan="6">รวมทั้งหมดของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ</td>
-      ${PROCESSES.map(p=>`<td>${total[p]!=null ? numFmt(total[p]) : '—'}</td>`).join('')}
-    </tr></tfoot>`;
+  document.getElementById('dayTable').innerHTML = `<thead><tr>`
+    + `<th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>`
+    + `<th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th>`
+    + `<th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนั้น</th><th>หมายเหตุ</th>`
+    + `<th title="สถานะของทั้งใบ ณ วันนี้ ไม่ใช่ของวันที่เลือก">สถานะของใบ</th></tr></thead>`
+    + `<tbody>${rowsHtml || emptyRow(11, emptyMsg)}</tbody><tfoot><tr>`
+    + `<td colspan="8">รวมขั้น${escapeHtml(procLabel)} ของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ</td>`
+    + `<td>${total!=null ? numFmt(total) : '—'}</td><td colspan="2"></td></tr></tfoot>`;
 }
 
 /* ---------- Render: Dashboard tab ---------- */
