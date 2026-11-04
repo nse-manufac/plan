@@ -328,3 +328,42 @@ test('ติ๊ก "แสดงทุกใบ" แล้วยังว่า�
   expect(msg).toContain('นำเข้าแผนงาน');
   expect(msg).not.toContain('ตัวกรอง');
 });
+
+// ── 9. สองข้อที่ผู้ตรวจ #118 รอบสามทัก — ทั้งคู่เรื่องคนอ่าน ไม่ใช่ตัวเลข ────
+
+test('แถวรวมต้องเห็นได้โดยไม่ต้องเลื่อนไปสุด แม้ตารางยาวเกินกรอบ', async ({ page }) => {
+  // กรอบ .table-wrap สูงสุด 70vh · ที่ของจริง 712 ใบ แถวรวมจะหลุดไปใต้ขอบล่าง
+  // และยอดรวมของวันนั้นคือหนึ่งในของที่เจ้าของอยากให้คุณพ่ออ่าน
+  const many = [];
+  const recs = [];
+  for (let i = 0; i < 60; i++) {
+    many.push(order('PO-' + i, 1000));
+    recs.push(rec('r' + i, 'PO-' + i, 'winding', 10));
+  }
+  await openDaily(page, many, recs);
+  await page.setViewportSize({ width: 1400, height: 500 });   // บังคับให้ตารางยาวเกินกรอบ
+  await page.waitForTimeout(250);
+  // เทียบกับกรอบที่เลื่อน ไม่ใช่กับหน้าจอ — ของที่แก้คือ "ต้องไถ 712 แถวก่อนเจอยอดรวม"
+  const seen = await page.evaluate(() => {
+    const wrap = document.querySelector('#view-daily .table-wrap');
+    wrap.scrollTop = 0;                                   // อยู่หัวตาราง
+    const f = document.querySelector('#dayTable tfoot td');
+    const w = wrap.getBoundingClientRect(), r = f.getBoundingClientRect();
+    return {
+      overflows: wrap.scrollHeight > wrap.clientHeight + 5,   // ตารางยาวเกินกรอบจริง
+      inside: r.top >= w.top - 1 && r.bottom <= w.bottom + 1  // แถวรวมอยู่ในส่วนที่มองเห็น
+    };
+  });
+  expect(seen.overflows).toBe(true);
+  expect(seen.inside).toBe(true);
+  expect(await footOf(page, 'winding').innerText()).toBe('600');
+});
+
+test('คำแนะนำวิธีแก้ยอดต้องบอกข้อยกเว้นของขั้นส่งของ', async ({ page }) => {
+  // หน้าคีย์ยอดรายวันไม่มีช่องกรอกของขั้นส่งของ (ปิดไปเมื่อ 23 ต.ค. 2026)
+  // ส่งคนไปที่นั่นเฉย ๆ คือให้เขาเดินเกินหนึ่งทอดแล้วค่อยเจอแถบบอกทางที่ปลายทาง
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 500)]);
+  const desc = await page.locator('#view-daily .desc').first().innerText();
+  expect(desc).toContain('ส่งของ');
+  expect(desc).toContain('ใบส่งสินค้า');
+});

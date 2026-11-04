@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-04.2">
+<meta name="app-version" content="2026-11-04.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -160,7 +160,7 @@
   #entryTable .row-note-na{color:var(--text-dim);text-align:center;}
   /* ช่องที่วันนั้นไม่มีการคีย์ — ต้องจางกว่าเลขจริงชัด ๆ เพราะทั้งตารางมีช่องแบบนี้เยอะกว่าเลข */
   #dayTable td.none{color:var(--text-dim);}
-  #dayTable tfoot td{font-weight:700;background:var(--gray-light);}
+  #dayTable tfoot td{font-weight:700;background:var(--gray-light);position:sticky;bottom:0;z-index:1;}
   #entryTable .ship-today{font-size:19px;font-weight:700;width:130px;display:inline-block;
     box-sizing:border-box;padding:10px 8px;}
   /* บนมือถือบีบ "ระยะห่าง" คืน แต่ไม่แตะขนาดตัวอักษร
@@ -442,7 +442,7 @@
     <h2>ยอดที่ทำแต่ละขั้น ในวันเดียว</h2>
     <div class="desc">ตัวเลขในช่องคือ <b>ยอดที่คีย์ไว้ของวันนั้น</b> ไม่ใช่ยอดสะสม
       (ยอดสะสมกับความคืบหน้าดูที่หน้า Dashboard) · <b>หน้านี้อ่านอย่างเดียว</b>
-      จะแก้ยอดให้ไปที่หน้า &quot;บันทึกยอดรายวัน&quot; เลือกวันกับขั้นเดียวกัน
+      จะแก้ยอดให้ไปที่หน้า &quot;บันทึกยอดรายวัน&quot; เลือกวันกับขั้นเดียวกัน (ยกเว้นขั้นส่งของ ซึ่งแก้ที่หน้าใบส่งสินค้า)
       · ช่อง &quot;—&quot; คือวันนั้นไม่มีใครคีย์ ส่วน &quot;0&quot; คือมีคนคีย์ไว้ว่าผลิตศูนย์</div>
     <div class="row filters">
       <div class="field">
@@ -876,6 +876,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-04.2"></script>
+<script src="app.js?v=2026-11-04.3"></script>
 </body>
 </html>
