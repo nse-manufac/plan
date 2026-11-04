@@ -2796,7 +2796,8 @@ function renderDayTable(){
   if(weekFilter) orders = orders.filter(o=>o.week===weekFilter);
   if(subFilter) orders = orders.filter(o=>o.subName===subFilter);
   if(search) orders = orders.filter(o=> String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
-  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week) || (a.poNo||'').localeCompare(b.poNo));
+  // เรียงเหมือนหน้าบันทึกยอดรายวันเป๊ะ ๆ — คนเปิดสองหน้าเทียบกันต้องไล่บรรทัดตรงกันได้ (ผู้ตรวจ #118 รอบสี่)
+  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week) || (a.orderDate||'').localeCompare(b.orderDate));
 
   const total = {};
   let n = 0, rowsHtml = '';

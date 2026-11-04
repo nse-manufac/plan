@@ -367,3 +367,56 @@ test('คำแนะนำวิธีแก้ยอดต้องบอก�
   expect(desc).toContain('ส่งของ');
   expect(desc).toContain('ใบส่งสินค้า');
 });
+
+// ── 10. สองข้อของผู้ตรวจ #118 รอบสี่ ────────────────────────────────
+
+test('ตอนพิมพ์ แถวรวมต้องไม่ลอยทับแถวข้อมูล', async ({ page }) => {
+  // การตรึงแถวรวมไว้ขอบล่าง (รอบสาม) พังตอนพิมพ์ เพราะ @media print ปลด .table-wrap
+  // เป็น overflow:visible กรอบที่คุม sticky จึงหายไป แถบไปตรึงที่ขอบหน้าต่างแล้วทับแถวกลางตาราง
+  const many = [];
+  const recs = [];
+  for (let i = 0; i < 60; i++) {
+    many.push(order('PO-' + String(i).padStart(3, '0'), 1000));
+    recs.push(rec('r' + i, 'PO-' + String(i).padStart(3, '0'), 'winding', 10));
+  }
+  await openDaily(page, many, recs);
+  await page.emulateMedia({ media: 'print' });
+  await page.waitForTimeout(150);
+
+  const foot = footOf(page, 'winding');
+  expect(await foot.evaluate(el => getComputedStyle(el).position)).toBe('static');
+  // ของที่ผู้ตรวจวัดจริง: แถวรวมต้องอยู่ "ใต้" แถวสุดท้าย ไม่ใช่ลอยค้างกลางตาราง
+  const ok = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#dayTable tbody tr')];
+    const last = rows[rows.length - 1].getBoundingClientRect();
+    const f = document.querySelector('#dayTable tfoot td').getBoundingClientRect();
+    return { footTop: Math.round(f.top), lastBottom: Math.round(last.bottom) };
+  });
+  expect(ok.footTop).toBeGreaterThanOrEqual(ok.lastBottom - 1);
+
+  await page.emulateMedia({ media: 'screen' });
+  await page.waitForTimeout(150);
+  // บนจอต้องยังตรึงอยู่ — ห้ามแก้กระดาษแล้วทำของบนจอหาย
+  expect(await foot.evaluate(el => getComputedStyle(el).position)).toBe('sticky');
+});
+
+test('ลำดับแถวต้องตรงกับหน้าบันทึกยอดรายวัน', async ({ page }) => {
+  // เรียงคนละแบบ (วันสั่ง vs เลข PO) ทำให้คนเปิดสองหน้าเทียบกันไล่บรรทัดตรงกันไม่ได้
+  // ตั้งใจให้ลำดับตามวันสั่งสลับกับลำดับตามเลข PO เพื่อให้เทสแดงถ้าใครเปลี่ยนกลับ
+  const orders = [
+    { ...order('PO-A', 1000), orderDate: '2026-08-03' },
+    { ...order('PO-B', 1000), orderDate: '2026-08-01' },
+    { ...order('PO-C', 1000), orderDate: '2026-08-02' }
+  ];
+  const recs = ['PO-A', 'PO-B', 'PO-C'].map((po, i) => rec('r' + i, po, 'winding', 10));
+  await openDaily(page, orders, recs);
+  const onDay = await page.locator('#dayTable tbody tr td:nth-child(3)').allInnerTexts();
+  expect(onDay.map(s => s.trim())).toEqual(['PO-B', 'PO-C', 'PO-A']);
+
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.fill('#entryDate', D1);
+  await page.waitForTimeout(250);
+  // ทั้งสองหน้าวางคอลัมน์ PO ไว้ช่องที่สามเหมือนกัน
+  const onEntry = await page.locator('#entryTable tbody tr td:nth-child(3)').allInnerTexts();
+  expect(onEntry.map(s => s.trim())).toEqual(onDay.map(s => s.trim()));
+});

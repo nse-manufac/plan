@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-04.3">
+<meta name="app-version" content="2026-11-04.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -224,6 +224,7 @@
     .table-wrap{overflow:visible;max-height:none;}
     table{font-size:10.5px;}
     table th{position:static;}
+    #dayTable tfoot td{position:static;}
     thead{display:table-header-group;}          /* หัวตารางซ้ำทุกหน้า */
     tr{break-inside:avoid;}
     /* แท็บบันทึกยอดรายวัน: พิมพ์เฉพาะตารางรายการที่บันทึกแล้ว ฟอร์มคีย์ยอดไม่ต้องติดไปบนกระดาษ */
@@ -876,6 +877,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-04.3"></script>
+<script src="app.js?v=2026-11-04.4"></script>
 </body>
 </html>
