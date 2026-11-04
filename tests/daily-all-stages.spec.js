@@ -595,3 +595,28 @@ test('เลขบนปุ่มต้องแยก "ไม่มีใคร
   await expect(procBtn(page, 'assembly').locator('.day-n')).toHaveClass(/zero/);
   await expect(procBtn(page, 'winding').locator('.day-n')).toHaveClass(/zero/);
 });
+
+test('กดปุ่มขั้นด้วยแป้นพิมพ์แล้วโฟกัสต้องอยู่ที่ปุ่มเดิม ไม่หลุดไปต้นหน้า', async ({ page }) => {
+  /* แถบปุ่มถูกวาดใหม่ทั้งแถบทุกครั้ง เพราะเลขบนปุ่มต้องขยับตามวันและตัวกรอง
+   * ไม่คืนโฟกัสแล้วคนที่ไล่ด้วย Tab จะตกไป BODY แล้วต้องเริ่มจากต้นหน้าใหม่ทุกครั้ง
+   * (หน้าคีย์ยอดไม่เจอปัญหานี้เพราะมันแค่สลับคลาส primary ไม่วาดปุ่มใหม่) */
+  await openDaily(page, ORDERS, [
+    rec('r1', 'PO-1', 'winding', 100),
+    rec('r2', 'PO-1', 'assembly', 80)
+  ]);
+  await procBtn(page, 'assembly').focus();
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(250);
+  expect(await page.evaluate(() => ({
+    tag: document.activeElement.tagName,
+    proc: document.activeElement.dataset ? document.activeElement.dataset.proc : null
+  }))).toEqual({ tag: 'BUTTON', proc: 'assembly' });
+  // และต้องเปลี่ยนขั้นจริง ไม่ใช่คืนโฟกัสแล้วตารางไม่ขยับ
+  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('80');
+
+  // กดต่อด้วยแป้นพิมพ์ได้เรื่อย ๆ โดยไม่ต้องคว้าเมาส์
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(250);
+  expect(await page.evaluate(() => document.activeElement.dataset.proc)).toBe('support');
+});

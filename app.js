@@ -2835,6 +2835,11 @@ function renderDayTable(){
     if(v!=null && v!=='') dayTotals[p] = (dayTotals[p]||0) + (Number(v)||0);
   }));
   const btns = document.getElementById('dayProcBtns');
+  /* คืนโฟกัสให้ปุ่มเดิมหลังวาดแถบใหม่ — แถบถูกวาดใหม่ทั้งแถบทุกครั้งเพราะเลขบนปุ่มต้องขยับ
+   * ไม่คืนแล้วคนที่ไล่ด้วยแป้นพิมพ์จะตกไป BODY แล้วต้องเริ่มจากต้นหน้าใหม่ทุกครั้งที่เปลี่ยนขั้น
+   * (ผู้ตรวจ #118 รอบแปด · แบบเดียวกับ pendingFocusOrderId ของหน้าคีย์ยอด) */
+  const a = document.activeElement;
+  const refocus = a && a.dataset && a.dataset.proc && btns.contains(a) ? a.dataset.proc : null;
   btns.innerHTML = PROCESSES.map(p=>{
     const d = PROCESS_BY_ID[p], t = dayTotals[p];
     return `<button type="button" class="btn${p===dayProcess?' primary':''}" data-proc="${escapeHtml(p)}">`
@@ -2844,6 +2849,10 @@ function renderDayTable(){
     dayProcess = b.dataset.proc;
     renderDayTable();
   }));
+  if(refocus){
+    const back = btns.querySelector('button[data-proc="' + CSS.escape(refocus) + '"]');
+    if(back) back.focus();
+  }
 
   const procLabel = PROCESS_BY_ID[dayProcess].label;
   const dash = '<span class="none">—</span>';
