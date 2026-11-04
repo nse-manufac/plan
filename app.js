@@ -2801,7 +2801,7 @@ function renderDayTable(){
   btns.innerHTML = PROCESSES.map(p=>{
     const d = PROCESS_BY_ID[p], t = dayTotals[p];
     return `<button type="button" class="btn${p===dayProcess?' primary':''}" data-proc="${escapeHtml(p)}">`
-      + `${escapeHtml(d.icon + ' ' + d.label)} <span class="day-n${t ? '' : ' zero'}">${numFmt(t||0)}</span></button>`;
+      + `${escapeHtml(d.icon + ' ' + d.label)} <span class="day-n${t ? '' : ' zero'}">${t==null ? '—' : numFmt(t)}</span></button>`;
   }).join('');
   btns.querySelectorAll('button').forEach(b=> b.addEventListener('click', ()=>{
     dayProcess = b.dataset.proc;
@@ -2833,7 +2833,7 @@ function renderDayTable(){
   /* ข้อความต้องตัดสินจาก "มีใบที่ตรงกี่ใบ" ไม่ใช่จากปุ่มที่ถูกกด และต้องแนะทางที่กดแล้วได้ผล
    * (ผู้ตรวจ #118 จับสองรอบ · เลขบนปุ่มบอกเองว่าขั้นไหนมีของ จึงชี้ไปที่ปุ่มด้วย) */
   const emptyMsg = orders.length
-    ? `ขั้น${procLabel} ของวันนั้นยังไม่มีการคีย์ยอด — ดูเลขบนปุ่มด้านบนว่าขั้นไหนมีของ `
+    ? `ขั้น${escapeHtml(procLabel)} ของวันนั้นยังไม่มีการคีย์ยอด — ดูเลขบนปุ่มด้านบนว่าขั้นไหนมีของ `
       + `· ติ๊ก "แสดงทุกใบ" เพื่อดูทั้ง ${numFmt(orders.length)} ใบ · หรือเลือกวันอื่น`
     : (search || weekFilter || subFilter)
       ? 'ไม่มีใบที่ตรงกับตัวกรองที่ตั้งไว้ — ล้างช่องค้นหา สัปดาห์ หรือ Sub-Name แล้วดูอีกครั้ง'

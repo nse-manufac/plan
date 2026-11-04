@@ -75,7 +75,7 @@ test('ปุ่มขั้นต้องเป็นรายการขั�
   // เจ้าของเพิ่ม/เปลี่ยนชื่อ/ซ่อนขั้นเมื่อไหร่ สองหน้าต้องเปลี่ยนตามกันทั้งคู่ (A3)
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 100)]);
   const dayBtns = (await page.locator('#dayProcBtns button').allInnerTexts())
-    .map(t => t.replace(/[\d,]+\s*$/, '').trim());
+    .map(t => t.replace(/[\d,—]+\s*$/, '').trim());
   await page.click('.tab-btn[data-tab="entry"]');
   await page.waitForTimeout(150);
   const entryBtns = (await page.locator('#procButtons button').allInnerTexts()).map(t => t.trim());
@@ -93,7 +93,7 @@ test('ใบเดียวที่คีย์หลายขั้นใน�
   expect(await procNum(page, 'winding')).toBe('100');
   expect(await procNum(page, 'assembly')).toBe('80');
   expect(await procNum(page, 'inspection')).toBe('70');
-  expect(await procNum(page, 'support')).toBe('0');
+  expect(await procNum(page, 'support')).toBe('—');
 
   // ตารางโชว์ทีละขั้น
   expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('100');
@@ -456,11 +456,11 @@ test('ลำดับแถวต้องตรงกับหน้าบั�
 //    ที่เจ้าของขอตอนแรก ย้ายจากคอลัมน์มาอยู่บนปุ่ม หลังพบว่าทำเป็นคอลัมน์แล้วเป็นกำแพงขีด
 //    ถอดเลขออกเมื่อไหร่ หน้านี้เหลือแค่หน้าคีย์ยอดที่กรอกไม่ได้
 
-test('ขั้นที่วันนั้นไม่มีใครคีย์ ต้องยังมีปุ่ม เลขเป็น 0 แบบจาง ไม่ใช่ปุ่มหาย', async ({ page }) => {
+test('ขั้นที่วันนั้นไม่มีใครคีย์ ต้องยังมีปุ่มและจาง ไม่ใช่ปุ่มหาย', async ({ page }) => {
   // ซ่อนปุ่มแล้วปุ่มจะหาย ๆ โผล่ ๆ ทุกวันจนจำตำแหน่งไม่ได้ ซึ่งแย่กว่าปุ่มที่กดแล้วตารางว่าง
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 100)]);
   await expect(procBtn(page, 'support')).toHaveCount(1);
-  expect(await procNum(page, 'support')).toBe('0');
+  expect(await procNum(page, 'support')).toBe('—');
   await expect(procBtn(page, 'support').locator('.day-n')).toHaveClass(/zero/);
   await expect(procBtn(page, 'winding').locator('.day-n')).not.toHaveClass(/zero/);
 });
@@ -490,7 +490,7 @@ test('หัวคอลัมน์ยอดสะสมต้องบอก�
   const second = await head();
   expect(first).not.toBe(second);
   // ชื่อขั้นต้องมาจากรายการขั้นจริง ไม่ใช่ข้อความฝังไว้ (A3)
-  const btnLabel = (await procBtn(page, 'assembly').innerText()).replace(/[\d,]+\s*$/, '').trim();
+  const btnLabel = (await procBtn(page, 'assembly').innerText()).replace(/[\d,—]+\s*$/, '').trim();
   expect(second).toContain(btnLabel.replace(/^\S+\s/, ''));
 });
 
@@ -561,4 +561,37 @@ test('เลือกขั้นที่นี่ต้องไม่ลา�
   await page.waitForTimeout(250);
   expect(await page.locator('#entryTable thead th').nth(6).innerText()).toBe(before);
   expect(await page.locator('#entryTable tbody tr td').nth(6).innerText()).toBe('100');
+});
+
+// ── 12. สองข้อของผู้ตรวจ #118 รอบหก ──────────────────────────────────
+
+test('G3 — ชื่อขั้นที่เป็นสคริปต์ต้องไม่ทำงาน แม้ในข้อความตอนตารางว่าง', async ({ page }) => {
+  /* แผงจัดการขั้นให้ตั้งชื่อยาวได้ถึง 40 ตัวและไม่กรองอักขระเลย
+   * ชื่อขั้นจึงเป็นค่าที่ซิงค์ข้ามเครื่องมาได้ และต้องผ่าน escapeHtml ทุกที่ที่ลง innerHTML
+   * ⚠️ ฟังก์ชันนี้ใช้ procLabel สี่ที่ — ปุ่ม · หัวคอลัมน์ · แถวรวม · ข้อความตอนว่าง
+   *    เทสนี้ยิงที่ "ตอนว่าง" เพราะเป็นที่เดียวที่เคยหลุด (ผู้ตรวจ #118 รอบหก) */
+  const EVIL = '<img src=x onerror=window.__xss=1>';
+  await openDaily(page, ORDERS, [], D1, [
+    { id: 'winding', label: EVIL, short: 'W' },
+    { id: 'assembly', label: 'Assembly', short: 'Assembly' },
+    { id: 'support', label: 'Support', short: 'Support' },
+    { id: 'inspection', label: 'Inspection', short: 'Inspection' },
+    { id: 'shipping', label: 'ส่งของ (Shipping)', short: 'Shipping' }
+  ]);
+  // ไม่มีใครคีย์ขั้นนี้เลย → ตกเข้าเส้นทางข้อความตอนตารางว่าง
+  await expect(page.locator('#dayTable tbody img')).toHaveCount(0);
+  await expect(page.locator('#dayProcBtns img')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__xss)).toBeUndefined();
+  // ต้องอ่านชื่อขั้นออกเป็นข้อความล้วน ไม่ใช่หายไปทั้งประโยค
+  expect(await page.locator('#dayTable tbody').innerText()).toContain(EVIL);
+});
+
+test('เลขบนปุ่มต้องแยก "ไม่มีใครคีย์" ออกจาก "คีย์ไว้ว่าผลิต 0" เหมือนที่ตารางแยก', async ({ page }) => {
+  // การแยกนี้คือกฎหลักที่ทั้งหน้ายืนอยู่บนมัน — แถบปุ่มจะขัดกับตารางของตัวเองไม่ได้
+  await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 0, D1, { note: 'เครื่องเสีย' })]);
+  expect(await procNum(page, 'winding')).toBe('0');     // มีคนคีย์ไว้ว่าผลิตศูนย์
+  expect(await procNum(page, 'assembly')).toBe('—');    // ไม่มีใครคีย์เลย
+  // ทั้งสองยังจางเหมือนกัน เพราะทั้งคู่ไม่มียอด — ปุ่มต้องไม่หายไปไหน
+  await expect(procBtn(page, 'assembly').locator('.day-n')).toHaveClass(/zero/);
+  await expect(procBtn(page, 'winding').locator('.day-n')).toHaveClass(/zero/);
 });
