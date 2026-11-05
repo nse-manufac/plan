@@ -3212,10 +3212,8 @@ function renderDashTable(){
 
   let rows = activeOrders().map(o=>{
     const c = allCum[o.id] || emptyCum();
-    const dl = computeDeadlines(o);
-    const st = computeStatus(o, c, dl, ref);
-    const split = splitMap[o.id] || {};
-    return {o,c,dl,st,split};
+    const st = computeStatus(o, c, computeDeadlines(o), ref);
+    return {o, c, st, split: splitMap[o.id] || {}};
   });
   if(weekF) rows = rows.filter(x=>x.o.week===weekF);
   if(subF) rows = rows.filter(x=>x.o.subName===subF);
@@ -3223,44 +3221,55 @@ function renderDashTable(){
   if(statusF) rows = rows.filter(x=>x.st.code===statusF);
   if(wipF) rows = rows.filter(x=>wipQtyAtStage(x.o, x.c, wipF) > 0);
   // ซ่อนงานที่ส่งครบแล้ว — แต่ต้องยอมให้คนที่ "เลือกดูเฉพาะเสร็จแล้ว" เห็นของที่ตัวเองขอดู
-  // ไม่งั้นเลือกสถานะเสร็จแล้วจะได้ตารางว่าง โดยไม่มีอะไรบอกว่าเพราะติ๊กอีกช่องค้างไว้
   if(hideDone && statusF !== 'done') rows = rows.filter(x=>x.st.code !== 'done');
-  rows.sort((a,b)=> (a.o.week||'').localeCompare(b.o.week) || (a.o.orderDate||'').localeCompare(b.o.orderDate));
 
-  /* ⚠️ Item No. คือ "ลำดับของแถวที่เห็นอยู่ตอนนี้" ไม่ใช่เลขประจำใบสั่ง
+  /* รวมเป็นราย P/N + Sub-Name — เจ้าของสั่ง 4 พ.ย. 2026 ("ข้อมูลเยอะเกินกว่าจะเรียกการมองภาพรวม")
    *
-   *    มีไว้ให้ชี้กันรู้เรื่องตอนคุยหรือตอนถือกระดาษที่พิมพ์ออกมา ("ดูแถวที่ 12")
-   *    จึงต้องนับหลังกรองและเรียงแล้ว = นับตามที่ตาเห็น ไม่ใช่ตามลำดับในข้อมูล
-   *
-   *    เปลี่ยนตัวกรองเมื่อไหร่เลขก็เปลี่ยน ซึ่งถูกต้องตามความหมายนี้
-   *    และหัวกระดาษตอนพิมพ์บอกอยู่แล้วว่ากรองอะไรไว้ คนที่ถือกระดาษคนละใบจึงรู้ตัว
-   *
-   *    ⚠️ ห้ามเอาไปใช้เป็นกุญแจอ้างอิงใบสั่ง — กุญแจจริงคือ PO|P/N (ดู INVARIANTS)
-   *       และเลข No. ในไฟล์แผนของลูกค้าก็ไม่ใช่ตัวนี้ (ของเขาเริ่มนับใหม่ทุกสัปดาห์
-   *       และมีเลขซ้ำกับช่องว่างปนอยู่) โปรแกรมไม่ได้เก็บเลขนั้นไว้ */
-  const bodyHtml = rows.map(({o,c,st,split}, idx)=>{
-    const anomaly = hasOrderAnomaly(c);
-    // อายุงาน = จำนวนวันนับจากวันสั่งถึงวันนี้ นิยามเดียวกับคอลัมน์ Aging ในใบส่งสินค้า FM-ST-07
-    // ใช้ ref ตัวเดียวกับที่ computeStatus ใช้ตัดสินล่าช้า ตัวเลขบนจอจึงมาจากวันเดียวกันเสมอ
-    return `<tr>
+   * ⚠️ กุญแจต้องแปลง P/N เป็นข้อความก่อน แบบเดียวกับ `fgRows()` — เครื่องที่รับข้อมูลจากการซิงค์
+   *    ได้ P/N เป็นตัวเลข ส่วนเครื่องที่นำเข้าไฟล์เองได้เป็นข้อความ (บั๊กที่เจอ 1 ก.ย. 2026)
+   *    ไม่แปลงแล้ว P/N เดียวจะแตกเป็นสองแถวบนเครื่องที่ซิงค์มา
+   * ⚠️ จับกลุ่มด้วย P/N **คู่กับ Sub-Name** ตามแบบหน้า FG — P/N เดียวอยู่สองนิติบุคคลได้
+   *    รวมข้ามหน่วยแล้วคอลัมน์ Sub-Name ไม่มีความหมาย และยอดของสองบริษัทจะปนกัน
+   * ⚠️ ตัวกรองคัด "ใบ" ก่อน แล้วจึงรวม — ยอดในแถวจึงเป็นผลรวมของสิ่งที่กรองไว้เท่านั้น
+   *    (เลือกสถานะล่าช้าแล้วยอดสั่งรวมจะเล็กลง ซึ่งถูกต้องตามความหมายนี้)
+   * ยอดสะสมครอบด้วย Math.min(สะสม, orderQty) ต่อใบ เหมือนการ์ด WIP เพื่อให้สองที่ตรงกันเสมอ */
+  const groups = new Map();
+  rows.forEach(({o, c, split})=>{
+    const pn = String(o.pn == null ? '' : o.pn), unit = String(o.subName || '');
+    const key = pn + '|' + unit;
+    let g = groups.get(key);
+    if(!g){ g = {pn, unit, qty:0, n:0, cum:emptyCum(), split:{}, anomaly:false}; groups.set(key, g); }
+    g.qty += o.orderQty;
+    g.n++;
+    if(hasOrderAnomaly(c)) g.anomaly = true;
+    PROCESSES.forEach(p=>{
+      g.cum[p] += Math.min(c[p]||0, o.orderQty);
+      const sp = split[p] || {};
+      g.split[p] = g.split[p] || {onTime:0, late:0};
+      g.split[p].onTime += sp.onTime || 0;
+      g.split[p].late += sp.late || 0;
+    });
+  });
+  const list = [...groups.values()].sort((a,b)=> a.pn.localeCompare(b.pn) || a.unit.localeCompare(b.unit));
+
+  /* ⚠️ Item No. คือ "ลำดับของแถวที่เห็นอยู่ตอนนี้" ไม่ใช่เลขประจำใบสั่ง — ดูคอมเมนต์เดิมใน git
+   *    มีไว้ให้ชี้กันตอนคุยหรือตอนถือกระดาษ จึงนับหลังกรองและเรียงแล้ว */
+  const bodyHtml = list.map((g, idx)=>`<tr>
       <td class="hint">${idx + 1}</td>
-      <td class="left">${escapeHtml(o.week)}</td>
-      <td class="left" data-po="${escapeHtml(o.poNo)}">${escapeHtml(o.poNo)}</td>
-      <td class="left">${escapeHtml(o.pn)}</td>
-      <td class="left">${escapeHtml(o.subName)}</td>
-      <td>${numFmt(o.orderQty)}</td>
-      <td>${escapeHtml(fmtDateTH(o.orderDate))}</td>
-      <td data-aging>${agingCell(o.orderDate, ref, st.code)}</td>
-      ${PROCESSES.map(p=>`<td>${progressCell(c[p]||0, split[p], o.orderQty)}</td>`).join('')}
-      <td><span class="badge ${st.color}">${escapeHtml(st.label)}</span>${anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
-    </tr>`;
-  }).join('');
+      <td class="left" data-pn="${escapeHtml(g.pn)}">${escapeHtml(g.pn)}${g.anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
+      <td class="left">${escapeHtml(g.unit)}</td>
+      <td>${numFmt(g.n)}</td>
+      <td>${numFmt(g.qty)}</td>
+      ${PROCESSES.map(p=>`<td>${progressCell(g.cum[p]||0, g.split[p], g.qty)}</td>`).join('')}
+    </tr>`).join('');
 
   document.getElementById('dashTable').innerHTML = `<thead><tr>
       <th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ ไว้ชี้กันตอนคุยหรือตอนดูกระดาษที่พิมพ์ออกมา — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>
-      <th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th><th>Order Date</th><th>Aging<br>(วัน)</th>
-      ${PROCESSES.map(p=>`<th>${processHeadHtml(p)}</th>`).join('')}<th>สถานะ</th>
-    </tr></thead><tbody>${bodyHtml || emptyRow(9 + PROCESSES.length)}</tbody>`;
+      <th>P/N</th><th>Sub-Name</th>
+      <th title="จำนวนใบสั่งซื้อของ P/N นี้ที่ผ่านตัวกรองอยู่ตอนนี้">ใบ</th>
+      <th title="ยอดสั่งรวมของใบที่ผ่านตัวกรองอยู่ตอนนี้">ยอดสั่งรวม</th>
+      ${PROCESSES.map(p=>`<th>${processHeadHtml(p)}</th>`).join('')}
+    </tr></thead><tbody>${bodyHtml || emptyRow(5 + PROCESSES.length)}</tbody>`;
 }
 
 /* ---------- Render: Data tab ---------- */
