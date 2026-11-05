@@ -107,6 +107,69 @@ test('กราฟต้องนับเฉพาะ Sub-Name ที่เล�
   expect(await barToday(page, 'winding'), 'กลับไป "ทั้งหมด" ต้องได้ยอดรวมคืนครบ').toBe(370);
 });
 
+// ── รวมเป็นราย P/N — เจ้าของสั่ง 5 พ.ย. 2026 ────────────────────────
+//
+// "ข้อมูลเยอะเกินไปเกินกว่าที่จะเรียกการมองภาพรวม" — หนึ่งแถว = หนึ่ง P/N ต่อหนึ่งหน่วย
+// กุญแจกลุ่มเหมือน fgRows() ทุกตัวอักษร เพราะเป็นคำถามเดียวกัน ("ของรุ่นนี้ของหน่วยนี้")
+
+/** ใบสั่งที่กำหนด P/N กับยอดเองได้ รวมถึง "ชนิดข้อมูล" ของสองค่านั้น — order() ข้างบนตรึง PN ไว้ตัวเดียว */
+const orderPn = (poNo, pn, qty, unit = 'TUE-U') => ({
+  id: poNo + '|' + pn, week: 'WK 34', poNo, pn, subName: unit, orderQty: qty,
+  orderDate: '2026-08-03', status: 'active',
+  importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false
+});
+/** ทุกแถวบนตาราง — เกาะ data-pn ไม่ใช่ข้อความในช่อง (ช่องนั้นมีป้าย ⚠ ผิดลำดับ ปนได้) */
+const dashGroups = page => page.locator('#dashTable tbody tr').evaluateAll(trs => trs.map(tr => {
+  const td = tr.querySelectorAll('td');
+  return { pn: td[1].dataset.pn, unit: td[2].innerText.trim(),
+           n: td[3].innerText.trim(), qty: td[4].innerText.trim(),
+           winding: td[5].innerText.trim() };
+}));
+
+test('สองใบของ P/N เดียวกันในหน่วยเดียวกัน ต้องรวมเป็นแถวเดียว', async ({ page }) => {
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-A', 100)]);
+  const g = await dashGroups(page);
+  expect(g.length, 'สองใบต้องเหลือแถวเดียว').toBe(1);
+  expect(g[0].n, 'ช่อง "ใบ" บอกว่ารวมมาจากกี่ใบ').toBe('2');
+  expect(g[0].qty, 'ยอดสั่งรวมของทั้งกลุ่ม').toBe('200');
+});
+
+test('ยอดสะสมต้องครอบ min(สะสม, ยอดสั่ง) ต่อใบ ก่อนบวกกัน — ให้ตรงกับการ์ด WIP', async ({ page }) => {
+  // ใบแรกคีย์เกินยอดสั่ง (150 จาก 100) · ใบที่สอง 50 จาก 100
+  // ครอบต่อใบ → 100 + 50 = 150 · ถ้าบวกก่อนแล้วค่อยครอบจะได้ 200/200 = เต็มทั้งที่ยังไม่เสร็จ
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-A', 100)],
+    [rec('r1', 'ZZ-1|PN-A', 'winding', 150), rec('r2', 'ZZ-2|PN-A', 'winding', 50)]);
+  const g = await dashGroups(page);
+  expect(g[0].winding).toContain('150/200');
+  expect(await page.locator('#wipCards').innerText(), 'ต้องตรงกับการ์ด WIP').toContain('150');
+});
+
+test('P/N เดียวกันแต่คนละหน่วย ต้องเป็นคนละแถว ยอดห้ามปนกัน', async ({ page }) => {
+  // P/N เดียวอยู่สองนิติบุคคลได้ — รวมข้ามหน่วยแล้วยอดของสองบริษัทปนกัน
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100, 'TUE-U'), orderPn('ZZ-2', 'PN-A', 700, 'TUE-H')]);
+  const g = await dashGroups(page);
+  expect(g.map(x => [x.unit, x.qty])).toEqual([['TUE-H', '700'], ['TUE-U', '100']]);
+});
+
+test('P/N ที่เป็นตัวเลขกับที่เป็นข้อความ ต้องเป็นแถวเดียวกัน (เครื่องที่ซิงค์มา)', async ({ page }) => {
+  // เครื่องที่รับข้อมูลจากการซิงค์ได้ P/N เป็นตัวเลข ส่วนเครื่องที่นำเข้าไฟล์เองได้เป็นข้อความ
+  // (บั๊กที่เจอ 1 ก.ย. 2026) — ไม่แปลงเป็นข้อความก่อนทำกุญแจ P/N เดียวจะแตกเป็นสองแถว
+  await openDash(page, [orderPn('ZZ-1', 9000000002, 100), orderPn('ZZ-2', '9000000002', 100)]);
+  const g = await dashGroups(page);
+  expect(g.length, 'ต้องเป็นแถวเดียว').toBe(1);
+  expect(g[0].n).toBe('2');
+});
+
+test('ยอดสั่งที่เป็นข้อความต้องบวกเป็นเลข ไม่ใช่ต่อสตริง (ผู้ตรวจ #119)', async ({ page }) => {
+  // เหตุผลเดียวกับ P/N ข้างบน — '100' + 100 ได้ '100100' ไม่ใช่ 200
+  // ตอนเป็นแถวราย PO ไม่เคยโผล่ เพราะ numFmt() แปลงให้ก่อนแสดงทีละใบ
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', '100'), orderPn('ZZ-2', 'PN-A', 100)],
+    [rec('r1', 'ZZ-1|PN-A', 'winding', 150), rec('r2', 'ZZ-2|PN-A', 'winding', 50)]);
+  const g = await dashGroups(page);
+  expect(g[0].qty, 'ต้องเป็น 200 ไม่ใช่ 100,100').toBe('200');
+  expect(g[0].winding, 'แถบความคืบหน้าก็ต้องเทียบกับ 200').toContain('150/200');
+});
+
 test('ตารางราย P/N ต้องยังกรองตาม Sub-Name เหมือนเดิม', async ({ page }) => {
   await openDash(page, ORDERS, RECORDS);
   await pickSub(page, 'TUE-U');

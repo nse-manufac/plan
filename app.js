@@ -2307,8 +2307,9 @@ function renderEntryTable(){
     const prevCum = prevProc!=null ? ((allCum[o.id] && allCum[o.id][prevProc]) || 0) : null;
     const warn = prevProc!=null && cum > prevCum;
     const remaining = Math.max(0, o.orderQty - cum);
-    // Aging นิยามและสีเดียวกับคอลัมน์ Aging บน Dashboard — ใช้ agingCell กับ computeStatus ตัวเดียวกัน
-    // ⚠️ นับถึง "วันนี้" ไม่ใช่วันที่เลือกคีย์ย้อนหลัง ไม่งั้นสองหน้าจะขึ้นอายุงานของใบเดียวกันไม่ตรงกัน
+    // Aging นิยามและสีเดียวกับคอลัมน์ Aging ในใบส่งสินค้า FM-ST-07 — ผ่าน agingCell ตัวเดียว
+    // ⚠️ นับถึง "วันนี้" ไม่ใช่วันที่เลือกคีย์ย้อนหลัง ไม่งั้นใบเดียวกันจะขึ้นอายุงานไม่ตรงกับที่เคยเห็น
+    //    ทุกครั้งที่มีคนคีย์ย้อนหลัง · ตั้งแต่ 5 พ.ย. 2026 หน้านี้เป็นที่เดียวที่มีช่องนี้ (Dashboard ตัดออกแล้ว)
     const st = computeStatus(o, allCum[o.id] || emptyCum(), computeDeadlines(o), ref);
     n++;
     lastRenderedOrderIds.push(o.id);
@@ -3221,6 +3222,7 @@ function renderDashTable(){
   if(statusF) rows = rows.filter(x=>x.st.code===statusF);
   if(wipF) rows = rows.filter(x=>wipQtyAtStage(x.o, x.c, wipF) > 0);
   // ซ่อนงานที่ส่งครบแล้ว — แต่ต้องยอมให้คนที่ "เลือกดูเฉพาะเสร็จแล้ว" เห็นของที่ตัวเองขอดู
+  // ไม่งั้นเลือกสถานะเสร็จแล้วจะได้ตารางว่าง โดยไม่มีอะไรบอกว่าเพราะติ๊กอีกช่องค้างไว้
   if(hideDone && statusF !== 'done') rows = rows.filter(x=>x.st.code !== 'done');
 
   /* รวมเป็นราย P/N + Sub-Name — เจ้าของสั่ง 4 พ.ย. 2026 ("ข้อมูลเยอะเกินกว่าจะเรียกการมองภาพรวม")
@@ -3236,14 +3238,19 @@ function renderDashTable(){
   const groups = new Map();
   rows.forEach(({o, c, split})=>{
     const pn = String(o.pn == null ? '' : o.pn), unit = String(o.subName || '');
+    /* ⚠️ ยอดสั่งต้องผ่าน Number() ด้วยเหตุผลเดียวกับที่ P/N ต้องผ่าน String() บรรทัดบน —
+     *    ค่าที่ซิงค์มาเป็นข้อความได้ · `'100' + 100` ได้ `'100100'` ไม่ใช่ 200
+     *    ตอนเป็นแถวราย PO ไม่เคยโผล่ เพราะ numFmt() แปลงให้ก่อนแสดงทีละใบ
+     *    พอรวมหลายใบเข้าด้วยกันจึงเพิ่งผิด (ผู้ตรวจ #119 รันพิสูจน์: ขึ้น 100,100 แทน 200) */
+    const q = Number(o.orderQty) || 0;
     const key = pn + '|' + unit;
     let g = groups.get(key);
     if(!g){ g = {pn, unit, qty:0, n:0, cum:emptyCum(), split:{}, anomaly:false}; groups.set(key, g); }
-    g.qty += o.orderQty;
+    g.qty += q;
     g.n++;
     if(hasOrderAnomaly(c)) g.anomaly = true;
     PROCESSES.forEach(p=>{
-      g.cum[p] += Math.min(c[p]||0, o.orderQty);
+      g.cum[p] += Math.min(c[p]||0, q);
       const sp = split[p] || {};
       g.split[p] = g.split[p] || {onTime:0, late:0};
       g.split[p].onTime += sp.onTime || 0;
@@ -3252,8 +3259,11 @@ function renderDashTable(){
   });
   const list = [...groups.values()].sort((a,b)=> a.pn.localeCompare(b.pn) || a.unit.localeCompare(b.unit));
 
-  /* ⚠️ Item No. คือ "ลำดับของแถวที่เห็นอยู่ตอนนี้" ไม่ใช่เลขประจำใบสั่ง — ดูคอมเมนต์เดิมใน git
-   *    มีไว้ให้ชี้กันตอนคุยหรือตอนถือกระดาษ จึงนับหลังกรองและเรียงแล้ว */
+  /* ⚠️ Item No. คือ "ลำดับของแถวที่เห็นอยู่ตอนนี้" ไม่ใช่เลขประจำใบสั่ง
+   *    มีไว้ให้ชี้กันรู้เรื่องตอนคุยหรือตอนถือกระดาษที่พิมพ์ออกมา ("ดูแถวที่ 12")
+   *    จึงต้องนับหลังกรองและเรียงแล้ว = นับตามที่ตาเห็น ไม่ใช่ตามลำดับในข้อมูล
+   *    ⚠️ ห้ามเอาไปใช้เป็นกุญแจอ้างอิงใบสั่ง — กุญแจจริงคือ PO|P/N (ดู INVARIANTS)
+   *       ยิ่งตอนนี้แถวหนึ่งรวมหลายใบ เลขนี้ยิ่งไม่ใช่ตัวแทนของใบไหนเลย */
   const bodyHtml = list.map((g, idx)=>`<tr>
       <td class="hint">${idx + 1}</td>
       <td class="left" data-pn="${escapeHtml(g.pn)}">${escapeHtml(g.pn)}${g.anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>

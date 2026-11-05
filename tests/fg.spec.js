@@ -381,7 +381,9 @@ test('Dashboard คอลัมน์ Shipping โชว์ยอดส่งส
     rec('r2', 'PO-D1|' + PN_A, 'shipping', 1200, '2026-08-22')
   ]);
   // Item No. · P/N · Sub-Name · ใบ · ยอดสั่งรวม แล้วจึงเป็นห้าขั้น → Shipping อยู่ที่ 9
-  const cell = await page.locator('#dashTable tbody tr').locator('td').nth(9).innerText();
+  // ⚠️ ผูกกับแถวของ P/N นี้ ไม่ใช่ td ลำดับที่ 9 ของทุกแถวรวมกัน — เติมใบที่สองทีหลังจะอ่านผิดแถวเงียบ ๆ
+  const cell = await page.locator('#dashTable tbody tr')
+    .filter({ has: page.locator(`td[data-pn="${PN_A}"]`) }).locator('td').nth(9).innerText();
   expect(cell, 'ยอดส่ง / Order Qty').toContain('1,200/5,000');
   expect(cell, 'ต้องไม่ใช่ FG คงเหลือ').not.toContain('1,800');
   await expect(page.locator('#dashTable thead')).toContainText('Shipping');

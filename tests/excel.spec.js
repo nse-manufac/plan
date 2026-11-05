@@ -89,8 +89,11 @@ test('นำเข้าไฟล์แผนทับ ต้องไม่ป�
 
   await page.click('.tab-btn[data-tab="dashboard"]');
   await expect(page.locator('#dashTable tbody tr').first()).toBeVisible();
+  // ⚠️ ต้องเทียบด้วย P/N ไม่ใช่เลข PO — แดชบอร์ดรวมเป็นราย P/N แล้ว ไม่พิมพ์เลข PO ลงตารางเลย
+  //    เทียบเลข PO จะเป็นจริงทั้งกรณียกเลิกและไม่ยกเลิก = ไม่ได้ตรวจอะไร (ผู้ตรวจ #119 รันพิสูจน์)
+  //    P/N นี้ไม่ซ้ำกับอีกสองใบใน PLAN_ROWS จึงยังแยกสองกรณีออกจากกันได้
   const dash = await page.$$eval('#dashTable tbody tr', t => t.map(x => x.textContent).join(' '));
-  expect(dash, 'และต้องไม่โผล่กลับมาบน Dashboard').not.toContain('TM5267H179');
+  expect(dash, 'และต้องไม่โผล่กลับมาบน Dashboard').not.toContain('2870327301');
 });
 
 test('C1 + C3 — นำเข้าแผนแล้ววันที่ทุกช่องต้องเป็น YYYY-MM-DD ไม่เลื่อนวัน', async ({ page }) => {
