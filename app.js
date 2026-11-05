@@ -2907,24 +2907,19 @@ function dashSubName(){
   return el ? el.value : '';
 }
 
-/** ชุดใบสั่งที่หน้า Dashboard กำลังพูดถึง (กรองหน่วยแล้ว) */
-function dashScopedOrders(){
-  const subF = dashSubName();
-  return subF ? activeOrders().filter(o=>o.subName === subF) : activeOrders();
-}
-
 function renderWipCards(){
-  const allCum = buildCumMap(state.records);
+  const rows = dashFilteredRows();
   const subF = dashSubName();
   const note = document.getElementById('wipScopeNote');
-  if(note) note.textContent = subF ? 'นับเฉพาะ Sub-Name: ' + subF : 'นับรวมทุก Sub-Name';
+  // ⚠️ ข้อความนี้คือสิ่งเดียวที่บอกว่าการ์ดนับใบไหน — ต้องตรงกับชุดที่นับจริง จึงบอกจำนวนใบด้วย
+  if(note) note.textContent = `นับเฉพาะใบที่ผ่านตัวกรองบนหน้านี้ · ${numFmt(rows.length)} ใบ` + (subF ? ' · ' + subF : '');
   let totalQty=0, anomalyCount=0;
   const sum = emptyCum();
-  dashScopedOrders().forEach(o=>{
-    totalQty += o.orderQty;
-    const c = allCum[o.id] || emptyCum();
+  rows.forEach(({o, c})=>{
+    const q = Number(o.orderQty) || 0;   // ⚠️ เหมือนในตาราง — `0 + '100'` ได้ `'0100'` ไม่ใช่ 100
+    totalQty += q;
     if(hasOrderAnomaly(c)) anomalyCount++;
-    PROCESSES.forEach(p=>{ sum[p] += Math.min(c[p]||0, o.orderQty); });
+    PROCESSES.forEach(p=>{ sum[p] += Math.min(c[p]||0, q); });
   });
   const shipped = sum.shipping;
 
@@ -3199,10 +3194,13 @@ function agingCell(orderDate, ref, statusCode){
   return `<span class="badge green">${txt}</span>`;
 }
 
-function renderDashTable(){
+/** ใบสั่งที่หน้า Dashboard กำลังพูดถึง — ผ่านตัวกรองทุกช่องบนหน้านี้แล้ว · คืน {o, c, st} ต่อใบ
+ *  ⚠️ **การ์ดกับตารางต้องอ่านชุดเดียวกันจากที่นี่** (เจ้าของสั่ง 5 พ.ย. 2026 · เหตุผลเต็มใน CLAUDE.md §1)
+ *     ของเดิมการ์ดกรองแค่ Sub-Name ส่วนตารางกรองครบทุกช่อง สองเลขจึงต่างกันตั้งแต่เปิดโปรแกรม
+ *     เพราะ "ซ่อนงานที่ส่งของครบแล้ว" ติ๊กไว้เป็นค่าตั้งต้น (ผู้ตรวจ #119 วัดได้ 200 กับ 100)
+ *  ยอดแยกทันกำหนด/เกินกำหนดไม่คิดที่นี่ — การ์ดไม่ใช้ · ตารางไปหยิบ buildCumSplitMap เอง */
+function dashFilteredRows(){
   const allCum = buildCumMap(state.records);
-  const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
-  const splitMap = buildCumSplitMap(state.records, orderById);
   const ref = todayISO();
   const weekF = document.getElementById('dashWeekFilter').value;
   const subF = document.getElementById('dashSubFilter').value;
@@ -3214,7 +3212,7 @@ function renderDashTable(){
   let rows = activeOrders().map(o=>{
     const c = allCum[o.id] || emptyCum();
     const st = computeStatus(o, c, computeDeadlines(o), ref);
-    return {o, c, st, split: splitMap[o.id] || {}};
+    return {o, c, st};
   });
   if(weekF) rows = rows.filter(x=>x.o.week===weekF);
   if(subF) rows = rows.filter(x=>x.o.subName===subF);
@@ -3224,6 +3222,17 @@ function renderDashTable(){
   // ซ่อนงานที่ส่งครบแล้ว — แต่ต้องยอมให้คนที่ "เลือกดูเฉพาะเสร็จแล้ว" เห็นของที่ตัวเองขอดู
   // ไม่งั้นเลือกสถานะเสร็จแล้วจะได้ตารางว่าง โดยไม่มีอะไรบอกว่าเพราะติ๊กอีกช่องค้างไว้
   if(hideDone && statusF !== 'done') rows = rows.filter(x=>x.st.code !== 'done');
+  return rows;
+}
+
+/** ⚠️ ทุกช่องกรองบนหน้านี้ต้องผูกกับตัวนี้ ไม่ใช่กับ renderDashTable ตรง ๆ — ลืมช่องไหน
+ *     ช่องนั้นจะทำให้การ์ดกับตารางขัดกันทันทีที่มีคนเลือก (กราฟมีตัวจับของตัวเองอยู่แล้ว) */
+function renderDashScoped(){ renderWipCards(); renderDashTable(); }
+
+function renderDashTable(){
+  const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
+  const splitMap = buildCumSplitMap(state.records, orderById);
+  const rows = dashFilteredRows();
 
   /* รวมเป็นราย P/N + Sub-Name — เจ้าของสั่ง 4 พ.ย. 2026 ("ข้อมูลเยอะเกินกว่าจะเรียกการมองภาพรวม")
    *
@@ -3236,7 +3245,7 @@ function renderDashTable(){
    *    (เลือกสถานะล่าช้าแล้วยอดสั่งรวมจะเล็กลง ซึ่งถูกต้องตามความหมายนี้)
    * ยอดสะสมครอบด้วย Math.min(สะสม, orderQty) ต่อใบ เหมือนการ์ด WIP เพื่อให้สองที่ตรงกันเสมอ */
   const groups = new Map();
-  rows.forEach(({o, c, split})=>{
+  rows.forEach(({o, c})=>{
     const pn = String(o.pn == null ? '' : o.pn), unit = String(o.subName || '');
     /* ⚠️ ยอดสั่งต้องผ่าน Number() ด้วยเหตุผลเดียวกับที่ P/N ต้องผ่าน String() บรรทัดบน —
      *    ค่าที่ซิงค์มาเป็นข้อความได้ · `'100' + 100` ได้ `'100100'` ไม่ใช่ 200
@@ -3251,7 +3260,7 @@ function renderDashTable(){
     if(hasOrderAnomaly(c)) g.anomaly = true;
     PROCESSES.forEach(p=>{
       g.cum[p] += Math.min(c[p]||0, q);
-      const sp = split[p] || {};
+      const sp = (splitMap[o.id] || {})[p] || {};
       g.split[p] = g.split[p] || {onTime:0, late:0};
       g.split[p].onTime += sp.onTime || 0;
       g.split[p].late += sp.late || 0;
@@ -5241,14 +5250,13 @@ document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
   toast(`ลบแล้ว ${n} รายการ`);
 });
 
-document.getElementById('dashWeekFilter').addEventListener('change', renderDashTable);
+['dashWeekFilter','dashStatusFilter','dashWipFilter'].forEach(id=>
+  document.getElementById(id).addEventListener('change', renderDashScoped));
 // ⚠️ หน่วยคุมทั้งหน้า จึงต้องวาดใหม่ครบทั้งสามส่วน ไม่ใช่แค่ตาราง
 document.getElementById('dashSubFilter').addEventListener('change', ()=>{
   renderWipCards(); renderChart(); renderDashTable();
 });
-document.getElementById('dashStatusFilter').addEventListener('change', renderDashTable);
-document.getElementById('dashWipFilter').addEventListener('change', renderDashTable);
-document.getElementById('dashSearch').addEventListener('input', renderDashTable);
+document.getElementById('dashSearch').addEventListener('input', renderDashScoped);
 ['fgUnit','fgHideZero'].forEach(id=>
   document.getElementById(id).addEventListener('change', renderFg));
 // ช่องค้นหาอยู่นอกตาราง การวาดใหม่จึงไม่แย่งโฟกัส พิมพ์รัวได้ (INVARIANTS G2)
@@ -5262,7 +5270,7 @@ document.getElementById('dnDate').addEventListener('change', renderDeliveryNote)
 document.getElementById('dnSearch').addEventListener('input', renderDeliveryNote);
 document.getElementById('dnHideNoDelta').addEventListener('change', renderDeliveryNote);
 document.getElementById('dnUnit').addEventListener('change', renderDeliveryNote);
-document.getElementById('dashHideDone').addEventListener('change', renderDashTable);
+document.getElementById('dashHideDone').addEventListener('change', renderDashScoped);
 
 /* พิมพ์ / บันทึก PDF — ใช้ window.print() ของเบราว์เซอร์ล้วน ไม่เพิ่มไลบรารีทำ PDF (INVARIANTS F2)
    เขียนหัวกระดาษก่อนพิมพ์เสมอ ทั้งตอนกดปุ่มและตอนคนกด Ctrl+P เอง เพราะกระดาษที่ไม่บอกว่า

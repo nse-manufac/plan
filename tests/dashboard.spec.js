@@ -425,3 +425,70 @@ test('พิมพ์ตอนซ่อนขั้นอยู่ หัวก�
   const meta = await page.locator('#printMeta').innerText();
   expect(meta, 'ไม่งั้นคนอ่านกระดาษจะสรุปว่าขั้นนั้นไม่มียอดเลย').toContain('Inspection');
 });
+
+// ── การ์ดสรุปต้องนับชุดเดียวกับตาราง — เจ้าของสั่ง 5 พ.ย. 2026 ──────────
+//
+// ผู้ตรวจ #119 วัดได้ว่าการ์ด "ยอดแผนรวม" กับคอลัมน์ "ยอดสั่งรวม" ต่างกัน (200 กับ 100)
+// ตั้งแต่เปิดโปรแกรม เพราะการ์ดกรองแค่ Sub-Name แต่ตารางกรองครบทุกช่อง
+// และ "ซ่อนงานที่ส่งของครบแล้ว" ติ๊กไว้เป็นค่าตั้งต้น
+//
+// ⚠️ ต้องเทียบ "การ์ดกับตาราง" ไม่ใช่ "การ์ดกับเลขที่เขียนไว้ในเทส" — เลขตายตัวจะเขียว
+//    ทั้งที่สองที่บนจอขัดกัน ถ้าวันหนึ่งมีคนเปลี่ยนนิยามของฝั่งตารางไปอีกทาง
+
+/** ป้าย → ค่าบนการ์ดทุกใบ (ตัดหน่วยที่อยู่ใน <span> ท้ายค่าออก) */
+const cardVals = page => page.locator('#wipCards .card').evaluateAll(els => {
+  const out = {};
+  els.forEach(el => {
+    out[el.querySelector('.label').textContent.trim()] =
+      el.querySelector('.value').childNodes[0].textContent.trim();
+  });
+  return out;
+});
+const PLAN_CARD = 'ยอดแผนรวม (Order Qty)';
+
+test('การ์ดต้องไม่นับใบที่ตารางซ่อนไว้เพราะส่งของครบแล้ว', async ({ page }) => {
+  await openDash(page,
+    [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-A', 100)],
+    [rec('s1', 'ZZ-2|PN-A', 'shipping', 100)]);
+  const rows = await dashGroups(page);
+  expect(rows.map(r => [r.n, r.qty]), 'ค่าตั้งต้นซ่อนใบที่ส่งครบ จึงเหลือใบเดียว').toEqual([['1', '100']]);
+  expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องได้เลขเดียวกับคอลัมน์ยอดสั่งรวม')
+    .toBe(rows[0].qty);
+  expect(await page.locator('#wipScopeNote').innerText(), 'และต้องบอกว่ากำลังนับกี่ใบ')
+    .toContain('1 ใบ');
+
+  // ปลดติ๊กแล้วสองที่ต้องขยับพร้อมกัน = พิสูจน์ว่าช่องนี้วาดการ์ดใหม่ด้วย ไม่ใช่แค่ตาราง
+  await page.locator('#dashHideDone').setChecked(false);
+  await page.waitForTimeout(200);
+  const rows2 = await dashGroups(page);
+  expect(rows2.map(r => [r.n, r.qty]), 'ปลดติ๊กแล้วเห็นครบสองใบ').toEqual([['2', '200']]);
+  expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องตามมาด้วย').toBe(rows2[0].qty);
+});
+
+test('เปลี่ยนตัวกรองช่องไหนก็ต้องวาดการ์ดใหม่', async ({ page }) => {
+  await openDash(page, [
+    orderPn('ZZ-1', 'PN-A', 100),
+    { ...orderPn('ZZ-2', 'PN-B', 700), week: 'WK 35' }
+  ]);
+  expect((await cardVals(page))[PLAN_CARD], 'ยังไม่กรอง = สองใบรวมกัน').toBe('800');
+
+  await page.selectOption('#dashWeekFilter', 'WK 35');
+  await page.waitForTimeout(200);
+  expect((await dashGroups(page)).map(r => r.qty), 'ตารางเหลือใบของสัปดาห์นั้น').toEqual(['700']);
+  expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องขยับตาม ไม่ค้างที่ยอดรวมทุกสัปดาห์')
+    .toBe('700');
+
+  await page.fill('#dashSearch', 'ไม่มีใบนี้');
+  await page.waitForTimeout(250);
+  expect((await cardVals(page))[PLAN_CARD], 'ช่องค้นหาก็ต้องวาดการ์ดใหม่ (ช่องนี้ยิง input ไม่ใช่ change)')
+    .toBe('0');
+});
+
+test('ยอดสั่งที่เป็นข้อความ การ์ดต้องบวกเป็นเลข', async ({ page }) => {
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', '100'), orderPn('ZZ-2', 'PN-A', 100)]);
+  const rows = await dashGroups(page);
+  expect(rows[0].qty, 'ฝั่งตารางถูกอยู่แล้ว').toBe('200');
+  /* การ์ดนี้บวกยอดหลายใบมาตั้งแต่ต้น `0 + '100'` ได้ `'0100'` ไม่ใช่ 100
+     ผิดเงียบมาตลอดเพราะยังไม่มีคอลัมน์ไหนให้เอามาเทียบ */
+  expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องได้เลขเดียวกับตาราง').toBe(rows[0].qty);
+});
