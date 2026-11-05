@@ -3160,8 +3160,7 @@ function renderDashFilterOptions(){
 
 /** แถบ progress 2 ส่วน: ฟ้า = ยอดที่บันทึกทันหรือก่อนวัน deadline ของขั้นนั้น, เหลือง = บันทึกหลังเลย
  *  deadline ไปแล้ว — เขียวทั้งแถบสงวนไว้เฉพาะกรณีเสร็จครบ "และ" ไม่มีส่วนที่ช้าเลยเท่านั้น (เสร็จครบ
- *  แบบมีส่วนช้าปนอยู่ ยังคงแสดงฟ้า+เหลืองตามจริง ไม่ใช่เขียว) ยอดแยกทัน/เกินโชว์เป็นตัวหนังสือในเซลล์
- *  เลย ไม่ต้องรอ hover เพราะผู้ใช้อยากเห็นตัวเลขทันทีตอนกวาดตาดูตาราง */
+ *  แบบมีส่วนช้าปนอยู่ ยังคงแสดงฟ้า+เหลืองตามจริง ไม่ใช่เขียว) · ยอดแยกทัน/เกินอยู่ใน title ของแถบเท่านั้น ไม่โชว์เป็นตัวหนังสือ — เจ้าของสั่งถอดออก 5 พ.ย. 2026 ("เลขเยอะจะไม่มีใครดู") ห้ามเติมกลับ */
 function progressCell(cum, split, qty){
   split = split || {onTime:0, late:0};
   const done = qty>0 && cum>=qty && split.late===0;
@@ -3240,14 +3239,12 @@ function renderDashTable(){
    *    รวมข้ามหน่วยแล้วคอลัมน์ Sub-Name ไม่มีความหมาย และยอดของสองบริษัทจะปนกัน
    * ⚠️ ตัวกรองคัด "ใบ" ก่อน แล้วจึงรวม — ยอดในแถวจึงเป็นผลรวมของสิ่งที่กรองไว้เท่านั้น
    *    (เลือกสถานะล่าช้าแล้วยอดสั่งรวมจะเล็กลง ซึ่งถูกต้องตามความหมายนี้)
-   * ⚠️ ครอบทั้งยอดสะสม **และ** ยอดแยกทัน/เกิน ที่ orderQty ต่อใบ · ส่วนที่คีย์เกินฟ้องด้วยป้าย (CLAUDE.md §1) */
+   * ⚠️ ครอบยอดสะสม **และ** ยอดแยกทัน/เกิน ที่ orderQty ต่อใบ · คีย์เกินฟ้องด้วยป้าย · **เฉพาะขั้นสายหลัก** (CLAUDE.md §1) */
   const groups = new Map();
   rows.forEach(({o, c})=>{
     const pn = String(o.pn == null ? '' : o.pn), unit = String(o.subName || '');
-    /* ⚠️ ยอดสั่งต้องผ่าน Number() ด้วยเหตุผลเดียวกับที่ P/N ต้องผ่าน String() บรรทัดบน —
-     *    ค่าที่ซิงค์มาเป็นข้อความได้ · `'100' + 100` ได้ `'100100'` ไม่ใช่ 200
-     *    ตอนเป็นแถวราย PO ไม่เคยโผล่ เพราะ numFmt() แปลงให้ก่อนแสดงทีละใบ
-     *    พอรวมหลายใบเข้าด้วยกันจึงเพิ่งผิด (ผู้ตรวจ #119 รันพิสูจน์: ขึ้น 100,100 แทน 200) */
+    /* ⚠️ ยอดสั่งต้องผ่าน Number() ด้วยเหตุผลเดียวกับที่ P/N ต้องผ่าน String() บรรทัดบน — ค่าที่ซิงค์มา
+     *    เป็นข้อความได้ · `'100' + 100` ได้ `'100100'` (ผู้ตรวจ #119 รันเจอ: ขึ้น 100,100 แทน 200) */
     const q = Number(o.orderQty) || 0;
     const key = pn + '|' + unit;
     let g = groups.get(key);
@@ -3256,13 +3253,13 @@ function renderDashTable(){
     g.n++;
     if(hasOrderAnomaly(c)) g.anomaly = true;
     PROCESSES.forEach(p=>{
-      g.cum[p] += Math.min(c[p]||0, q);
-      if((c[p]||0) > q) g.over = true;
-      const sp = (splitMap[o.id] || {})[p] || {};
-      const on = Math.min(sp.onTime || 0, q);
+      const sp = (splitMap[o.id] || {})[p] || {}, cap = MAIN_PROCESSES.includes(p) ? q : Infinity;
+      g.cum[p] += Math.min(c[p]||0, cap);
+      if((c[p]||0) > cap) g.over = true;
+      const on = Math.min(sp.onTime || 0, cap);
       g.split[p] = g.split[p] || {onTime:0, late:0};
       g.split[p].onTime += on;
-      g.split[p].late += Math.min(sp.late || 0, q - on);
+      g.split[p].late += Math.min(sp.late || 0, cap - on);
     });
   });
   const list = [...groups.values()].sort((a,b)=> a.pn.localeCompare(b.pn) || a.unit.localeCompare(b.unit));

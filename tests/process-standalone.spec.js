@@ -93,6 +93,36 @@ test('A3 — ตัวกรอง "ค้างอยู่ที่ขั้�
   expect(opts).toContain('assembly');
 });
 
+/* แดชบอร์ดราย P/N ครอบยอดที่ orderQty และขึ้นป้ายเมื่อมีใบคีย์เกิน (เจ้าของเคาะ 5 พ.ย. 2026)
+   ⚠️ เกณฑ์ของทั้งสองอย่างคือ orderQty ซึ่งไม่ใช่เกณฑ์ของขั้นนับแยก — งานซ่อมเกินยอดสั่งเป็นเรื่องปกติ
+      สองข้อนี้ต้องมีคู่กัน: ข้อแรกกันการอ่าน PROCESSES · ข้อสองกันการถอดป้ายทิ้งทั้งก้อน */
+
+const dashCell = async (page, head) => {
+  const heads = await page.locator('#dashTable thead th').allInnerTexts();
+  const i = heads.findIndex(h => h.includes(head));
+  expect(i, `หาหัวคอลัมน์ ${head} ไม่เจอ`).toBeGreaterThan(-1);
+  return page.locator('#dashTable tbody tr').first().locator('td').nth(i).innerText();
+};
+
+test('A3 — ขั้นนับแยกที่คีย์เกินยอดสั่ง ต้องไม่ถูกครอบและไม่ขึ้นป้าย "คีย์เกินยอดสั่ง"', async ({ page }) => {
+  // ใบยอดสั่ง 1,000 · คีย์งานซ่อมไว้ 1,500 ซึ่งปกติสำหรับขั้นนับแยก
+  await open(page, { records: [rec('r1', 'winding', 800), rec('r2', 'repair', 1500)] });
+  await tab(page, 'dashboard');
+  expect(await dashCell(page, 'ซ่อม'), 'ยอดของขั้นนับแยกห้ามถูกครอบ — ครอบแล้วยอดจริงหายจากจอ')
+    .toContain('1,500/1,000');
+  await expect(page.locator('#dashTable tbody'),
+    'ป้ายนี้มีไว้ฟ้องการคีย์ผิดของสายหลัก ขึ้นกับงานซ่อมทุกวันแล้วจะไม่มีใครอ่าน')
+    .not.toContainText('คีย์เกินยอดสั่ง');
+});
+
+test('A3 — ขั้นสายหลักที่คีย์เกินยอดสั่ง ยังต้องถูกครอบและยังขึ้นป้ายตามเดิม', async ({ page }) => {
+  // ฉากเดียวกันแต่ยอดเกินอยู่ที่ Winding ซึ่งเป็นสายหลัก — มีขั้นนับแยกอยู่ในรายการด้วย
+  await open(page, { records: [rec('r1', 'winding', 1500), rec('r2', 'repair', 100)] });
+  await tab(page, 'dashboard');
+  expect(await dashCell(page, 'Winding'), 'สายหลักยังครอบที่ยอดสั่ง').toContain('1,000/1,000');
+  await expect(page.locator('#dashTable tbody')).toContainText('คีย์เกินยอดสั่ง');
+});
+
 test('A5 — ขั้นนับแยกที่เลยกำหนดแล้ว ต้องไม่ทำให้ใบขึ้นล่าช้า', async ({ page }) => {
   // สายหลักเสร็จหมดยกเว้น shipping ที่ยังไม่ถึงกำหนด · repair คีย์ไว้ 500 จาก 1000 และเลยกำหนดไปแล้ว
   // ถ้า repair ถูกนับในลูปตัดสินล่าช้า ใบนี้จะขึ้น "ล่าช้า ซ่อม" ทั้งที่ยอดของมันไม่เกี่ยวกับ orderQty
