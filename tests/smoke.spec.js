@@ -1090,13 +1090,27 @@ test('A5 — ส่งของครบแล้ว ต้องชนะทุ
  * ⚠️ ขอบเขตคือ "วันครบกำหนดพอดี = ยังทัน" ไม่ใช่เกิน
  *    เปลี่ยนเป็น < เมื่อไหร่ ของที่ทำเสร็จวันสุดท้ายจะถูกนับเป็นสายทั้งหมด
  *    ซึ่งเป็นวันที่คนเร่งงานกันมากที่สุด = ตัวเลขจะดูแย่กว่าความจริงเป็นประจำ */
+/* เจ้าของสั่ง 5 พ.ย. 2026 ให้เลิกโชว์เลข "ทัน X · เกิน Y" เป็นตัวหนังสือบนแดชบอร์ด
+ * ("เลขเยอะจะไม่มีใครดู") เหลือ **แถบ** กับ tooltip · เทสจึงต้องอ่านสองอย่างนั้น
+ * ⚠️ ห้ามกลับไปอ่าน innerText ของแถว — ไม่มีเลขนั้นแล้ว `not.toContain` จะเขียวเองทันที
+ * ช่องของขั้นแรก (Winding) = td ที่ 5 (Item No. · P/N · Sub-Name · ใบ · ยอดสั่งรวม) */
+const dashBar = async (page, nth = 5) => {
+  const cell = page.locator('#dashTable tbody tr').first().locator('td').nth(nth);
+  return {
+    on: await cell.locator('.seg-on').evaluate(el => el.style.width),
+    late: await cell.locator('.seg-late').evaluate(el => el.style.width),
+    title: await cell.locator('.progress').getAttribute('title')
+  };
+};
+
 test('แถบ ทัน/เกิน — ทำเสร็จวันครบกำหนดพอดี ต้องนับว่าทัน ไม่ใช่เกิน', async ({ page }) => {
   // สั่งมา 20 วัน กำหนด Winding = วันสั่ง + 10 = 10 วันก่อน · คีย์ยอดลงวันนั้นเป๊ะ
   await openApp(page, [rec('R1', 'O1', 'winding', isoDaysAgo(10), 100)], [lateOrder('O1', 20)]);
   await gotoDashboard(page);
 
-  const row = await page.locator('#dashTable tbody tr').first().innerText();
-  expect(row, 'วันครบกำหนดพอดียังถือว่าทัน จึงต้องไม่ขึ้นป้ายแยก ทัน/เกิน').not.toContain('เกิน 100');
+  const bar = await dashBar(page);
+  expect(bar, 'วันครบกำหนดพอดียังถือว่าทัน แถบต้องเป็นสีทันทั้งแถบ')
+    .toMatchObject({ on: '100%', late: '0%', title: 'ทันกำหนด 100 · เกินกำหนด 0' });
 });
 
 test('แถบ ทัน/เกิน — ทำเสร็จหลังกำหนด ต้องแยกให้เห็นว่าเกินเท่าไหร่', async ({ page }) => {
@@ -1104,8 +1118,55 @@ test('แถบ ทัน/เกิน — ทำเสร็จหลังก�
   await openApp(page, [rec('R1', 'O1', 'winding', isoDaysAgo(9), 100)], [lateOrder('O1', 20)]);
   await gotoDashboard(page);
 
-  const row = await page.locator('#dashTable tbody tr').first().innerText();
-  expect(row, 'ของที่ทำหลังกำหนด ต้องถูกนับเป็นเกิน').toContain('เกิน 100');
+  const bar = await dashBar(page);
+  expect(bar, 'ของที่ทำหลังกำหนด ต้องถูกนับเป็นเกินทั้งแถบ')
+    .toMatchObject({ on: '0%', late: '100%', title: 'ทันกำหนด 0 · เกินกำหนด 100' });
+});
+
+/* ── สองเลขในช่องเดียวต้องไม่ขัดกันเอง (ผู้ตรวจ #119 รันเจอ) ──────────
+ *
+ * ยอดสะสมครอบที่ยอดสั่งต่อใบ แต่ยอดแยกทัน/เกินไม่ครอบ → แถวเขียน `150/200`
+ * ส่วนแถบกับ tooltip บอก `เกิน 200` ซึ่งโตกว่าทั้งยอดสะสมและยอดสั่งรวม
+ *
+ * เจ้าของเคาะ 5 พ.ย. 2026: ครอบทั้งคู่ แล้วฟ้องส่วนที่คีย์เกินด้วยป้ายแทน
+ * (ไม่กลบเงียบ ตามหลักที่ `fgRows()` เขียนไว้) */
+test('ช่องขั้นต้องไม่ขัดกันเอง — ยอดแยกทัน/เกินต้องครอบที่ยอดสั่งเหมือนยอดสะสม', async ({ page }) => {
+  // สอง P/N เดียวกัน ยอดสั่ง 100 + 100 · ใบแรกคีย์ 150 (เกินยอดสั่ง) · ใบสองคีย์ 50 · ทั้งคู่หลังกำหนด
+  await openApp(page,
+    [rec('R1', 'O1', 'winding', isoDaysAgo(9), 150), rec('R2', 'O2', 'winding', isoDaysAgo(9), 50)],
+    [{ ...lateOrder('O1', 20), pn: 'PN-X' }, { ...lateOrder('O2', 20), pn: 'PN-X' }]);
+  await gotoDashboard(page);
+
+  const cell = await page.locator('#dashTable tbody tr').first().locator('td').nth(5).innerText();
+  expect(cell, 'ยอดสะสมครอบที่ยอดสั่งต่อใบ = 100 + 50').toContain('150/200');
+  const bar = await dashBar(page);
+  expect(bar.title, 'เลขในแถบต้องรวมได้ 150 เท่ากับยอดสะสม ไม่ใช่ 200 ซึ่งเป็นยอดดิบ')
+    .toBe('ทันกำหนด 0 · เกินกำหนด 150');
+  expect(bar.late, 'แถบต้องไม่เกิน 75% ของช่อง (150 จาก 200)').toBe('75%');
+  await expect(page.locator('#dashTable tbody'),
+    'ครอบแล้วต้องไม่กลบเงียบ — ต้องมีป้ายบอกว่ามีใบที่คีย์เกินยอดสั่ง').toContainText('คีย์เกินยอดสั่ง');
+});
+
+test('ช่องขั้นต้องไม่ขัดกันเอง — ยอดที่คีย์เกินแบบทันกำหนดก็ต้องถูกครอบ', async ({ page }) => {
+  /* ⚠️ ต้องมีข้อนี้คู่กับข้อบน — ด้านทันกำหนดกับด้านเกินกำหนดเป็นโค้ดคนละบรรทัด
+   *    ทดลองถอดการครอบด้านทันกำหนดออกแล้ว ข้อบนยังเขียว เพราะฉากนั้นมีแต่ของเกินกำหนด
+   * ⚠️ และต้องเทียบที่ tooltip ด้วย ไม่ใช่ความกว้างแถบอย่างเดียว — ความกว้างถูกจำกัดที่ 100%
+   *    ด้วยคณิตศาสตร์ของเปอร์เซ็นต์อยู่แล้ว จึงไม่ขยับแม้ยอดจะทะลุยอดสั่ง */
+  await openApp(page, [rec('R1', 'O1', 'winding', isoDaysAgo(10), 150)], [lateOrder('O1', 20)]);
+  await gotoDashboard(page);
+
+  const bar = await dashBar(page);
+  expect(bar, 'ทันกำหนดต้องครอบที่ 100 เท่ากับยอดสะสม ไม่ใช่ยอดดิบ 150')
+    .toMatchObject({ on: '100%', late: '0%', title: 'ทันกำหนด 100 · เกินกำหนด 0' });
+  await expect(page.locator('#dashTable tbody'),
+    'ของที่คีย์เกินยังต้องฟ้อง แม้จะคีย์ทันกำหนด').toContainText('คีย์เกินยอดสั่ง');
+});
+
+test('ป้ายคีย์เกินยอดสั่ง — ใบที่คีย์ไม่เกิน ต้องไม่ขึ้นป้าย', async ({ page }) => {
+  // ⚠️ ต้องมีข้อนี้คู่ไว้ ไม่งั้นป้ายที่ขึ้นทุกแถวจะผ่านเทสข้างบนได้โดยไม่มีอะไรจับ
+  await openApp(page, [rec('R1', 'O1', 'winding', isoDaysAgo(9), 100)], [lateOrder('O1', 20)]);
+  await gotoDashboard(page);
+  await expect(page.locator('#dashTable tbody')).not.toContainText('คีย์เกินยอดสั่ง');
 });
 
 test('A4 — สีช่อง Aging ต้องมาจาก deadlineOffsets.shipping ไม่ใช่เลขตายตัว', async ({ page }) => {

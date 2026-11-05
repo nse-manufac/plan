@@ -3167,13 +3167,10 @@ function progressCell(cum, split, qty){
   const done = qty>0 && cum>=qty && split.late===0;
   const onTimePct = qty>0 ? Math.min(100, split.onTime/qty*100) : 0;
   const latePct = qty>0 ? Math.min(100-onTimePct, split.late/qty*100) : 0;
-  const splitNote = split.late>0
-    ? `<div class="split-note"><span class="on">ทัน ${numFmt(split.onTime)}</span> · <span class="late">เกิน ${numFmt(split.late)}</span></div>`
-    : '';
   return `<div class="small">${numFmt(cum)}/${numFmt(qty)}</div>
     <div class="progress ${done?'done':''}" title="ทันกำหนด ${numFmt(split.onTime)} · เกินกำหนด ${numFmt(split.late)}">
       <div class="seg-on" style="width:${onTimePct}%"></div><div class="seg-late" style="width:${latePct}%"></div>
-    </div>${splitNote}`;
+    </div>`;
 }
 
 /* ช่อง Aging — ระบายสีให้กวาดตาเจอใบที่ค้างนานได้ทันที (issue #41)
@@ -3243,7 +3240,7 @@ function renderDashTable(){
    *    รวมข้ามหน่วยแล้วคอลัมน์ Sub-Name ไม่มีความหมาย และยอดของสองบริษัทจะปนกัน
    * ⚠️ ตัวกรองคัด "ใบ" ก่อน แล้วจึงรวม — ยอดในแถวจึงเป็นผลรวมของสิ่งที่กรองไว้เท่านั้น
    *    (เลือกสถานะล่าช้าแล้วยอดสั่งรวมจะเล็กลง ซึ่งถูกต้องตามความหมายนี้)
-   * ยอดสะสมครอบด้วย Math.min(สะสม, orderQty) ต่อใบ เหมือนการ์ด WIP เพื่อให้สองที่ตรงกันเสมอ */
+   * ⚠️ ครอบทั้งยอดสะสม **และ** ยอดแยกทัน/เกิน ที่ orderQty ต่อใบ · ส่วนที่คีย์เกินฟ้องด้วยป้าย (CLAUDE.md §1) */
   const groups = new Map();
   rows.forEach(({o, c})=>{
     const pn = String(o.pn == null ? '' : o.pn), unit = String(o.subName || '');
@@ -3254,16 +3251,18 @@ function renderDashTable(){
     const q = Number(o.orderQty) || 0;
     const key = pn + '|' + unit;
     let g = groups.get(key);
-    if(!g){ g = {pn, unit, qty:0, n:0, cum:emptyCum(), split:{}, anomaly:false}; groups.set(key, g); }
+    if(!g){ g = {pn, unit, qty:0, n:0, cum:emptyCum(), split:{}, anomaly:false, over:false}; groups.set(key, g); }
     g.qty += q;
     g.n++;
     if(hasOrderAnomaly(c)) g.anomaly = true;
     PROCESSES.forEach(p=>{
       g.cum[p] += Math.min(c[p]||0, q);
+      if((c[p]||0) > q) g.over = true;
       const sp = (splitMap[o.id] || {})[p] || {};
+      const on = Math.min(sp.onTime || 0, q);
       g.split[p] = g.split[p] || {onTime:0, late:0};
-      g.split[p].onTime += sp.onTime || 0;
-      g.split[p].late += sp.late || 0;
+      g.split[p].onTime += on;
+      g.split[p].late += Math.min(sp.late || 0, q - on);
     });
   });
   const list = [...groups.values()].sort((a,b)=> a.pn.localeCompare(b.pn) || a.unit.localeCompare(b.unit));
@@ -3275,7 +3274,7 @@ function renderDashTable(){
    *       ยิ่งตอนนี้แถวหนึ่งรวมหลายใบ เลขนี้ยิ่งไม่ใช่ตัวแทนของใบไหนเลย */
   const bodyHtml = list.map((g, idx)=>`<tr>
       <td class="hint">${idx + 1}</td>
-      <td class="left" data-pn="${escapeHtml(g.pn)}">${escapeHtml(g.pn)}${g.anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
+      <td class="left" data-pn="${escapeHtml(g.pn)}">${escapeHtml(g.pn)}${g.anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}${g.over?' <span class="badge amber" title="มีใบที่คีย์ยอดสะสมเกินยอดสั่ง — แถบในแถวนี้ครอบไว้ที่ยอดสั่ง ส่วนเกินตรวจได้ที่หน้าแก้ไข/ลบรายการ">⚠ คีย์เกินยอดสั่ง</span>':''}</td>
       <td class="left">${escapeHtml(g.unit)}</td>
       <td>${numFmt(g.n)}</td>
       <td>${numFmt(g.qty)}</td>
