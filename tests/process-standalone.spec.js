@@ -47,6 +47,16 @@ async function open(page, { records = RECORDS, offsets = OFFSETS, processes = nu
 }
 const tab = async (page, name) => { await page.click(`.tab-btn[data-tab="${name}"]`); await page.waitForTimeout(200); };
 
+/* ป้ายสถานะของใบย้ายจากแดชบอร์ดไปหน้า "ยอดรายวันทุกขั้น" ตอนแดชบอร์ดรวมเป็นราย P/N
+   (เจ้าของสั่ง 5 พ.ย. 2026) · ⚠️ เช็กที่แดชบอร์ดต่อจะเขียวเองทั้งที่ไม่ได้ตรวจอะไร
+   ติ๊ก "แสดงทุกใบ" เพราะหน้านี้ตั้งต้นโชว์เฉพาะใบที่คีย์ยอดของวันนั้นไว้ */
+const dayStatuses = async page => {
+  await tab(page, 'daily');
+  await page.locator('#dayShowAll').setChecked(true);
+  await page.waitForTimeout(250);
+  return (await page.locator('#dayTable tbody tr td:last-child').allInnerTexts()).join(' · ');
+};
+
 // ── ขั้นนับแยกต้องไม่ถูกนับเป็นส่วนหนึ่งของสายการผลิต ──────────────
 
 test('A3 — ขั้นนับแยกต้องไม่กลายเป็นขั้นก่อนหน้าของขั้นถัดไป', async ({ page }) => {
@@ -91,10 +101,9 @@ test('A5 — ขั้นนับแยกที่เลยกำหนดแ�
       rec('r4', 'inspection', 1000), rec('r5', 'shipping', 999), rec('r6', 'repair', 500)],
     offsets: { winding: 10, assembly: 17, support: 20, inspection: 24, shipping: 28, repair: 1 }
   });
-  await tab(page, 'dashboard');
-  const body = page.locator('#dashTable tbody');
-  await expect(body).not.toContainText('ล่าช้า ซ่อม');
-  await expect(body).toContainText('กำลังดำเนินการ');
+  const body = await dayStatuses(page);
+  expect(body).not.toContain('ล่าช้า ซ่อม');
+  expect(body).toContain('กำลังดำเนินการ');
 });
 
 // ── สิ่งที่ขั้นนับแยกยังต้องได้เหมือนขั้นอื่น ────────────────────────

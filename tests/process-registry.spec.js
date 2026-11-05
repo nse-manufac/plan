@@ -47,6 +47,17 @@ async function open(page, { extra = true, offsets = OFFSETS, records = RECORDS }
 const tab = async (page, name) => { await page.click(`.tab-btn[data-tab="${name}"]`); await page.waitForTimeout(200); };
 const readState = page => readSaved(page, K_STATE);   // อ่านจาก IndexedDB (tests/app-state.js)
 
+/* ป้ายสถานะของใบย้ายจากแดชบอร์ดไปหน้า "ยอดรายวันทุกขั้น" ตอนแดชบอร์ดรวมเป็นราย P/N
+   (เจ้าของสั่ง 5 พ.ย. 2026) · แดชบอร์ดไม่มีสถานะให้อ่านอีกแล้ว
+   ⚠️ เช็กที่แดชบอร์ดต่อจะ "เขียวเอง" ทั้งที่ไม่ได้ตรวจอะไร — ต้องอ่านที่หน้านี้
+   ติ๊ก "แสดงทุกใบ" เพราะหน้านี้ตั้งต้นโชว์เฉพาะใบที่คีย์ยอดของวันนั้นไว้ */
+const dayStatuses = async page => {
+  await tab(page, 'daily');
+  await page.locator('#dayShowAll').setChecked(true);
+  await page.waitForTimeout(250);
+  return (await page.locator('#dayTable tbody tr td:last-child').allInnerTexts()).join(' · ');
+};
+
 // ── แทรกขั้นทดสอบแล้วต้องโผล่ครบทุกที่ ─────────────────────────────
 
 test('ขั้นที่เพิ่มต้องไม่ถูกเตือนว่าไม่รู้จัก', async ({ page }) => {
@@ -98,14 +109,14 @@ test('ตัวกรองค้างอยู่ที่ขั้น — ม
   await expect(page.locator('#dashWipFilter option[value="coating"]')).toHaveText('ค้างหน้า Coating');
   await page.selectOption('#dashWipFilter', 'coating');
   await page.waitForTimeout(200);
-  await expect(page.locator('#dashTable tbody')).toContainText('PO-1');
+  // แถวเป็นราย P/N แล้ว — เกาะ data-pn ไม่ใช่ข้อความในช่อง (ช่องนั้นมีป้าย ⚠ ผิดลำดับ ปนได้)
+  await expect(page.locator('#dashTable tbody td[data-pn="PN-1"]')).toHaveCount(1);
 });
 
 test('สถานะล่าช้า — รู้จักขั้นที่เพิ่ม', async ({ page }) => {
   // สั่งมา 10 วัน · Coating ครบกำหนดวันที่ 3 และยังทำไม่ครบ · ขั้นปลายน้ำยังไม่ถึงกำหนด
   await open(page, { offsets: { ...OFFSETS, coating: 3 } });
-  await tab(page, 'dashboard');
-  await expect(page.locator('#dashTable tbody')).toContainText('ล่าช้า Coating');
+  expect(await dayStatuses(page)).toContain('ล่าช้า Coating');
 });
 
 test('ขั้นที่เพิ่มยังไม่มีวันกำหนดส่ง — ต้องไม่ถูกตัดสินว่าล่าช้า (A4)', async ({ page }) => {
@@ -113,8 +124,7 @@ test('ขั้นที่เพิ่มยังไม่มีวันก�
   //    ถ้าค่าที่ยังไม่กำหนดกลายเป็นวันสั่ง Support (ยังไม่กำหนดเหมือนกัน) จะขึ้นก่อนเพราะอยู่ปลายน้ำกว่า
   //    เช็กแคบ ๆ จะเขียวทั้งที่ตัดสินผิด — ย้อนโค้ดแล้วเจอมาแล้ว
   await open(page);
-  await tab(page, 'dashboard');
-  await expect(page.locator('#dashTable tbody')).not.toContainText('ล่าช้า');
+  expect(await dayStatuses(page)).not.toContain('ล่าช้า');
 });
 
 test('หน้าตั้งค่า — มีช่องวันของขั้นที่เพิ่ม และกดบันทึกแล้ว key อื่นไม่หาย', async ({ page }) => {
@@ -173,12 +183,13 @@ test('ตัวกรองยังไม่เริ่มผลิต — ต
   // Winding ครบ 1,000 แล้ว แต่ Assembly ยังไม่เริ่ม → ใบนี้เริ่มผลิตแล้ว ต้องไม่อยู่ในกลุ่มยังไม่เริ่ม
   await open(page, { extra: false, records: [rec('r1', 'winding', 1000)] });
   await tab(page, 'dashboard');
+  const pnRow = page.locator('#dashTable tbody td[data-pn="PN-1"]');
   await page.selectOption('#dashWipFilter', 'notStarted');
   await page.waitForTimeout(200);
-  await expect(page.locator('#dashTable tbody')).not.toContainText('PO-1');
+  await expect(pnRow).toHaveCount(0);
   await page.selectOption('#dashWipFilter', 'assembly');
   await page.waitForTimeout(200);
-  await expect(page.locator('#dashTable tbody'), 'ต้องไปอยู่ที่ค้างหน้า Assembly แทน').toContainText('PO-1');
+  await expect(pnRow, 'ต้องไปอยู่ที่ค้างหน้า Assembly แทน').toHaveCount(1);
 });
 
 // ── ห้าขั้นเดิม — หน้าตาต้องเหมือนเดิมทุกตัวอักษร ─────────────────────
@@ -195,7 +206,9 @@ test('ห้าขั้นเดิม — ปุ่ม ตัวกรอง �
   for (const id of ['offW', 'offA', 'offSup', 'offI', 'offS']) await expect(page.locator('#' + id)).toHaveCount(1);
   await tab(page, 'dashboard');
   const heads = (await page.locator('#dashTable thead th').allInnerTexts()).map(t => t.replace(/\s+/g, ' ').trim());
-  expect(heads.slice(8, 13)).toEqual(['Winding', 'Assembly', 'Support', 'Inspection', 'ส่งของ (Shipping)']);
+  // แดชบอร์ดเหลือห้าคอลัมน์หน้าขั้น (Item No. · P/N · Sub-Name · ใบ · ยอดสั่งรวม)
+  expect(heads.slice(0, 5)).toEqual(['Item No.', 'P/N', 'Sub-Name', 'ใบ', 'ยอดสั่งรวม']);
+  expect(heads.slice(5)).toEqual(['Winding', 'Assembly', 'Support', 'Inspection', 'ส่งของ (Shipping)']);
   const cards = await page.locator('#wipCards .card .label').allInnerTexts();
   expect(cards).toEqual(['ยอดแผนรวม (Order Qty)', 'ยังไม่เริ่มผลิต', 'WIP ค้างหน้า Assembly', 'WIP ค้างหน้า Support',
     'WIP ค้างหน้า Inspection', 'WIP รอส่งของ (เสร็จ Inspection แต่ยังไม่ส่ง)', 'ส่งของแล้ว (Shipped)']);

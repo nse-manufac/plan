@@ -65,8 +65,11 @@ test('G3 — เปิดหน้าแล้วค่าวันที่ท�
   await expectNotPwned(page, 'ตอนเปิดหน้า');
 
   // และต้องเห็นค่าเพี้ยนนั้นเป็นตัวหนังสือจริง ๆ ไม่ใช่หายไปเฉย ๆ — ค่าที่พังต้องพังให้เห็น
-  await expect(page.locator('#dashTable tbody tr').first()).toContainText(SHOWN);
   await expect(page.locator('#recordEditorTable tbody tr').first()).toContainText(SHOWN);
+  /* แดชบอร์ดไม่มีคอลัมน์วันที่แล้วตอนรวมเป็นราย P/N (เจ้าของสั่ง 5 พ.ย. 2026)
+     แต่ยังต้องพิสูจน์ว่ามันถูกวาดตอนเปิดหน้าจริง ไม่งั้นข้อนี้เหลือตารางเดียว
+     ค่าวันที่สั่งที่เพี้ยนยังถูกคุมเป็นตัวหนังสือที่ "ตารางยกเลิกใบสั่ง" กับ "หน้าจอใบส่งสินค้า" ข้างล่าง */
+  await expect(page.locator('#dashTable tbody td[data-pn]').first()).toHaveText('2870327301');
 });
 
 test('G3 — ตารางยกเลิกใบสั่ง', async ({ page }) => {

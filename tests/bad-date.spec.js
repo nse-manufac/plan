@@ -67,10 +67,21 @@ async function open(page, gs, local, records = []) {
 
 const localOrder = page => readSaved(page, K_STATE).then(s => s.orders.find(o => o.id === ORDER.id));
 const pushedOrders = net => net.calls.filter(c => c.action === 'pushRows' && c.table === 'Orders');
-async function dashRow(page) {
-  await page.click('.tab-btn[data-tab="dashboard"]');
-  const tr = page.locator('#dashTable tbody tr', { hasText: ORDER.poNo });
-  return { aging: tr.locator('td[data-aging]'), row: tr };
+/* คอลัมน์ Aging ย้ายไปหน้าคีย์ยอด และป้ายสถานะไปหน้า "ยอดรายวันทุกขั้น"
+   ตอนแดชบอร์ดรวมเป็นราย P/N (เจ้าของสั่ง 5 พ.ย. 2026) — แดชบอร์ดไม่มีสองอย่างนี้ให้อ่านแล้ว
+   ⚠️ เช็กที่แดชบอร์ดต่อจะเขียวเองทั้งที่ไม่ได้ตรวจอะไร */
+async function entryAging(page) {
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForTimeout(250);
+  return page.locator('#entryTable tbody tr', { hasText: ORDER.poNo }).locator('td[data-aging]');
+}
+async function dayStatus(page) {
+  await page.click('.tab-btn[data-tab="daily"]');
+  await page.waitForTimeout(200);
+  // หน้านี้ตั้งต้นโชว์เฉพาะใบที่คีย์ยอดของวันนั้นไว้
+  await page.locator('#dayShowAll').setChecked(true);
+  await page.waitForTimeout(250);
+  return page.locator('#dayTable tbody tr', { hasText: ORDER.poNo }).locator('td:last-child');
 }
 async function pressPullAll(page) {
   page.once('dialog', d => d.accept());
@@ -85,10 +96,11 @@ test('D3 + ปุ่มดึงข้อมูลใหม่ทั้งหม
   const net = await open(page, gs, Object.assign({}, ORDER, { orderDate: BAD, updatedAt: stamp, _dirty: false }));
 
   expect((await localOrder(page)).orderDate, 'ซิงค์ปกติไม่ทับ — นี่คืออาการที่เครื่องหน้างานเจอ').toBe(BAD);
-  const { aging, row } = await dashRow(page);
+  const aging = await entryAging(page);
   await expect(aging, 'ต้องบอกว่าวันที่ผิด ไม่ใช่ตัวเลขหลักหมื่น').toHaveText('วันที่ผิด');
-  await expect(row, 'วันที่ผิดห้ามเอาไปตัดสินล่าช้า').toContainText('วันที่สั่งผิด');
-  await expect(row).not.toContainText('ล่าช้า');
+  const status = await dayStatus(page);
+  await expect(status, 'วันที่ผิดห้ามเอาไปตัดสินล่าช้า').toContainText('วันที่สั่งผิด');
+  await expect(status).not.toContainText('ล่าช้า');
 
   await pressPullAll(page);
   await expect.poll(async () => (await localOrder(page)).orderDate, 'กดปุ่มแล้วต้องได้ค่าตามชีต').toBe(ORDER.orderDate);
@@ -96,7 +108,8 @@ test('D3 + ปุ่มดึงข้อมูลใหม่ทั้งหม
   expect(pushedOrders(net), 'ค่าผิดต้องไม่ถูกส่งขึ้นไปทับชีต').toEqual([]);
   expect(serverOrder(gs).orderDate).toBe(ORDER.orderDate);
 
-  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForTimeout(250);
   await expect(aging).toHaveText('3');
 });
 
@@ -157,10 +170,9 @@ test('ใบที่ส่งครบแล้วและวันที่�
       createdAt: stamp, updatedAt: stamp, voided: false, _dirty: false }
   ]);
 
-  const { aging, row } = await dashRow(page);
-  await page.uncheck('#dashHideDone');   // ใบที่ส่งครบถูกซ่อนเป็นค่าตั้งต้น
-  await expect(row).toContainText('ส่งของครบแล้ว');
-  await expect(aging.locator('.badge.green')).toHaveText('วันที่ผิด');
+  // สองหน้านี้ไม่ซ่อนใบที่ส่งครบแล้ว จึงไม่ต้องปลดตัวกรองเหมือนตอนอ่านที่แดชบอร์ด
+  await expect(await dayStatus(page)).toContainText('ส่งของครบแล้ว');
+  await expect((await entryAging(page)).locator('.badge.green')).toHaveText('วันที่ผิด');
 });
 
 test('นำเข้าไฟล์แผนที่วันที่เป็นไปไม่ได้ — หน้าตรวจก่อนนำเข้าต้องเตือนก่อนกดยืนยัน', async ({ page }) => {

@@ -107,12 +107,14 @@ test('กราฟต้องนับเฉพาะ Sub-Name ที่เล�
   expect(await barToday(page, 'winding'), 'กลับไป "ทั้งหมด" ต้องได้ยอดรวมคืนครบ').toBe(370);
 });
 
-test('ตารางรายใบต้องยังกรองตาม Sub-Name เหมือนเดิม', async ({ page }) => {
+test('ตารางราย P/N ต้องยังกรองตาม Sub-Name เหมือนเดิม', async ({ page }) => {
   await openDash(page, ORDERS, RECORDS);
   await pickSub(page, 'TUE-U');
+  // สองใบนี้ P/N เดียวกัน ต่างกันที่หน่วย — แดชบอร์ดรวมแถวด้วย P/N + Sub-Name
+  // จึงยังเป็นสองแถว และตัวกรองต้องเหลือแถวของหน่วยที่เลือกเท่านั้น
   const body = await page.locator('#dashTable tbody').innerText();
-  expect(body).toContain('PO-U1');
-  expect(body, 'ใบของอีกหน่วยต้องหายไป').not.toContain('PO-H1');
+  expect(body).toContain('TUE-U');
+  expect(body, 'แถวของอีกหน่วยต้องหายไป').not.toContain('TUE-H');
 });
 
 /** ความกว้างที่กราฟวาดจริง เทียบกับกล่องที่มันอยู่ */
