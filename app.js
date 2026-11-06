@@ -3161,12 +3161,13 @@ function renderDashFilterOptions(){
 /** แถบ progress 2 ส่วน: ฟ้า = ยอดที่บันทึกทันหรือก่อนวัน deadline ของขั้นนั้น, เหลือง = บันทึกหลังเลย
  *  deadline ไปแล้ว — เขียวทั้งแถบสงวนไว้เฉพาะกรณีเสร็จครบ "และ" ไม่มีส่วนที่ช้าเลยเท่านั้น (เสร็จครบ
  *  แบบมีส่วนช้าปนอยู่ ยังคงแสดงฟ้า+เหลืองตามจริง ไม่ใช่เขียว) · ยอดแยกทัน/เกินอยู่ใน title ของแถบเท่านั้น ไม่โชว์เป็นตัวหนังสือ — เจ้าของสั่งถอดออก 5 พ.ย. 2026 ("เลขเยอะจะไม่มีใครดู") ห้ามเติมกลับ */
-function progressCell(cum, split, qty){
+function progressCell(cum, split, qty, inRange){
   split = split || {onTime:0, late:0};
   const done = qty>0 && cum>=qty && split.late===0;
   const onTimePct = qty>0 ? Math.min(100, split.onTime/qty*100) : 0;
   const latePct = qty>0 ? Math.min(100-onTimePct, split.late/qty*100) : 0;
-  return `<div class="small">${numFmt(cum)}/${numFmt(qty)}</div>
+  return `<div class="rq${inRange == null ? ' none' : ''}" title="ยอดที่คีย์ในช่วงวันที่เลือก">${inRange == null ? '—' : numFmt(inRange)}</div>
+    <div class="small">${numFmt(cum)}/${numFmt(qty)}</div>
     <div class="progress ${done?'done':''}" title="ทันกำหนด ${numFmt(split.onTime)} · เกินกำหนด ${numFmt(split.late)}">
       <div class="seg-on" style="width:${onTimePct}%"></div><div class="seg-late" style="width:${latePct}%"></div>
     </div>`;
@@ -3221,6 +3222,65 @@ function dashFilteredRows(){
   return rows;
 }
 
+/** ยอดที่คีย์ภายในช่วงวันที่เลือกบนแดชบอร์ด — คืน record ที่อยู่ในช่วง ให้ buildRangeMap รวมต่อ
+ *  (ช่องว่าง = ไม่จำกัดด้านนั้น · ว่างทั้งคู่ = "ทั้งหมด") · เทียบสตริง YYYY-MM-DD ตรง ๆ ได้ เพราะ record.date เป็นวันปฏิทินล้วนที่ normalize แล้ว
+ *
+ *  ⚠️ **ช่วงวันเปลี่ยนแค่ "เลขตัวใหญ่" ในช่องของแต่ละขั้น กับแถวรวมท้ายตาราง**
+ *     ไม่ตัดแถวทิ้ง และไม่แตะการ์ดสรุป — การ์ดกับตารางยังต้องนับใบชุดเดียวกัน (กฎจาก #119)
+ *     ถ้าวันหนึ่งให้ช่วงวันตัดแถว ต้องย้ายไปอยู่ใน dashFilteredRows() ไม่ใช่ที่นี่
+ *     ไม่งั้นการ์ดกับตารางจะขัดกันทันที ซึ่งเป็นบั๊กที่ #119 ใช้สามรอบแก้
+ *
+ *  ⚠️ **ยอดในช่วงไม่ครอบที่ orderQty** ต่างจากยอดสะสมในบรรทัดล่างซึ่งครอบ — คนละความหมาย
+ *     ยอดสะสม = "เดินไปถึงไหนของใบนี้" จึงไม่เกินยอดสั่งโดยนิยาม
+ *     ยอดในช่วง = "ช่วงนี้ทำได้เท่าไหร่" ซึ่งเกินยอดสั่งได้จริง (คีย์เกิน · งานซ่อม) ครอบแล้วจะโกหก
+ *
+ *  ⚠️ **ไม่เก็บลง state** เหมือนตัวกรองอื่นบนหน้านี้ · เปิดโปรแกรมใหม่เริ่มที่ "วันนี้" ทุกครั้ง
+ *     (เจ้าของเลือกค่าตั้งต้นนี้ 5 พ.ย. 2026) · เก็บลง state = เพิ่มฟิลด์ที่ต้องซิงค์ ซึ่งไม่ได้ขอ */
+function dashRangeRecords(){
+  const from = document.getElementById('dashFrom').value;
+  const to = document.getElementById('dashTo').value;
+  if(!from && !to) return state.records;
+  return state.records.filter(r=> (!from || r.date >= from) && (!to || r.date <= to));
+}
+
+/** ยอดในช่วงต่อใบต่อขั้น · **`null` = ช่วงนั้นไม่มี record ของขั้นนั้นเลย** ต่างจาก `0` ที่มีคนคีย์ไว้
+ *  ⚠️ **ต้องแยกสองอย่างนี้ และเงื่อนไขต้องเขียน `== null` ห้ามเขียน `!v`** — กฎเดียวกับที่เจ้าของ
+ *     เคาะไว้ให้หน้ายอดรายวันทุกขั้น (CLAUDE.md §1) · ยอด 0 เกิดขึ้นเองได้จากการเลือกเหตุผล
+ *     ตอนยังไม่มียอด (27 ต.ค. 2026) · รวบเป็นขีดแล้ว "วันนี้หยุดงาน" จะอ่านไม่ต่างจาก
+ *     "ยังไม่ได้คีย์" ซึ่งเป็นคนละเรื่องกันคนละขั้ว
+ *  ⚠️ ใช้ buildCumMap() แทนไม่ได้ — ตัวนั้นเริ่มจาก emptyCum() จึงคืน 0 ให้ทุกขั้นเสมอ
+ *     แล้วขั้นที่ไม่มีใครคีย์จะกลายเป็น "ผลิตศูนย์" ทั้งหน้า */
+function buildRangeMap(records){
+  const map = {};
+  for(const r of records){
+    if(r.voided) continue;                                  // A1 — เหมือน buildCumMap
+    if(!map[r.orderId]) map[r.orderId] = {};
+    const cur = map[r.orderId][r.process];
+    map[r.orderId][r.process] = (cur == null ? 0 : cur) + (Number(r.qty)||0);
+  }
+  return map;
+}
+
+/** ตั้งช่วงวันพร้อมไฮไลต์ปุ่มที่ตรงกับค่านั้น — ไม่วาดจอ ผู้เรียกวาดเอง
+ *  (ตอน init ต้องตั้งค่าก่อน state พร้อม จึงยังวาดไม่ได้) */
+function setDashRange(from, to, kind){
+  document.getElementById('dashFrom').value = from;
+  document.getElementById('dashTo').value = to;
+  document.querySelectorAll('#dashPresets button').forEach(b=>
+    b.classList.toggle('primary', b.dataset.range === kind));
+}
+
+/** ปุ่มช่วงวันสำเร็จรูป → [จาก, ถึง]
+ *  ⚠️ "ทั้งหมด" = ล้างทั้งสองช่อง ไม่ใช่ใส่วันที่เก่าสุดที่มีข้อมูล — ยอดที่คีย์ย้อนหลัง
+ *     ลงวันก่อนนั้นได้ แล้วจะตกช่วงไปเงียบ ๆ ทั้งที่คนกดว่า "ทั้งหมด" */
+function dashPresetRange(kind){
+  const t = todayISO();
+  if(kind === 'all') return ['', ''];
+  if(kind === '7') return [addDaysISO(t, -6), t];
+  if(kind === 'month') return [t.slice(0, 8) + '01', t];
+  return [t, t];
+}
+
 /** ⚠️ ทุกช่องกรองบนหน้านี้ต้องผูกกับตัวนี้ ไม่ใช่กับ renderDashTable ตรง ๆ — ลืมช่องไหน
  *     ช่องนั้นจะทำให้การ์ดกับตารางขัดกันทันทีที่มีคนเลือก (กราฟมีตัวจับของตัวเองอยู่แล้ว) */
 function renderDashScoped(){ renderWipCards(); renderDashTable(); }
@@ -3228,6 +3288,7 @@ function renderDashScoped(){ renderWipCards(); renderDashTable(); }
 function renderDashTable(){
   const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
   const splitMap = buildCumSplitMap(state.records, orderById);
+  const rangeMap = buildRangeMap(dashRangeRecords());
   const rows = dashFilteredRows();
 
   /* รวมเป็นราย P/N + Sub-Name — เจ้าของสั่ง 5 พ.ย. 2026 ("ข้อมูลเยอะเกินกว่าจะเรียกการมองภาพรวม")
@@ -3248,13 +3309,15 @@ function renderDashTable(){
     const q = Number(o.orderQty) || 0;
     const key = pn + '|' + unit;
     let g = groups.get(key);
-    if(!g){ g = {pn, unit, qty:0, n:0, cum:emptyCum(), split:{}, anomaly:false, over:false}; groups.set(key, g); }
+    if(!g){ g = {pn, unit, qty:0, n:0, cum:emptyCum(), range:{}, split:{}, anomaly:false, over:false}; groups.set(key, g); }
     g.qty += q;
     g.n++;
     if(hasOrderAnomaly(c)) g.anomaly = true;
     PROCESSES.forEach(p=>{
       const sp = (splitMap[o.id] || {})[p] || {}, cap = MAIN_PROCESSES.includes(p) ? q : Infinity;
       g.cum[p] += Math.min(c[p]||0, cap);
+      const rv = (rangeMap[o.id] || {})[p];
+      if(rv != null) g.range[p] = (g.range[p] == null ? 0 : g.range[p]) + rv;
       if((c[p]||0) > cap) g.over = true;
       const on = Math.min(sp.onTime || 0, cap);
       g.split[p] = g.split[p] || {onTime:0, late:0};
@@ -3275,16 +3338,37 @@ function renderDashTable(){
       <td class="left">${escapeHtml(g.unit)}</td>
       <td>${numFmt(g.n)}</td>
       <td>${numFmt(g.qty)}</td>
-      ${PROCESSES.map(p=>`<td>${progressCell(g.cum[p]||0, g.split[p], g.qty)}</td>`).join('')}
+      ${PROCESSES.map(p=>`<td>${progressCell(g.cum[p]||0, g.split[p], g.qty, g.range[p])}</td>`).join('')}
     </tr>`).join('');
 
+  /* ⚠️ แถวรวมนับชุดที่ผ่านตัวกรองแล้ว จึงต้องเขียนขอบเขตกำกับเหมือน #wipScopeNote (CLAUDE.md §1)
+   * ⚠️ แถวรวมต้องไม่นับช่องขีด — ขั้นที่ช่วงนั้นไม่มีใครคีย์ขึ้น "—" ไม่ใช่ 0 (กฎจาก CLAUDE.md §1)
+   *    กระทบแรงเป็นพิเศษเพราะค่าตั้งต้นคือ "วันนี้" — เช้าที่ยังไม่มีใครคีย์ แถวรวมทั้งแถว
+   *    จะอ่านว่า "วันนี้ทั้งโรงงานทำได้ 0 ทุกขั้น" ทั้งที่ยังไม่มีใครรายงานเข้ามา (ผู้ตรวจ #120) */
+  const footHtml = PROCESSES.map(p=>{
+    const sum = list.reduce((s, g)=> g.range[p] == null ? s : (s == null ? 0 : s) + g.range[p], null);
+    return `<td>${sum == null ? '—' : numFmt(sum)}</td>`;
+  }).join('');
   document.getElementById('dashTable').innerHTML = `<thead><tr>
       <th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ ไว้ชี้กันตอนคุยหรือตอนดูกระดาษที่พิมพ์ออกมา — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>
       <th>P/N</th><th>Sub-Name</th>
       <th title="จำนวนใบสั่งซื้อของ P/N นี้ที่ผ่านตัวกรองอยู่ตอนนี้">ใบ</th>
       <th title="ยอดสั่งรวมของใบที่ผ่านตัวกรองอยู่ตอนนี้">ยอดสั่งรวม</th>
-      ${PROCESSES.map(p=>`<th>${processHeadHtml(p)}</th>`).join('')}
-    </tr></thead><tbody>${bodyHtml || emptyRow(5 + PROCESSES.length)}</tbody>`;
+      ${PROCESSES.map(p=>`<th title="เลขตัวใหญ่ = ยอดในช่วงวันที่เลือก · บรรทัดล่าง = ยอดสะสมทั้งหมด/ยอดสั่งรวม">${processHeadHtml(p)}</th>`).join('')}
+    </tr></thead><tbody>${bodyHtml || emptyRow(5 + PROCESSES.length)}</tbody>
+    <tfoot><tr><td class="left" colspan="5">รวมยอดในช่วง ${escapeHtml(dashRangeLabel())} · นับเฉพาะ ${numFmt(rows.length)} ใบที่ผ่านตัวกรอง</td>${footHtml}</tr></tfoot>`;
+}
+
+/** ข้อความบอกช่วงวันที่แถวรวมท้ายตารางกำลังนับ — ต้องมี ไม่งั้นเลขรวมไม่บอกว่าเป็นของช่วงไหน
+ *  ช่องเดียวที่ว่างแปลว่า "ไม่จำกัดด้านนั้น" จึงต้องเขียนออกมาเป็นคำ ไม่ใช่เว้นว่าง */
+function dashRangeLabel(){
+  const from = document.getElementById('dashFrom').value;
+  const to = document.getElementById('dashTo').value;
+  if(!from && !to) return '(ทุกวัน)';
+  if(from === to) return fmtDateTH(from);
+  // ช่วงกลับข้าง = ไม่มีวันไหนเข้าเลย · ไม่บอกก็จะอ่านว่า "ช่วงนี้ไม่มีใครทำอะไร" (ผู้ตรวจ #120 ทักสองรอบ)
+  if(from && to && from > to) return fmtDateTH(from) + ' – ' + fmtDateTH(to) + ' ⚠ ช่วงกลับข้าง ไม่มีวันไหนเข้าเลย';
+  return (from ? fmtDateTH(from) : 'เริ่มแรก') + ' – ' + (to ? fmtDateTH(to) : 'ล่าสุด');
 }
 
 /* ---------- Render: Data tab ---------- */
@@ -5248,6 +5332,23 @@ document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
 
 ['dashWeekFilter','dashStatusFilter','dashWipFilter'].forEach(id=>
   document.getElementById(id).addEventListener('change', renderDashScoped));
+
+/* ช่วงวันไม่ได้เปลี่ยนชุดใบที่นับ จึงไม่จำเป็นต้องวาดการ์ดใหม่ — แต่เรียก renderDashScoped()
+ * เหมือนช่องอื่นโดยตั้งใจ เพื่อให้กฎ "ทุกช่องผูกกับตัวกลาง" ไม่มีข้อยกเว้นให้ใครเข้าใจผิด
+ * (การ์ดใช้เวลา ~5 ms ที่ 712 ใบ · ผู้ตรวจ #119 วัดไว้) */
+document.getElementById('dashPresets').addEventListener('click', e=>{
+  const kind = e.target.dataset && e.target.dataset.range;
+  if(!kind) return;
+  const [from, to] = dashPresetRange(kind);
+  setDashRange(from, to, kind);
+  renderDashScoped();
+});
+// พิมพ์วันเองแล้วปุ่มสำเร็จรูปต้องเลิกไฮไลต์ ไม่งั้นจอบอกช่วงหนึ่งแต่นับอีกช่วง
+['dashFrom','dashTo'].forEach(id=>
+  document.getElementById(id).addEventListener('change', ()=>{
+    document.querySelectorAll('#dashPresets button.primary').forEach(b=>b.classList.remove('primary'));
+    renderDashScoped();
+  }));
 // ⚠️ หน่วยคุมทั้งหน้า จึงต้องวาดใหม่ครบทั้งสามส่วน ไม่ใช่แค่ตาราง
 document.getElementById('dashSubFilter').addEventListener('change', ()=>{
   renderWipCards(); renderChart(); renderDashTable();
@@ -5276,6 +5377,7 @@ function fillPrintHeader(){
   const parts = [
     'สัปดาห์: '+selText('dashWeekFilter'),
     'Sub-Name: '+selText('dashSubFilter'),
+    'ยอดในช่วง: '+dashRangeLabel(),      // ช่องเลือกช่วงไม่พิมพ์ติดไป และช่วงนี้ติ๊กมาให้โดยไม่มีใครเลือก
     'สถานะ: '+selText('dashStatusFilter'),
     'ค้างอยู่ที่ขั้น: '+selText('dashWipFilter')
   ];
@@ -5671,6 +5773,10 @@ document.getElementById('gsAuto').checked = syncCfg.auto;
 renderSyncBadge();
 if(syncCfg.url && syncCfg.auto){ doSync(); }
 syncIntervalId = setInterval(()=>{ if(syncCfg.url && syncCfg.auto) doSync(); }, 20000);
+/* ช่วงวันของแดชบอร์ดเริ่มที่ "วันนี้" ทุกครั้งที่เปิดโปรแกรม (เจ้าของเลือก 5 พ.ย. 2026)
+ * ⚠️ ต้องตั้งก่อน openState() ซึ่งเรียก renderAll() — ไม่งั้นการวาดครั้งแรกอ่านช่องว่าง
+ *    แล้วเลขตัวใหญ่จะเป็นยอดรวมทุกวัน ทั้งที่ปุ่ม "วันนี้" ไฮไลต์อยู่ */
+setDashRange(...dashPresetRange('today'), 'today');
 openState();
 
 
