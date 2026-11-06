@@ -465,11 +465,16 @@ test('การ์ดต้องไม่นับใบที่ตารา�
   expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องตามมาด้วย').toBe(rows2[0].qty);
 });
 
+/* ⚠️ ต้องไล่ **ทุกช่อง** ตามชื่อข้อ — ผู้ตรวจ #119 รอบหกทักว่าข้อนี้เคยครอบแค่ `สัปดาห์`
+      กับ `ค้นหา` ส่วน `สถานะ` กับ `ค้างอยู่ที่ขั้น` (สองช่องที่ #119 เพิ่งผูกใหม่) ไม่มีใครคุม
+   ⚠️ ทุกช่องต้องเทียบกับเลขที่ **ไม่ใช่ 0 และต่างกัน** — ถ้าทุกฉากจบที่ 0 การ์ดที่พังจนขึ้น 0
+      ตลอดจะผ่านได้ · ZZ-2 จึงสั่งเมื่อวาน (สถานะปกติ) และคีย์ winding ครบแล้ว (ค้างที่ assembly)
+      ส่วน ZZ-1 สั่ง ส.ค. (เกินกำหนด) และยังไม่คีย์อะไร (ค้างที่ "ยังไม่เริ่มผลิต") */
 test('เปลี่ยนตัวกรองช่องไหนก็ต้องวาดการ์ดใหม่', async ({ page }) => {
   await openDash(page, [
     orderPn('ZZ-1', 'PN-A', 100),
-    { ...orderPn('ZZ-2', 'PN-B', 700), week: 'WK 35' }
-  ]);
+    { ...orderPn('ZZ-2', 'PN-B', 700), week: 'WK 35', orderDate: isoAgo(1) }
+  ], [rec('w2', 'ZZ-2|PN-B', 'winding', 700)]);
   expect((await cardVals(page))[PLAN_CARD], 'ยังไม่กรอง = สองใบรวมกัน').toBe('800');
 
   await page.selectOption('#dashWeekFilter', 'WK 35');
@@ -482,6 +487,22 @@ test('เปลี่ยนตัวกรองช่องไหนก็ต�
   await page.waitForTimeout(250);
   expect((await cardVals(page))[PLAN_CARD], 'ช่องค้นหาก็ต้องวาดการ์ดใหม่ (ช่องนี้ยิง input ไม่ใช่ change)')
     .toBe('0');
+
+  // ล้างสองช่องบนก่อน แล้วไล่สองช่องที่เหลือทีละช่อง
+  await page.fill('#dashSearch', '');
+  await page.selectOption('#dashWeekFilter', '');
+  await page.waitForTimeout(250);
+
+  await page.selectOption('#dashStatusFilter', 'late');
+  await page.waitForTimeout(200);
+  expect((await dashGroups(page)).map(r => r.qty), 'ตารางเหลือใบที่เกินกำหนด').toEqual(['100']);
+  expect((await cardVals(page))[PLAN_CARD], 'ช่องสถานะก็ต้องวาดการ์ดใหม่').toBe('100');
+
+  await page.selectOption('#dashStatusFilter', '');
+  await page.selectOption('#dashWipFilter', 'assembly');
+  await page.waitForTimeout(200);
+  expect((await dashGroups(page)).map(r => r.qty), 'ตารางเหลือใบที่ค้างหน้า Assembly').toEqual(['700']);
+  expect((await cardVals(page))[PLAN_CARD], 'ช่องค้างอยู่ที่ขั้นก็ต้องวาดการ์ดใหม่').toBe('700');
 });
 
 test('ยอดสั่งที่เป็นข้อความ การ์ดต้องบวกเป็นเลข', async ({ page }) => {
