@@ -3342,7 +3342,8 @@ function renderDashTable(){
       ${PROCESSES.map(p=>`<td>${progressCell(g.cum[p]||0, g.split[p], g.qty, g.range[p])}</td>`).join('')}
     </tr>`).join('');
 
-  /* ⚠️ แถวรวมต้องไม่นับช่องขีด — ขั้นที่ช่วงนั้นไม่มีใครคีย์ขึ้น "—" ไม่ใช่ 0 (กฎจาก CLAUDE.md §1)
+  /* ⚠️ แถวรวมนับชุดที่ผ่านตัวกรองแล้ว จึงต้องเขียนขอบเขตกำกับเหมือน #wipScopeNote (CLAUDE.md §1)
+   * ⚠️ แถวรวมต้องไม่นับช่องขีด — ขั้นที่ช่วงนั้นไม่มีใครคีย์ขึ้น "—" ไม่ใช่ 0 (กฎจาก CLAUDE.md §1)
    *    กระทบแรงเป็นพิเศษเพราะค่าตั้งต้นคือ "วันนี้" — เช้าที่ยังไม่มีใครคีย์ แถวรวมทั้งแถว
    *    จะอ่านว่า "วันนี้ทั้งโรงงานทำได้ 0 ทุกขั้น" ทั้งที่ยังไม่มีใครรายงานเข้ามา (ผู้ตรวจ #120) */
   const footHtml = PROCESSES.map(p=>{
@@ -3356,7 +3357,7 @@ function renderDashTable(){
       <th title="ยอดสั่งรวมของใบที่ผ่านตัวกรองอยู่ตอนนี้">ยอดสั่งรวม</th>
       ${PROCESSES.map(p=>`<th title="เลขตัวใหญ่ = ยอดในช่วงวันที่เลือก · บรรทัดล่าง = ยอดสะสมทั้งหมด/ยอดสั่งรวม">${processHeadHtml(p)}</th>`).join('')}
     </tr></thead><tbody>${bodyHtml || emptyRow(5 + PROCESSES.length)}</tbody>
-    <tfoot><tr><td class="left" colspan="5">รวมยอดในช่วง ${escapeHtml(dashRangeLabel())}</td>${footHtml}</tr></tfoot>`;
+    <tfoot><tr><td class="left" colspan="5">รวมยอดในช่วง ${escapeHtml(dashRangeLabel())} · นับเฉพาะ ${numFmt(rows.length)} ใบที่ผ่านตัวกรอง</td>${footHtml}</tr></tfoot>`;
 }
 
 /** ข้อความบอกช่วงวันที่แถวรวมท้ายตารางกำลังนับ — ต้องมี ไม่งั้นเลขรวมไม่บอกว่าเป็นของช่วงไหน
@@ -3366,6 +3367,8 @@ function dashRangeLabel(){
   const to = document.getElementById('dashTo').value;
   if(!from && !to) return '(ทุกวัน)';
   if(from === to) return fmtDateTH(from);
+  // ช่วงกลับข้าง = ไม่มีวันไหนเข้าเลย · ไม่บอกก็จะอ่านว่า "ช่วงนี้ไม่มีใครทำอะไร" (ผู้ตรวจ #120 ทักสองรอบ)
+  if(from && to && from > to) return fmtDateTH(from) + ' – ' + fmtDateTH(to) + ' ⚠ ช่วงกลับข้าง ไม่มีวันไหนเข้าเลย';
   return (from ? fmtDateTH(from) : 'เริ่มแรก') + ' – ' + (to ? fmtDateTH(to) : 'ล่าสุด');
 }
 
