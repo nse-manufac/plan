@@ -215,7 +215,7 @@ test('ห้าขั้นเดิม — ปุ่ม ตัวกรอง �
   expect(heads.slice(5)).toEqual(['Winding', 'Assembly', 'Support', 'Inspection', 'ส่งของ (Shipping)']);
   const cards = await page.locator('#wipCards .card .label').allInnerTexts();
   expect(cards).toEqual(['ยอดแผนรวม (Order Qty)', 'ยังไม่เริ่มผลิต', 'WIP ค้างหน้า Assembly', 'WIP ค้างหน้า Support',
-    'WIP ค้างหน้า Inspection', 'ยอด FG คงคลัง (เสร็จ Inspection แต่ยังไม่ส่ง)', 'ส่งของแล้ว (Shipped)']);
+    'WIP ค้างหน้า Inspection', 'ยอด FG คงคลัง', 'ส่งของแล้ว (Shipped)']);
 });
 
 test('ชื่อขั้นต้นน้ำต้องไม่ถูกเขียนตายตัวนอกรายการขั้น', async () => {

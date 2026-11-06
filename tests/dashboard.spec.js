@@ -685,8 +685,10 @@ test('การ์ดของขั้นสุดท้ายชื่อ "ย
   const cards = await page.locator('#wipCards').innerText();
   expect(cards, 'ชื่อใหม่ตามที่เจ้าของสั่ง').toContain('ยอด FG คงคลัง');
   expect(cards, 'ชื่อเดิมต้องไม่เหลือ').not.toContain('WIP รอส่งของ');
-  expect((await cardVals(page))['ยอด FG คงคลัง (เสร็จ Inspection แต่ยังไม่ส่ง)'],
+  expect((await cardVals(page))['ยอด FG คงคลัง'],
     'ยอด = ผ่าน Inspection 80 − ส่งแล้ว 30').toBe('50');
+  // นิยามย้ายไปอยู่ใน title แล้ว (เจ้าของสั่งเอาวงเล็บออกจากป้าย 7 พ.ย. 2026) — ต้องยังอ่านได้
+  expect(cards, 'ป้ายบนการ์ดต้องสั้น ไม่มีวงเล็บนิยามแล้ว').not.toContain('เสร็จ Inspection แต่ยังไม่ส่ง');
 
   const title = await page.locator('#wipCards .card')
     .filter({ hasText: 'ยอด FG คงคลัง' }).getAttribute('title');

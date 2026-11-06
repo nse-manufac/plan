@@ -231,7 +231,7 @@ const DEFAULT_PROCESSES = [
      *    ซึ่งเป็นนิยามเดียวกับหน้ายอดคงคลัง FG · ชื่อเดิม "WIP รอส่งของ" อ่านไม่ออกว่าเป็นของในคลัง
      *    ⚠️ แต่ **ตัวเลขสองที่ไม่เท่ากันได้** — การ์ดครอบที่ยอดสั่งต่อใบและไม่ติดลบ
      *       หน้า FG โชว์ยอดดิบ (ตั้งใจ ดู fgRows) · ชื่อเหมือนกันแล้วยิ่งต้องเขียนกำกับไว้ */
-    text:{late:'เกินกำหนดส่งของ', wait:'รอส่งของ', waitCard:'ยอด FG คงคลัง (เสร็จ Inspection แต่ยังไม่ส่ง)',
+    text:{late:'เกินกำหนดส่งของ', wait:'รอส่งของ', waitCard:'ยอด FG คงคลัง',
           waitExport:'ยอด FG คงคลัง', deadlineExport:'กำหนดส่งของ', offset:'กำหนดส่งของ (+วัน)'}}
 ];
 /* ⚠️ อ็อบเจกต์ข้างล่างเป็นตัวเดิมตลอดอายุหน้า — applyProcessList() ล้างแล้วเติมค่าลงตัวเดิม
@@ -2934,7 +2934,7 @@ function renderWipCards(){
     ...MAIN_PROCESSES.slice(1).map((p, i)=>({label:ptext(p, 'waitCard'),
       // ชื่อการ์ดของขั้นสุดท้ายซ้ำกับหน้ายอดคงคลัง FG แต่เลขคนละเกณฑ์ ต้องเขียนกำกับไม่ให้คนเทียบแล้วสับสน
       title: p === MAIN_PROCESSES[MAIN_PROCESSES.length - 1]
-        ? 'ครอบที่ยอดสั่งต่อใบและไม่ติดลบ จึงอาจไม่เท่ากับ "FG คงเหลือ" ในหน้ายอดคงคลัง FG ที่โชว์ยอดดิบ' : '',
+        ? 'ของที่ผ่าน Inspection แล้วแต่ยังไม่ส่ง · ครอบที่ยอดสั่งต่อใบและไม่ติดลบ จึงอาจไม่เท่ากับ "FG คงเหลือ" ในหน้ายอดคงคลัง FG ที่โชว์ยอดดิบ' : '',
       value:numFmt(Math.max(0, sum[MAIN_PROCESSES[i]] - sum[p])), unit:'pcs', accent:'amber'})),
     {label:'ส่งของแล้ว (Shipped)', value:numFmt(shipped), unit:`pcs (${totalQty? Math.round(shipped/totalQty*100):0}%)`, accent:'green'}
   ];
