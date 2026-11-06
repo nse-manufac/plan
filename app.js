@@ -3166,7 +3166,7 @@ function progressCell(cum, split, qty, inRange){
   const done = qty>0 && cum>=qty && split.late===0;
   const onTimePct = qty>0 ? Math.min(100, split.onTime/qty*100) : 0;
   const latePct = qty>0 ? Math.min(100-onTimePct, split.late/qty*100) : 0;
-  return `<div class="rq${inRange ? '' : ' none'}" title="ยอดที่คีย์ในช่วงวันที่เลือก">${inRange ? numFmt(inRange) : '—'}</div>
+  return `<div class="rq${inRange == null ? ' none' : ''}" title="ยอดที่คีย์ในช่วงวันที่เลือก">${inRange == null ? '—' : numFmt(inRange)}</div>
     <div class="small">${numFmt(cum)}/${numFmt(qty)}</div>
     <div class="progress ${done?'done':''}" title="ทันกำหนด ${numFmt(split.onTime)} · เกินกำหนด ${numFmt(split.late)}">
       <div class="seg-on" style="width:${onTimePct}%"></div><div class="seg-late" style="width:${latePct}%"></div>
@@ -3244,6 +3244,24 @@ function dashRangeRecords(){
   return state.records.filter(r=> (!from || r.date >= from) && (!to || r.date <= to));
 }
 
+/** ยอดในช่วงต่อใบต่อขั้น · **`null` = ช่วงนั้นไม่มี record ของขั้นนั้นเลย** ต่างจาก `0` ที่มีคนคีย์ไว้
+ *  ⚠️ **ต้องแยกสองอย่างนี้ และเงื่อนไขต้องเขียน `== null` ห้ามเขียน `!v`** — กฎเดียวกับที่เจ้าของ
+ *     เคาะไว้ให้หน้ายอดรายวันทุกขั้น (CLAUDE.md §1) · ยอด 0 เกิดขึ้นเองได้จากการเลือกเหตุผล
+ *     ตอนยังไม่มียอด (27 ต.ค. 2026) · รวบเป็นขีดแล้ว "วันนี้หยุดงาน" จะอ่านไม่ต่างจาก
+ *     "ยังไม่ได้คีย์" ซึ่งเป็นคนละเรื่องกันคนละขั้ว
+ *  ⚠️ ใช้ buildCumMap() แทนไม่ได้ — ตัวนั้นเริ่มจาก emptyCum() จึงคืน 0 ให้ทุกขั้นเสมอ
+ *     แล้วขั้นที่ไม่มีใครคีย์จะกลายเป็น "ผลิตศูนย์" ทั้งหน้า */
+function buildRangeMap(records){
+  const map = {};
+  for(const r of records){
+    if(r.voided) continue;                                  // A1 — เหมือน buildCumMap
+    if(!map[r.orderId]) map[r.orderId] = {};
+    const cur = map[r.orderId][r.process];
+    map[r.orderId][r.process] = (cur == null ? 0 : cur) + (Number(r.qty)||0);
+  }
+  return map;
+}
+
 /** ตั้งช่วงวันพร้อมไฮไลต์ปุ่มที่ตรงกับค่านั้น — ไม่วาดจอ ผู้เรียกวาดเอง
  *  (ตอน init ต้องตั้งค่าก่อน state พร้อม จึงยังวาดไม่ได้) */
 function setDashRange(from, to, kind){
@@ -3271,7 +3289,7 @@ function renderDashScoped(){ renderWipCards(); renderDashTable(); }
 function renderDashTable(){
   const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
   const splitMap = buildCumSplitMap(state.records, orderById);
-  const rangeCum = buildCumMap(dashRangeRecords());
+  const rangeMap = buildRangeMap(dashRangeRecords());
   const rows = dashFilteredRows();
 
   /* รวมเป็นราย P/N + Sub-Name — เจ้าของสั่ง 5 พ.ย. 2026 ("ข้อมูลเยอะเกินกว่าจะเรียกการมองภาพรวม")
@@ -3292,14 +3310,15 @@ function renderDashTable(){
     const q = Number(o.orderQty) || 0;
     const key = pn + '|' + unit;
     let g = groups.get(key);
-    if(!g){ g = {pn, unit, qty:0, n:0, cum:emptyCum(), range:emptyCum(), split:{}, anomaly:false, over:false}; groups.set(key, g); }
+    if(!g){ g = {pn, unit, qty:0, n:0, cum:emptyCum(), range:{}, split:{}, anomaly:false, over:false}; groups.set(key, g); }
     g.qty += q;
     g.n++;
     if(hasOrderAnomaly(c)) g.anomaly = true;
     PROCESSES.forEach(p=>{
       const sp = (splitMap[o.id] || {})[p] || {}, cap = MAIN_PROCESSES.includes(p) ? q : Infinity;
       g.cum[p] += Math.min(c[p]||0, cap);
-      g.range[p] += (rangeCum[o.id] || {})[p] || 0;
+      const rv = (rangeMap[o.id] || {})[p];
+      if(rv != null) g.range[p] = (g.range[p] == null ? 0 : g.range[p]) + rv;
       if((c[p]||0) > cap) g.over = true;
       const on = Math.min(sp.onTime || 0, cap);
       g.split[p] = g.split[p] || {onTime:0, late:0};
@@ -3320,9 +3339,16 @@ function renderDashTable(){
       <td class="left">${escapeHtml(g.unit)}</td>
       <td>${numFmt(g.n)}</td>
       <td>${numFmt(g.qty)}</td>
-      ${PROCESSES.map(p=>`<td>${progressCell(g.cum[p]||0, g.split[p], g.qty, g.range[p]||0)}</td>`).join('')}
+      ${PROCESSES.map(p=>`<td>${progressCell(g.cum[p]||0, g.split[p], g.qty, g.range[p])}</td>`).join('')}
     </tr>`).join('');
 
+  /* ⚠️ แถวรวมต้องไม่นับช่องขีด — ขั้นที่ช่วงนั้นไม่มีใครคีย์ขึ้น "—" ไม่ใช่ 0 (กฎจาก CLAUDE.md §1)
+   *    กระทบแรงเป็นพิเศษเพราะค่าตั้งต้นคือ "วันนี้" — เช้าที่ยังไม่มีใครคีย์ แถวรวมทั้งแถว
+   *    จะอ่านว่า "วันนี้ทั้งโรงงานทำได้ 0 ทุกขั้น" ทั้งที่ยังไม่มีใครรายงานเข้ามา (ผู้ตรวจ #120) */
+  const footHtml = PROCESSES.map(p=>{
+    const sum = list.reduce((s, g)=> g.range[p] == null ? s : (s == null ? 0 : s) + g.range[p], null);
+    return `<td>${sum == null ? '—' : numFmt(sum)}</td>`;
+  }).join('');
   document.getElementById('dashTable').innerHTML = `<thead><tr>
       <th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ ไว้ชี้กันตอนคุยหรือตอนดูกระดาษที่พิมพ์ออกมา — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>
       <th>P/N</th><th>Sub-Name</th>
@@ -3330,9 +3356,7 @@ function renderDashTable(){
       <th title="ยอดสั่งรวมของใบที่ผ่านตัวกรองอยู่ตอนนี้">ยอดสั่งรวม</th>
       ${PROCESSES.map(p=>`<th title="เลขตัวใหญ่ = ยอดในช่วงวันที่เลือก · บรรทัดล่าง = ยอดสะสมทั้งหมด/ยอดสั่งรวม">${processHeadHtml(p)}</th>`).join('')}
     </tr></thead><tbody>${bodyHtml || emptyRow(5 + PROCESSES.length)}</tbody>
-    <tfoot><tr><td class="left" colspan="5">รวมยอดในช่วง ${escapeHtml(dashRangeLabel())}</td>
-      ${PROCESSES.map(p=>`<td>${numFmt(list.reduce((s, g)=> s + (g.range[p]||0), 0))}</td>`).join('')}
-    </tr></tfoot>`;
+    <tfoot><tr><td class="left" colspan="5">รวมยอดในช่วง ${escapeHtml(dashRangeLabel())}</td>${footHtml}</tr></tfoot>`;
 }
 
 /** ข้อความบอกช่วงวันที่แถวรวมท้ายตารางกำลังนับ — ต้องมี ไม่งั้นเลขรวมไม่บอกว่าเป็นของช่วงไหน

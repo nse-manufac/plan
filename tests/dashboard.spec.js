@@ -520,9 +520,9 @@ const dashRangeCell = (page, nth = 5) =>
   page.locator('#dashTable tbody tr').first().locator('td').nth(nth)
     .evaluate(td => [td.querySelector('.rq').innerText.trim(), td.querySelector('.small').innerText.trim()]);
 
-/** แถวรวมท้ายตาราง — [ข้อความบอกช่วง, ยอดรวมของขั้นแรก] */
+/** แถวรวมท้ายตาราง — [ข้อความบอกช่วง, ยอดรวมของทุกขั้นเรียงตามคอลัมน์] */
 const dashFoot = page => page.locator('#dashTable tfoot td').evaluateAll(
-  tds => [tds[0].innerText.trim(), tds[1].innerText.trim()]);
+  tds => [tds[0].innerText.trim(), tds.slice(1).map(td => td.innerText.trim())]);
 
 test('ช่วงวันตั้งต้นเป็น "วันนี้" และเลขตัวใหญ่คือยอดของช่วงนั้น ไม่ใช่ยอดสะสม', async ({ page }) => {
   // คีย์ไว้สองวัน: วันนี้ 40 · เมื่อวาน 60 → สะสม 100 แต่ยอดของวันนี้คือ 40
@@ -550,13 +550,39 @@ test('เลือก "ทั้งหมด" แล้วเลขตัวใ�
   await expect(page.locator('#dashPresets button[data-range="today"]')).not.toHaveClass(/primary/);
 });
 
-test('ช่วงที่ไม่มียอดต้องขึ้น "—" ไม่ใช่ 0 — แต่ยอดสะสมยังต้องอยู่ครบ', async ({ page }) => {
+test('ช่วงที่ไม่มียอดต้องขึ้น "—" ไม่ใช่ 0 ทั้งในช่องและในแถวรวม', async ({ page }) => {
   /* "—" กับ "0" อ่านไม่เหมือนกัน · 0 ชวนให้เข้าใจว่าคีย์ไว้ว่าผลิตศูนย์
-     ส่วนช่องที่ไม่มียอดในช่วงนี้แปลว่า "ช่วงนี้ไม่มีการคีย์ของขั้นนี้" */
+     ส่วนช่องที่ไม่มียอดในช่วงนี้แปลว่า "ช่วงนี้ไม่มีการคีย์ของขั้นนี้"
+     ⚠️ ต้องเช็กแถวรวมคู่ไปด้วย — ผู้ตรวจ #120 จับได้ว่าช่องขึ้น "—" แต่แถวรวมเขียน "0"
+        ในคอลัมน์เดียวกัน · ค่าตั้งต้นคือ "วันนี้" จึงเจอทุกเช้าที่ยังไม่มีใครคีย์ */
   await openDash(page, [orderPn('ZZ-1', 'PN-A', 500)],
     [rec('r1', 'ZZ-1|PN-A', 'winding', 60, isoAgo(3))]);
   expect(await dashRangeCell(page), 'ยอดของเมื่อสามวันก่อนไม่อยู่ในช่วง "วันนี้"')
     .toEqual(['—', '60/500']);
+  const [, totals] = await dashFoot(page);
+  expect(totals.every(v => v === '—'), 'ทุกขั้นไม่มีใครคีย์วันนี้ แถวรวมต้องเป็นขีดทั้งแถว')
+    .toBe(true);
+});
+
+test('ยอดที่คีย์ไว้เป็น 0 จริง ต้องขึ้น 0 ไม่ใช่ "—" ทั้งในช่องและในแถวรวม', async ({ page }) => {
+  /* ⚠️ ข้อนี้คือคู่ตรงข้ามของข้อบน และต้องมีคู่กัน — ถ้าเขียนเงื่อนไขเป็น `!v` แทน `== null`
+        ข้อบนจะยังเขียวแต่ข้อนี้แดง · record ยอด 0 เกิดขึ้นเองได้จากการเลือกเหตุผล
+        ตอนยังไม่มียอดในหน้าคีย์ยอด (27 ต.ค. 2026) = "วันนี้ผลิต 0" ซึ่งคนละเรื่องกับ
+        "ยังไม่ได้คีย์" คนละขั้ว (กฎที่เจ้าของเคาะไว้ให้หน้ายอดรายวันทุกขั้น) */
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 500)],
+    [rec('r1', 'ZZ-1|PN-A', 'winding', 0)]);
+  expect(await dashRangeCell(page), 'มีคนคีย์ไว้ว่าวันนี้ผลิต 0 จึงต้องเห็นเลข 0')
+    .toEqual(['0', '0/500']);
+  const [, totals] = await dashFoot(page);
+  expect(totals[0], 'แถวรวมของขั้นที่มีคนคีย์ 0 ต้องเป็น 0 ไม่ใช่ขีด').toBe('0');
+  expect(totals[1], 'ขั้นที่ไม่มีใครคีย์เลยยังเป็นขีด').toBe('—');
+});
+
+test('ยังไม่มีใบสั่งเลย แถวรวมต้องไม่ยืนยันว่าทำได้ 0', async ({ page }) => {
+  // ผู้ตรวจ #120: ตารางขึ้น "ยังไม่มีข้อมูล" แต่แถวรวมเขียน 0 ทุกขั้น
+  await openDash(page, [], []);
+  const [, totals] = await dashFoot(page);
+  expect(totals.every(v => v === '—'), 'ไม่มีใบให้นับ ก็ไม่มีอะไรจะยืนยัน').toBe(true);
 });
 
 test('แถวรวมท้ายตารางต้องเป็นยอดในช่วง และบอกช่วงที่กำลังนับ', async ({ page }) => {
@@ -566,14 +592,14 @@ test('แถวรวมท้ายตารางต้องเป็นย�
     rec('r2', 'ZZ-2|PN-B', 'winding', 30),
     rec('r3', 'ZZ-1|PN-A', 'winding', 900, isoAgo(1))
   ]);
-  const [label, total] = await dashFoot(page);
-  expect(total, 'รวมแต่ยอดของวันนี้').toBe('70');
+  const [label, totals] = await dashFoot(page);
+  expect(totals[0], 'รวมแต่ยอดของวันนี้').toBe('70');
   expect(label, 'ต้องบอกวันที่ที่กำลังนับ ไม่ใช่เลขรวมลอย ๆ').toContain(fmtDateTH(todayISO()));
 
   await page.click('#dashPresets button[data-range="all"]');
   await page.waitForTimeout(200);
-  const [label2, total2] = await dashFoot(page);
-  expect(total2, 'เลือกทั้งหมดแล้วต้องรวมของเมื่อวานด้วย').toBe('970');
+  const [label2, totals2] = await dashFoot(page);
+  expect(totals2[0], 'เลือกทั้งหมดแล้วต้องรวมของเมื่อวานด้วย').toBe('970');
   expect(label2, 'ช่วงที่ไม่จำกัดต้องเขียนเป็นคำ ไม่ใช่เว้นว่าง').toContain('ทุกวัน');
 });
 
