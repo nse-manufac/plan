@@ -429,6 +429,23 @@ test('พิมพ์ตอนซ่อนขั้นอยู่ หัวก�
   expect(meta, 'ไม่งั้นคนอ่านกระดาษจะสรุปว่าขั้นนั้นไม่มียอดเลย').toContain('Inspection');
 });
 
+test('หัวกระดาษต้องบอกช่วงวันด้วย — ช่องเลือกช่วงไม่พิมพ์ติดไป', async ({ page }) => {
+  /* ⚠️ ช่วงวันเป็นตัวกรองเดียวบนหน้านี้ที่ **ติ๊กค่าตั้งต้นมาให้โดยไม่มีใครเลือก** ("วันนี้")
+        และ .row.filters ถูกซ่อนตอนพิมพ์ · คนที่ถือกระดาษหน้ากลางจะเห็นเลขตัวใหญ่ทุกช่อง
+        โดยไม่มีอะไรบอกว่าเป็นของวันไหน (ผู้ตรวจ #120 รันพิสูจน์)
+        คำอธิบายใต้หัวแผงพิมพ์ติดไปและเขียนว่า "ยอดที่คีย์ในช่วงวันที่เลือก" แต่ไม่บอกช่วง */
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100)], [rec('r1', 'ZZ-1|PN-A', 'winding', 40)]);
+  await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+  expect(await page.locator('#printMeta').innerText(), 'ต้องมีช่วงวันบนหัวกระดาษ')
+    .toContain('ยอดในช่วง: ' + fmtDateTH(todayISO()));
+
+  // เลือกช่วงอื่นแล้วหัวกระดาษต้องตามไปด้วย ไม่ค้างที่ "วันนี้"
+  await page.click('#dashPresets button[data-range="all"]');
+  await page.waitForTimeout(200);
+  await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
+  expect(await page.locator('#printMeta').innerText()).toContain('ยอดในช่วง: (ทุกวัน)');
+});
+
 // ── การ์ดสรุปต้องนับชุดเดียวกับตาราง — เจ้าของสั่ง 5 พ.ย. 2026 ──────────
 //
 // ผู้ตรวจ #119 วัดได้ว่าการ์ด "ยอดแผนรวม" กับคอลัมน์ "ยอดสั่งรวม" ต่างกัน (200 กับ 100)
