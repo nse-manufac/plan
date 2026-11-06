@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-05.3">
+<meta name="app-version" content="2026-11-06.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -160,7 +160,9 @@
   #dayProcBtns{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
   #dayProcBtns .day-n{font-weight:700;font-size:15px;}
   #dayProcBtns .day-n.zero{font-weight:400;opacity:.55;}
-  #dayTable tfoot td{font-weight:700;background:var(--gray-light);position:sticky;bottom:0;z-index:1;}
+  #dayTable tfoot td, #dashTable tfoot td{font-weight:700;background:var(--gray-light);position:sticky;bottom:0;z-index:1;}
+  #dashTable .rq{font-size:15px;font-weight:700;}
+  #dashTable .rq.none{font-weight:400;color:var(--text-dim);}
   #entryTable .ship-today{font-size:19px;font-weight:700;width:130px;display:inline-block;
     box-sizing:border-box;padding:10px 8px;}
   /* บนมือถือบีบ "ระยะห่าง" คืน แต่ไม่แตะขนาดตัวอักษร
@@ -224,7 +226,7 @@
     .table-wrap{overflow:visible;max-height:none;}
     table{font-size:10.5px;}
     table th{position:static;}
-    #dayTable tfoot td{position:static;}
+    #dayTable tfoot td, #dashTable tfoot td{position:static;}
     thead{display:table-header-group;}          /* หัวตารางซ้ำทุกหน้า */
     tr{break-inside:avoid;}
     /* แท็บบันทึกยอดรายวัน: พิมพ์เฉพาะตารางรายการที่บันทึกแล้ว ฟอร์มคีย์ยอดไม่ต้องติดไปบนกระดาษ */
@@ -666,7 +668,28 @@
 
   <div class="panel">
     <h2>ความคืบหน้าราย P/N</h2>
+    <div class="desc">หนึ่งแถว = หนึ่ง P/N ต่อหนึ่งหน่วย (รวมทุกใบของ P/N นั้น) ·
+      <b>เลขตัวใหญ่ในช่องของแต่ละขั้น = ยอดที่คีย์ในช่วงวันที่เลือก</b> ·
+      บรรทัดล่างกับแถบ = <b>ยอดสะสมทั้งหมดเทียบยอดสั่งรวม ไม่ขึ้นกับช่วงวัน</b> ·
+      ช่วงวันไม่ตัดแถวทิ้งและไม่แตะการ์ดสรุป · &quot;—&quot; = ช่วงนั้นไม่มียอดของขั้นนี้</div>
     <div class="row filters">
+      <div class="field">
+        <label>ยอดในช่วง — จากวันที่</label>
+        <input type="date" id="dashFrom">
+      </div>
+      <div class="field">
+        <label>ถึงวันที่</label>
+        <input type="date" id="dashTo">
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <div id="dashPresets" style="display:flex;gap:6px;">
+          <button type="button" class="btn small" data-range="today">วันนี้</button>
+          <button type="button" class="btn small" data-range="7">7 วันล่าสุด</button>
+          <button type="button" class="btn small" data-range="month">เดือนนี้</button>
+          <button type="button" class="btn small" data-range="all">ทั้งหมด</button>
+        </div>
+      </div>
       <div class="field">
         <label>สัปดาห์</label>
         <select id="dashWeekFilter"><option value="">ทั้งหมด</option></select>
@@ -881,6 +904,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-05.3"></script>
+<script src="app.js?v=2026-11-06.1"></script>
 </body>
 </html>

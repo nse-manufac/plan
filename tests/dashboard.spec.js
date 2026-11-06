@@ -18,6 +18,9 @@ function todayISO() {
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
 }
 
+/** dd/mm/yyyy — ต้องตรงกับ fmtDateTH() ของแอป (ใช้เทียบข้อความบอกช่วงวัน) */
+const fmtDateTH = iso => iso.split('-').reverse().join('/');
+
 /** ISO ของวันที่ n วันก่อน */
 function isoAgo(n) {
   const d = new Date();
@@ -503,6 +506,100 @@ test('เปลี่ยนตัวกรองช่องไหนก็ต�
   await page.waitForTimeout(200);
   expect((await dashGroups(page)).map(r => r.qty), 'ตารางเหลือใบที่ค้างหน้า Assembly').toEqual(['700']);
   expect((await cardVals(page))[PLAN_CARD], 'ช่องค้างอยู่ที่ขั้นก็ต้องวาดการ์ดใหม่').toBe('700');
+});
+
+// ── ช่วงวัน "ยอดในช่วง" บนแดชบอร์ด (เจ้าของสั่ง 5 พ.ย. 2026 · ใบ 2/2 ของการโละหน้านี้) ──
+//
+// ⚠️ ช่องของแต่ละขั้นมีสองเลขคนละฐานเวลาโดยตั้งใจ (เจ้าของเลือกแบบ G1):
+//    เลขตัวใหญ่ = ยอดที่คีย์ในช่วงวันที่เลือก · บรรทัดล่าง + แถบ = ยอดสะสมทั้งหมดเทียบยอดสั่ง
+//    เทสในกลุ่มนี้ต้องแยกสองเลขนั้นออกจากกันทุกข้อ ไม่ใช่เทียบ innerText ของช่องรวม ๆ
+//    ไม่งั้นเลขหนึ่งพังแล้วอีกเลขกลบไว้ได้
+
+/** [เลขตัวใหญ่ (ยอดในช่วง), บรรทัดล่าง (สะสม/ยอดสั่ง)] ของช่องขั้นแรกในแถวแรก */
+const dashRangeCell = (page, nth = 5) =>
+  page.locator('#dashTable tbody tr').first().locator('td').nth(nth)
+    .evaluate(td => [td.querySelector('.rq').innerText.trim(), td.querySelector('.small').innerText.trim()]);
+
+/** แถวรวมท้ายตาราง — [ข้อความบอกช่วง, ยอดรวมของขั้นแรก] */
+const dashFoot = page => page.locator('#dashTable tfoot td').evaluateAll(
+  tds => [tds[0].innerText.trim(), tds[1].innerText.trim()]);
+
+test('ช่วงวันตั้งต้นเป็น "วันนี้" และเลขตัวใหญ่คือยอดของช่วงนั้น ไม่ใช่ยอดสะสม', async ({ page }) => {
+  // คีย์ไว้สองวัน: วันนี้ 40 · เมื่อวาน 60 → สะสม 100 แต่ยอดของวันนี้คือ 40
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 500)], [
+    rec('r1', 'ZZ-1|PN-A', 'winding', 40),
+    rec('r2', 'ZZ-1|PN-A', 'winding', 60, isoAgo(1))
+  ]);
+  expect(await page.inputValue('#dashFrom'), 'ตั้งต้นที่วันนี้ทั้งสองช่อง').toBe(todayISO());
+  expect(await page.inputValue('#dashTo')).toBe(todayISO());
+  await expect(page.locator('#dashPresets button[data-range="today"]'),
+    'ปุ่มที่ตรงกับช่วงต้องไฮไลต์ ไม่งั้นจอไม่บอกว่ากำลังยึดช่วงไหน').toHaveClass(/primary/);
+  expect(await dashRangeCell(page), 'เลขตัวใหญ่ = ยอดวันนี้ · บรรทัดล่าง = สะสมทั้งหมด')
+    .toEqual(['40', '100/500']);
+});
+
+test('เลือก "ทั้งหมด" แล้วเลขตัวใหญ่ต้องเป็นยอดรวมทุกวัน ส่วนยอดสะสมไม่ขยับ', async ({ page }) => {
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 500)], [
+    rec('r1', 'ZZ-1|PN-A', 'winding', 40),
+    rec('r2', 'ZZ-1|PN-A', 'winding', 60, isoAgo(1))
+  ]);
+  await page.click('#dashPresets button[data-range="all"]');
+  await page.waitForTimeout(200);
+  expect(await page.inputValue('#dashFrom'), '"ทั้งหมด" = ล้างช่องวันที่ ไม่ใช่ใส่วันเก่าสุด').toBe('');
+  expect(await dashRangeCell(page)).toEqual(['100', '100/500']);
+  await expect(page.locator('#dashPresets button[data-range="today"]')).not.toHaveClass(/primary/);
+});
+
+test('ช่วงที่ไม่มียอดต้องขึ้น "—" ไม่ใช่ 0 — แต่ยอดสะสมยังต้องอยู่ครบ', async ({ page }) => {
+  /* "—" กับ "0" อ่านไม่เหมือนกัน · 0 ชวนให้เข้าใจว่าคีย์ไว้ว่าผลิตศูนย์
+     ส่วนช่องที่ไม่มียอดในช่วงนี้แปลว่า "ช่วงนี้ไม่มีการคีย์ของขั้นนี้" */
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 500)],
+    [rec('r1', 'ZZ-1|PN-A', 'winding', 60, isoAgo(3))]);
+  expect(await dashRangeCell(page), 'ยอดของเมื่อสามวันก่อนไม่อยู่ในช่วง "วันนี้"')
+    .toEqual(['—', '60/500']);
+});
+
+test('แถวรวมท้ายตารางต้องเป็นยอดในช่วง และบอกช่วงที่กำลังนับ', async ({ page }) => {
+  // สอง P/N คนละแถว คีย์วันนี้ 40 กับ 30 → รวม 70 · ของเมื่อวานต้องไม่ถูกนับ
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 500), orderPn('ZZ-2', 'PN-B', 500)], [
+    rec('r1', 'ZZ-1|PN-A', 'winding', 40),
+    rec('r2', 'ZZ-2|PN-B', 'winding', 30),
+    rec('r3', 'ZZ-1|PN-A', 'winding', 900, isoAgo(1))
+  ]);
+  const [label, total] = await dashFoot(page);
+  expect(total, 'รวมแต่ยอดของวันนี้').toBe('70');
+  expect(label, 'ต้องบอกวันที่ที่กำลังนับ ไม่ใช่เลขรวมลอย ๆ').toContain(fmtDateTH(todayISO()));
+
+  await page.click('#dashPresets button[data-range="all"]');
+  await page.waitForTimeout(200);
+  const [label2, total2] = await dashFoot(page);
+  expect(total2, 'เลือกทั้งหมดแล้วต้องรวมของเมื่อวานด้วย').toBe('970');
+  expect(label2, 'ช่วงที่ไม่จำกัดต้องเขียนเป็นคำ ไม่ใช่เว้นว่าง').toContain('ทุกวัน');
+});
+
+test('ช่วงวันต้องไม่ตัดแถวทิ้ง และต้องไม่แตะการ์ดสรุป', async ({ page }) => {
+  /* ⚠️ ข้อนี้คือกฎที่ #119 ใช้สามรอบแก้ — การ์ดกับตารางต้องนับใบชุดเดียวกัน
+        ช่วงวันเป็นเรื่องของ "ยอด" ไม่ใช่ "ใบ" · ถ้าวันหนึ่งมันตัดแถว การ์ดจะขัดกับตารางทันที */
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-B', 700)],
+    [rec('r1', 'ZZ-1|PN-A', 'winding', 10, isoAgo(30))]);
+  const rows = await dashGroups(page);
+  expect(rows.length, 'ไม่มีใบไหนคีย์ยอดในช่วง "วันนี้" แต่ทุกแถวต้องยังอยู่').toBe(2);
+  expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องเท่ากับยอดสั่งรวมของทุกแถวเหมือนเดิม')
+    .toBe('800');
+
+  await page.click('#dashPresets button[data-range="all"]');
+  await page.waitForTimeout(200);
+  expect((await dashGroups(page)).length, 'เปลี่ยนช่วงแล้วจำนวนแถวต้องไม่เปลี่ยน').toBe(2);
+  expect((await cardVals(page))[PLAN_CARD], 'และการ์ดต้องไม่ขยับตามช่วงวัน').toBe('800');
+});
+
+test('ยอดในช่วงต้องไม่ถูกครอบที่ยอดสั่ง ต่างจากยอดสะสม', async ({ page }) => {
+  /* ยอดสะสม = "เดินไปถึงไหนของใบนี้" จึงครอบที่ยอดสั่ง (กฎจาก #119)
+     ยอดในช่วง = "ช่วงนี้ทำได้เท่าไหร่" ซึ่งเกินยอดสั่งได้จริง ครอบแล้วจะโกหกว่าทำได้น้อยกว่าจริง */
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100)],
+    [rec('r1', 'ZZ-1|PN-A', 'winding', 150)]);
+  expect(await dashRangeCell(page), 'เลขตัวใหญ่ 150 ไม่ครอบ · บรรทัดล่าง 100/100 ครอบ')
+    .toEqual(['150', '100/100']);
 });
 
 test('ยอดสั่งที่เป็นข้อความ การ์ดต้องบวกเป็นเลข', async ({ page }) => {
