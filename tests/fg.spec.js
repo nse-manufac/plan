@@ -369,8 +369,10 @@ async function openDash(page, orders, records = []) {
   await page.click('.tab-btn[data-tab="dashboard"]');
   await page.waitForTimeout(250);
 }
-const dashRow = (page, po) =>
-  page.locator('#dashTable tbody tr').filter({ hasText: po }).innerText();
+/* แดชบอร์ดรวมเป็นราย P/N แล้ว (เจ้าของสั่ง 5 พ.ย. 2026) — ไม่มีเลข PO ให้เกาะ
+   อ่านค่าจาก attribute ไม่ใช่ข้อความในช่อง เพราะช่อง P/N มีป้าย ⚠ ผิดลำดับ ปนได้ */
+const dashPnRow = (page, pn) =>
+  page.locator('#dashTable tbody tr').filter({ has: page.locator(`td[data-pn="${pn}"]`) }).innerText();
 
 test('Dashboard คอลัมน์ Shipping โชว์ยอดส่งสะสมเทียบ Order Qty ไม่ใช่ FG คงเหลือ', async ({ page }) => {
   // ผ่าน Inspection 3,000 · ส่งไปแล้ว 1,200 → ถ้ายังเป็น FG คงเหลือจะเห็น 1,800
@@ -378,7 +380,10 @@ test('Dashboard คอลัมน์ Shipping โชว์ยอดส่งส
     rec('r1', 'PO-D1|' + PN_A, 'inspection', 3000),
     rec('r2', 'PO-D1|' + PN_A, 'shipping', 1200, '2026-08-22')
   ]);
-  const cell = await page.locator('#dashTable tbody tr').filter({ hasText: 'PO-D1' }).locator('td').nth(12).innerText();
+  // Item No. · P/N · Sub-Name · ใบ · ยอดสั่งรวม แล้วจึงเป็นห้าขั้น → Shipping อยู่ที่ 9
+  // ⚠️ ผูกกับแถวของ P/N นี้ ไม่ใช่ td ลำดับที่ 9 ของทุกแถวรวมกัน — เติมใบที่สองทีหลังจะอ่านผิดแถวเงียบ ๆ
+  const cell = await page.locator('#dashTable tbody tr')
+    .filter({ has: page.locator(`td[data-pn="${PN_A}"]`) }).locator('td').nth(9).innerText();
   expect(cell, 'ยอดส่ง / Order Qty').toContain('1,200/5,000');
   expect(cell, 'ต้องไม่ใช่ FG คงเหลือ').not.toContain('1,800');
   await expect(page.locator('#dashTable thead')).toContainText('Shipping');
@@ -387,15 +392,16 @@ test('Dashboard คอลัมน์ Shipping โชว์ยอดส่งส
 
 test('ตัวกรอง "ซ่อนงานที่ส่งของครบแล้ว" ต้องยังทำงานเหมือนเดิม', async ({ page }) => {
   // ใบนี้ส่งครบแล้วแต่ FG เป็น 0 — ถ้าใครเผลอเอา FG ไปใช้ตัดสินแทนยอดส่ง ตัวกรองจะพัง
-  await openDash(page, [order('PO-D1', PN_A, 5000), order('PO-D2', PN_A, 5000)], [
+  // ⚠️ สอง P/N ไม่ซ้ำกัน — แดชบอร์ดรวมแถวตาม P/N แล้ว ถ้าใช้ P/N เดียวกันทั้งคู่
+  //    แถวจะไม่หายไปแม้ตัวกรองทำงานถูก (เหลืออีกใบอยู่ในกลุ่มเดียวกัน) แล้วเทสจะแดงทั้งที่โค้ดถูก
+  await openDash(page, [order('PO-D1', PN_A, 5000), order('PO-D2', PN_B, 5000)], [
     rec('r1', 'PO-D1|' + PN_A, 'inspection', 5000),
     rec('r2', 'PO-D1|' + PN_A, 'shipping', 5000, '2026-08-22')
   ]);
   await page.locator('#dashHideDone').check();
   await page.waitForTimeout(200);
-  const body = await page.locator('#dashTable tbody').innerText();
-  expect(body, 'ใบที่ส่งครบแล้วต้องถูกซ่อน').not.toContain('PO-D1');
-  expect(body, 'ใบที่ยังไม่ส่งต้องยังอยู่').toContain('PO-D2');
+  const pns = await page.locator('#dashTable tbody td[data-pn]').evaluateAll(es => es.map(e => e.dataset.pn));
+  expect(pns, 'ใบที่ส่งครบแล้วต้องถูกซ่อน · ใบที่ยังไม่ส่งต้องยังอยู่').toEqual([PN_B]);
 });
 
 test('การ์ดสรุปด้านบนต้องยังนับยอดที่ส่งไปแล้วเหมือนเดิม', async ({ page }) => {
@@ -414,7 +420,7 @@ test('ส่งเกินที่ผ่าน Inspection — Dashboard ต้
     rec('r1', 'PO-D1|' + PN_A, 'inspection', 400),
     rec('r2', 'PO-D1|' + PN_A, 'shipping', 900, '2026-08-22')
   ]);
-  const r = await dashRow(page, 'PO-D1');
+  const r = await dashPnRow(page, PN_A);
   expect(r, 'ยอดส่งตามจริง ไม่ครอบให้เท่า Inspection').toContain('900/5,000');
   expect(r, 'และบอกว่ายอดย้อนแย้งกัน').toContain('ผิดลำดับ');
 });

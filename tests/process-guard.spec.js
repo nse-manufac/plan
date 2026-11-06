@@ -62,7 +62,9 @@ test('ยอดของขั้นที่รู้จักยังต้�
   await open(page, [rec('r1', 'winding', 500), rec('r2', 'coating', 300)]);
   await page.click('.tab-btn[data-tab="dashboard"]');
   await page.waitForTimeout(200);
-  const row = await page.locator('#dashTable tbody tr', { hasText: 'PO-1' }).innerText();
+  // แดชบอร์ดรวมเป็นราย P/N แล้ว — เกาะ data-pn ไม่ใช่เลข PO (เจ้าของสั่ง 5 พ.ย. 2026)
+  const row = await page.locator('#dashTable tbody tr')
+    .filter({ has: page.locator('td[data-pn="PN-1"]') }).innerText();
   expect(row, 'Winding ยังเป็น 500').toContain('500/1,000');
 });
 

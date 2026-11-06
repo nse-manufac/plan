@@ -9,6 +9,7 @@
 
 const { test, expect } = require('@playwright/test');
 const { waitReady, readSaved } = require('./app-state');
+const { appSources } = require('./app-source');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -120,18 +121,29 @@ test('Aging = จำนวนวันนับจากวันสั่งถ
   expect(await badge('PO-LATE').getAttribute('class'), 'เกินกำหนด').toContain('red');
 });
 
-test('Aging บนหน้านี้ต้องตรงกับ Dashboard ทั้งตัวเลขและสี', async ({ page }) => {
-  // สองหน้าคิดคนละที่เมื่อไหร่ ใบเดียวกันจะขึ้นอายุงานไม่ตรงกัน แล้วคนจะเลิกเชื่อทั้งสองหน้า
+test('Aging ต้องมีที่เดียว — หน้าอื่นห้ามคิดซ้ำ', async ({ page }) => {
+  /* เดิมข้อนี้เทียบช่อง Aging ของหน้านี้กับของ Dashboard ตัวอักษรต่อตัวอักษร
+     เพราะสองหน้าคิดคนละที่เมื่อไหร่ ใบเดียวกันจะขึ้นอายุงานไม่ตรงกัน แล้วคนจะเลิกเชื่อทั้งสองหน้า
+
+     5 พ.ย. 2026 เจ้าของสั่งตัดคอลัมน์ Aging ออกจาก Dashboard (รวมเป็นราย P/N แล้ว
+     อายุงานเป็นของราย PO) · เหลือที่เดียวจึงไม่มีอะไรให้เทียบ
+     ข้อนี้เปลี่ยนไปคุม **กฎเดิมข้อเดียวกัน** จากอีกด้าน: ห้ามมีหน้าที่สองวาดช่องนี้
+     ถ้าวันหนึ่งมีคนเติมกลับมา ข้อนี้แดงทันที แล้วค่อยกลับไปเทียบตัวอักษรเหมือนเดิม
+     ส่วนตัวเลขกับสีของหน้านี้ มีข้อ "Aging ต้องบอกอายุงาน..." ข้างบนคุมไว้แล้ว */
+  /* ⚠️ นับที่ซอร์ส ไม่ใช่บนจอ — การไล่กดทุกแท็บแล้วนับ element ที่เจอ "เขียวเอง" ได้
+     เพราะตารางของแท็บที่ยังไม่มีข้อมูลเป็นตารางว่าง (ลองแล้ว: แทรก data-aging ลงหน้า
+     ยอดรายวันจริง ๆ แล้วเทสแบบนั้นยังเขียว) · ตรวจทุกไฟล์ที่หน้าโหลด ไม่ใช่แค่ HTML */
+  const hits = appSources().flatMap(({ file, text }) => text.split('\n')
+    .map((line, i) => ({ line: line.trim(), no: `${file}:${i + 1}`, n: (line.match(/data-aging/g) || []).length }))
+    .filter(x => x.n));
+  const total = hits.reduce((a, x) => a + x.n, 0);
+  expect(hits.map(x => `${x.no}: ${x.line.slice(0, 120)}`), 'ช่อง Aging ต้องถูกวาดที่เดียว').toHaveLength(1);
+  expect(total, 'บรรทัดเดียวแต่วาดสองช่องก็ไม่ได้').toBe(1);
+
+  // และที่เดียวนั้นต้องเป็นหน้านี้ ไม่ใช่หน้าอื่น
   const orders = [order('PO-A', 1000, 'TUE-U', daysAgo(26)), order('PO-B', 1000, 'TUE-U', daysAgo(40))];
   await openEntry(page, orders);
-  const entry = {};
-  for (const po of ['PO-A', 'PO-B']) entry[po] = await cellOf(page, po, 'aging').innerHTML();
-  await page.click('.tab-btn[data-tab="dashboard"]');
-  await page.waitForTimeout(250);
-  for (const po of ['PO-A', 'PO-B']) {
-    const dash = await page.locator('#dashTable tbody tr', { hasText: po }).locator('td[data-aging]').innerHTML();
-    expect(entry[po], po).toBe(dash);
-  }
+  expect(await page.locator('#entryTable [data-aging]').count(), 'หน้านี้ต้องยังมี').toBe(2);
 });
 
 test('Aging ต้องนับถึงวันนี้ ไม่ใช่วันที่เลือกคีย์ย้อนหลัง', async ({ page }) => {

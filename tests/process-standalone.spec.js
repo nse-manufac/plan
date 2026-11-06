@@ -47,6 +47,16 @@ async function open(page, { records = RECORDS, offsets = OFFSETS, processes = nu
 }
 const tab = async (page, name) => { await page.click(`.tab-btn[data-tab="${name}"]`); await page.waitForTimeout(200); };
 
+/* ป้ายสถานะของใบย้ายจากแดชบอร์ดไปหน้า "ยอดรายวันทุกขั้น" ตอนแดชบอร์ดรวมเป็นราย P/N
+   (เจ้าของสั่ง 5 พ.ย. 2026) · ⚠️ เช็กที่แดชบอร์ดต่อจะเขียวเองทั้งที่ไม่ได้ตรวจอะไร
+   ติ๊ก "แสดงทุกใบ" เพราะหน้านี้ตั้งต้นโชว์เฉพาะใบที่คีย์ยอดของวันนั้นไว้ */
+const dayStatuses = async page => {
+  await tab(page, 'daily');
+  await page.locator('#dayShowAll').setChecked(true);
+  await page.waitForTimeout(250);
+  return (await page.locator('#dayTable tbody tr td:last-child').allInnerTexts()).join(' · ');
+};
+
 // ── ขั้นนับแยกต้องไม่ถูกนับเป็นส่วนหนึ่งของสายการผลิต ──────────────
 
 test('A3 — ขั้นนับแยกต้องไม่กลายเป็นขั้นก่อนหน้าของขั้นถัดไป', async ({ page }) => {
@@ -83,6 +93,36 @@ test('A3 — ตัวกรอง "ค้างอยู่ที่ขั้�
   expect(opts).toContain('assembly');
 });
 
+/* แดชบอร์ดราย P/N ครอบยอดที่ orderQty และขึ้นป้ายเมื่อมีใบคีย์เกิน (เจ้าของเคาะ 5 พ.ย. 2026)
+   ⚠️ เกณฑ์ของทั้งสองอย่างคือ orderQty ซึ่งไม่ใช่เกณฑ์ของขั้นนับแยก — งานซ่อมเกินยอดสั่งเป็นเรื่องปกติ
+      สองข้อนี้ต้องมีคู่กัน: ข้อแรกกันการอ่าน PROCESSES · ข้อสองกันการถอดป้ายทิ้งทั้งก้อน */
+
+const dashCell = async (page, head) => {
+  const heads = await page.locator('#dashTable thead th').allInnerTexts();
+  const i = heads.findIndex(h => h.includes(head));
+  expect(i, `หาหัวคอลัมน์ ${head} ไม่เจอ`).toBeGreaterThan(-1);
+  return page.locator('#dashTable tbody tr').first().locator('td').nth(i).innerText();
+};
+
+test('A3 — ขั้นนับแยกที่คีย์เกินยอดสั่ง ต้องไม่ถูกครอบและไม่ขึ้นป้าย "คีย์เกินยอดสั่ง"', async ({ page }) => {
+  // ใบยอดสั่ง 1,000 · คีย์งานซ่อมไว้ 1,500 ซึ่งปกติสำหรับขั้นนับแยก
+  await open(page, { records: [rec('r1', 'winding', 800), rec('r2', 'repair', 1500)] });
+  await tab(page, 'dashboard');
+  expect(await dashCell(page, 'ซ่อม'), 'ยอดของขั้นนับแยกห้ามถูกครอบ — ครอบแล้วยอดจริงหายจากจอ')
+    .toContain('1,500/1,000');
+  await expect(page.locator('#dashTable tbody'),
+    'ป้ายนี้มีไว้ฟ้องการคีย์ผิดของสายหลัก ขึ้นกับงานซ่อมทุกวันแล้วจะไม่มีใครอ่าน')
+    .not.toContainText('คีย์เกินยอดสั่ง');
+});
+
+test('A3 — ขั้นสายหลักที่คีย์เกินยอดสั่ง ยังต้องถูกครอบและยังขึ้นป้ายตามเดิม', async ({ page }) => {
+  // ฉากเดียวกันแต่ยอดเกินอยู่ที่ Winding ซึ่งเป็นสายหลัก — มีขั้นนับแยกอยู่ในรายการด้วย
+  await open(page, { records: [rec('r1', 'winding', 1500), rec('r2', 'repair', 100)] });
+  await tab(page, 'dashboard');
+  expect(await dashCell(page, 'Winding'), 'สายหลักยังครอบที่ยอดสั่ง').toContain('1,000/1,000');
+  await expect(page.locator('#dashTable tbody')).toContainText('คีย์เกินยอดสั่ง');
+});
+
 test('A5 — ขั้นนับแยกที่เลยกำหนดแล้ว ต้องไม่ทำให้ใบขึ้นล่าช้า', async ({ page }) => {
   // สายหลักเสร็จหมดยกเว้น shipping ที่ยังไม่ถึงกำหนด · repair คีย์ไว้ 500 จาก 1000 และเลยกำหนดไปแล้ว
   // ถ้า repair ถูกนับในลูปตัดสินล่าช้า ใบนี้จะขึ้น "ล่าช้า ซ่อม" ทั้งที่ยอดของมันไม่เกี่ยวกับ orderQty
@@ -91,10 +131,9 @@ test('A5 — ขั้นนับแยกที่เลยกำหนดแ�
       rec('r4', 'inspection', 1000), rec('r5', 'shipping', 999), rec('r6', 'repair', 500)],
     offsets: { winding: 10, assembly: 17, support: 20, inspection: 24, shipping: 28, repair: 1 }
   });
-  await tab(page, 'dashboard');
-  const body = page.locator('#dashTable tbody');
-  await expect(body).not.toContainText('ล่าช้า ซ่อม');
-  await expect(body).toContainText('กำลังดำเนินการ');
+  const body = await dayStatuses(page);
+  expect(body).not.toContain('ล่าช้า ซ่อม');
+  expect(body).toContain('กำลังดำเนินการ');
 });
 
 // ── สิ่งที่ขั้นนับแยกยังต้องได้เหมือนขั้นอื่น ────────────────────────

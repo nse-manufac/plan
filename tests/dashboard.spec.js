@@ -107,12 +107,86 @@ test('กราฟต้องนับเฉพาะ Sub-Name ที่เล�
   expect(await barToday(page, 'winding'), 'กลับไป "ทั้งหมด" ต้องได้ยอดรวมคืนครบ').toBe(370);
 });
 
-test('ตารางรายใบต้องยังกรองตาม Sub-Name เหมือนเดิม', async ({ page }) => {
+// ── รวมเป็นราย P/N — เจ้าของสั่ง 5 พ.ย. 2026 ────────────────────────
+//
+// "ข้อมูลเยอะเกินไปเกินกว่าที่จะเรียกการมองภาพรวม" — หนึ่งแถว = หนึ่ง P/N ต่อหนึ่งหน่วย
+// กุญแจกลุ่มเหมือน fgRows() ทุกตัวอักษร เพราะเป็นคำถามเดียวกัน ("ของรุ่นนี้ของหน่วยนี้")
+
+/** ใบสั่งที่กำหนด P/N กับยอดเองได้ รวมถึง "ชนิดข้อมูล" ของสองค่านั้น — order() ข้างบนตรึง PN ไว้ตัวเดียว */
+const orderPn = (poNo, pn, qty, unit = 'TUE-U') => ({
+  id: poNo + '|' + pn, week: 'WK 34', poNo, pn, subName: unit, orderQty: qty,
+  orderDate: '2026-08-03', status: 'active',
+  importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false
+});
+/** ทุกแถวบนตาราง — เกาะ data-pn ไม่ใช่ข้อความในช่อง (ช่องนั้นมีป้าย ⚠ ผิดลำดับ ปนได้) */
+const dashGroups = page => page.locator('#dashTable tbody tr').evaluateAll(trs => trs.map(tr => {
+  const td = tr.querySelectorAll('td');
+  return { pn: td[1].dataset.pn, unit: td[2].innerText.trim(),
+           n: td[3].innerText.trim(), qty: td[4].innerText.trim(),
+           winding: td[5].innerText.trim() };
+}));
+
+test('สองใบของ P/N เดียวกันในหน่วยเดียวกัน ต้องรวมเป็นแถวเดียว', async ({ page }) => {
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-A', 100)]);
+  const g = await dashGroups(page);
+  expect(g.length, 'สองใบต้องเหลือแถวเดียว').toBe(1);
+  expect(g[0].n, 'ช่อง "ใบ" บอกว่ารวมมาจากกี่ใบ').toBe('2');
+  expect(g[0].qty, 'ยอดสั่งรวมของทั้งกลุ่ม').toBe('200');
+});
+
+test('ยอดสะสมต้องครอบ min(สะสม, ยอดสั่ง) ต่อใบ ก่อนบวกกัน — ให้ตรงกับการ์ด WIP', async ({ page }) => {
+  // ใบแรกคีย์เกินยอดสั่ง (150 จาก 100) · ใบที่สอง 50 จาก 100
+  // ครอบต่อใบ → 100 + 50 = 150 · ถ้าบวกก่อนแล้วค่อยครอบจะได้ 200/200 = เต็มทั้งที่ยังไม่เสร็จ
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-A', 100)],
+    [rec('r1', 'ZZ-1|PN-A', 'winding', 150), rec('r2', 'ZZ-2|PN-A', 'winding', 50)]);
+  const g = await dashGroups(page);
+  expect(g[0].winding).toContain('150/200');
+  expect(await page.locator('#wipCards').innerText(), 'ต้องตรงกับการ์ด WIP').toContain('150');
+});
+
+test('P/N เดียวกันแต่คนละหน่วย ต้องเป็นคนละแถว ยอดห้ามปนกัน', async ({ page }) => {
+  // P/N เดียวอยู่สองนิติบุคคลได้ — รวมข้ามหน่วยแล้วยอดของสองบริษัทปนกัน
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100, 'TUE-U'), orderPn('ZZ-2', 'PN-A', 700, 'TUE-H')]);
+  const g = await dashGroups(page);
+  expect(g.map(x => [x.unit, x.qty])).toEqual([['TUE-H', '700'], ['TUE-U', '100']]);
+});
+
+test('P/N ที่เป็นตัวเลขกับที่เป็นข้อความ ต้องรวมกันได้และยังเรียงแถวได้ (เครื่องที่ซิงค์มา)', async ({ page }) => {
+  /* เครื่องที่รับข้อมูลจากการซิงค์ได้ P/N เป็นตัวเลข ส่วนเครื่องที่นำเข้าไฟล์เองได้เป็นข้อความ
+     (บั๊กที่เจอ 1 ก.ย. 2026) — โค้ดจึงแปลงเป็นข้อความก่อนทำกุญแจ แบบเดียวกับ fgRows()
+
+     ⚠️ ฉากต้องเป็น "P/N เป็นตัวเลขทุกใบ และมีสองกลุ่มขึ้นไป" ไม่งั้นข้อนี้ไม่ได้ตรวจอะไรเลย
+        · กุญแจ `pn + '|' + unit` JS แปลงเลขเป็นข้อความให้เองตอนต่อสตริง สองใบจึงรวมกันอยู่ดี
+        · `escapeHtml()` ก็ครอบ String() ไว้แล้ว ช่องบนจอจึงออกมาเหมือนกัน
+        สิ่งที่ String() กันจริงคือ `a.pn.localeCompare(b.pn)` ตอนเรียงแถว — ตัวเลขไม่มีเมธอดนี้
+        ทั้งตารางจึงว่างทั้งหน้า · และเครื่องที่ซิงค์มาได้ตัวเลข **ทุกใบ** (มาจากชีตเดียวกัน)
+        ฉากนี้จึงเป็นของจริง ไม่ใช่ฉากที่แต่งให้พัง
+        (ฉบับแรกของเทสข้อนี้ใช้กลุ่มเดียว ถอด String() ออกแล้วยังเขียว — รันพิสูจน์แล้ว) */
+  await openDash(page, [orderPn('ZZ-1', 9000000002, 100), orderPn('ZZ-2', '9000000002', 100),
+    orderPn('ZZ-3', 9000000004, 700)]);
+  const g = await dashGroups(page);
+  expect(g.map(x => [x.pn, x.n, x.qty]), 'P/N เดียวต้องเป็นแถวเดียว และเรียงได้')
+    .toEqual([['9000000002', '2', '200'], ['9000000004', '1', '700']]);
+});
+
+test('ยอดสั่งที่เป็นข้อความต้องบวกเป็นเลข ไม่ใช่ต่อสตริง (ผู้ตรวจ #119)', async ({ page }) => {
+  // เหตุผลเดียวกับ P/N ข้างบน — '100' + 100 ได้ '100100' ไม่ใช่ 200
+  // ตอนเป็นแถวราย PO ไม่เคยโผล่ เพราะ numFmt() แปลงให้ก่อนแสดงทีละใบ
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', '100'), orderPn('ZZ-2', 'PN-A', 100)],
+    [rec('r1', 'ZZ-1|PN-A', 'winding', 150), rec('r2', 'ZZ-2|PN-A', 'winding', 50)]);
+  const g = await dashGroups(page);
+  expect(g[0].qty, 'ต้องเป็น 200 ไม่ใช่ 100,100').toBe('200');
+  expect(g[0].winding, 'แถบความคืบหน้าก็ต้องเทียบกับ 200').toContain('150/200');
+});
+
+test('ตารางราย P/N ต้องยังกรองตาม Sub-Name เหมือนเดิม', async ({ page }) => {
   await openDash(page, ORDERS, RECORDS);
   await pickSub(page, 'TUE-U');
+  // สองใบนี้ P/N เดียวกัน ต่างกันที่หน่วย — แดชบอร์ดรวมแถวด้วย P/N + Sub-Name
+  // จึงยังเป็นสองแถว และตัวกรองต้องเหลือแถวของหน่วยที่เลือกเท่านั้น
   const body = await page.locator('#dashTable tbody').innerText();
-  expect(body).toContain('PO-U1');
-  expect(body, 'ใบของอีกหน่วยต้องหายไป').not.toContain('PO-H1');
+  expect(body).toContain('TUE-U');
+  expect(body, 'แถวของอีกหน่วยต้องหายไป').not.toContain('TUE-H');
 });
 
 /** ความกว้างที่กราฟวาดจริง เทียบกับกล่องที่มันอยู่ */
@@ -350,4 +424,92 @@ test('พิมพ์ตอนซ่อนขั้นอยู่ หัวก�
   await page.evaluate(() => window.dispatchEvent(new Event('beforeprint')));
   const meta = await page.locator('#printMeta').innerText();
   expect(meta, 'ไม่งั้นคนอ่านกระดาษจะสรุปว่าขั้นนั้นไม่มียอดเลย').toContain('Inspection');
+});
+
+// ── การ์ดสรุปต้องนับชุดเดียวกับตาราง — เจ้าของสั่ง 5 พ.ย. 2026 ──────────
+//
+// ผู้ตรวจ #119 วัดได้ว่าการ์ด "ยอดแผนรวม" กับคอลัมน์ "ยอดสั่งรวม" ต่างกัน (200 กับ 100)
+// ตั้งแต่เปิดโปรแกรม เพราะการ์ดกรองแค่ Sub-Name แต่ตารางกรองครบทุกช่อง
+// และ "ซ่อนงานที่ส่งของครบแล้ว" ติ๊กไว้เป็นค่าตั้งต้น
+//
+// ⚠️ ต้องเทียบ "การ์ดกับตาราง" ไม่ใช่ "การ์ดกับเลขที่เขียนไว้ในเทส" — เลขตายตัวจะเขียว
+//    ทั้งที่สองที่บนจอขัดกัน ถ้าวันหนึ่งมีคนเปลี่ยนนิยามของฝั่งตารางไปอีกทาง
+
+/** ป้าย → ค่าบนการ์ดทุกใบ (ตัดหน่วยที่อยู่ใน <span> ท้ายค่าออก) */
+const cardVals = page => page.locator('#wipCards .card').evaluateAll(els => {
+  const out = {};
+  els.forEach(el => {
+    out[el.querySelector('.label').textContent.trim()] =
+      el.querySelector('.value').childNodes[0].textContent.trim();
+  });
+  return out;
+});
+const PLAN_CARD = 'ยอดแผนรวม (Order Qty)';
+
+test('การ์ดต้องไม่นับใบที่ตารางซ่อนไว้เพราะส่งของครบแล้ว', async ({ page }) => {
+  await openDash(page,
+    [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-A', 100)],
+    [rec('s1', 'ZZ-2|PN-A', 'shipping', 100)]);
+  const rows = await dashGroups(page);
+  expect(rows.map(r => [r.n, r.qty]), 'ค่าตั้งต้นซ่อนใบที่ส่งครบ จึงเหลือใบเดียว').toEqual([['1', '100']]);
+  expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องได้เลขเดียวกับคอลัมน์ยอดสั่งรวม')
+    .toBe(rows[0].qty);
+  expect(await page.locator('#wipScopeNote').innerText(), 'และต้องบอกว่ากำลังนับกี่ใบ')
+    .toContain('1 ใบ');
+
+  // ปลดติ๊กแล้วสองที่ต้องขยับพร้อมกัน = พิสูจน์ว่าช่องนี้วาดการ์ดใหม่ด้วย ไม่ใช่แค่ตาราง
+  await page.locator('#dashHideDone').setChecked(false);
+  await page.waitForTimeout(200);
+  const rows2 = await dashGroups(page);
+  expect(rows2.map(r => [r.n, r.qty]), 'ปลดติ๊กแล้วเห็นครบสองใบ').toEqual([['2', '200']]);
+  expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องตามมาด้วย').toBe(rows2[0].qty);
+});
+
+/* ⚠️ ต้องไล่ **ทุกช่อง** ตามชื่อข้อ — ผู้ตรวจ #119 รอบหกทักว่าข้อนี้เคยครอบแค่ `สัปดาห์`
+      กับ `ค้นหา` ส่วน `สถานะ` กับ `ค้างอยู่ที่ขั้น` (สองช่องที่ #119 เพิ่งผูกใหม่) ไม่มีใครคุม
+   ⚠️ ทุกช่องต้องเทียบกับเลขที่ **ไม่ใช่ 0 และต่างกัน** — ถ้าทุกฉากจบที่ 0 การ์ดที่พังจนขึ้น 0
+      ตลอดจะผ่านได้ · ZZ-2 จึงสั่งเมื่อวาน (สถานะปกติ) และคีย์ winding ครบแล้ว (ค้างที่ assembly)
+      ส่วน ZZ-1 สั่ง ส.ค. (เกินกำหนด) และยังไม่คีย์อะไร (ค้างที่ "ยังไม่เริ่มผลิต") */
+test('เปลี่ยนตัวกรองช่องไหนก็ต้องวาดการ์ดใหม่', async ({ page }) => {
+  await openDash(page, [
+    orderPn('ZZ-1', 'PN-A', 100),
+    { ...orderPn('ZZ-2', 'PN-B', 700), week: 'WK 35', orderDate: isoAgo(1) }
+  ], [rec('w2', 'ZZ-2|PN-B', 'winding', 700)]);
+  expect((await cardVals(page))[PLAN_CARD], 'ยังไม่กรอง = สองใบรวมกัน').toBe('800');
+
+  await page.selectOption('#dashWeekFilter', 'WK 35');
+  await page.waitForTimeout(200);
+  expect((await dashGroups(page)).map(r => r.qty), 'ตารางเหลือใบของสัปดาห์นั้น').toEqual(['700']);
+  expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องขยับตาม ไม่ค้างที่ยอดรวมทุกสัปดาห์')
+    .toBe('700');
+
+  await page.fill('#dashSearch', 'ไม่มีใบนี้');
+  await page.waitForTimeout(250);
+  expect((await cardVals(page))[PLAN_CARD], 'ช่องค้นหาก็ต้องวาดการ์ดใหม่ (ช่องนี้ยิง input ไม่ใช่ change)')
+    .toBe('0');
+
+  // ล้างสองช่องบนก่อน แล้วไล่สองช่องที่เหลือทีละช่อง
+  await page.fill('#dashSearch', '');
+  await page.selectOption('#dashWeekFilter', '');
+  await page.waitForTimeout(250);
+
+  await page.selectOption('#dashStatusFilter', 'late');
+  await page.waitForTimeout(200);
+  expect((await dashGroups(page)).map(r => r.qty), 'ตารางเหลือใบที่เกินกำหนด').toEqual(['100']);
+  expect((await cardVals(page))[PLAN_CARD], 'ช่องสถานะก็ต้องวาดการ์ดใหม่').toBe('100');
+
+  await page.selectOption('#dashStatusFilter', '');
+  await page.selectOption('#dashWipFilter', 'assembly');
+  await page.waitForTimeout(200);
+  expect((await dashGroups(page)).map(r => r.qty), 'ตารางเหลือใบที่ค้างหน้า Assembly').toEqual(['700']);
+  expect((await cardVals(page))[PLAN_CARD], 'ช่องค้างอยู่ที่ขั้นก็ต้องวาดการ์ดใหม่').toBe('700');
+});
+
+test('ยอดสั่งที่เป็นข้อความ การ์ดต้องบวกเป็นเลข', async ({ page }) => {
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', '100'), orderPn('ZZ-2', 'PN-A', 100)]);
+  const rows = await dashGroups(page);
+  expect(rows[0].qty, 'ฝั่งตารางถูกอยู่แล้ว').toBe('200');
+  /* การ์ดนี้บวกยอดหลายใบมาตั้งแต่ต้น `0 + '100'` ได้ `'0100'` ไม่ใช่ 100
+     ผิดเงียบมาตลอดเพราะยังไม่มีคอลัมน์ไหนให้เอามาเทียบ */
+  expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องได้เลขเดียวกับตาราง').toBe(rows[0].qty);
 });

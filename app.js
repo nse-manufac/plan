@@ -2307,8 +2307,9 @@ function renderEntryTable(){
     const prevCum = prevProc!=null ? ((allCum[o.id] && allCum[o.id][prevProc]) || 0) : null;
     const warn = prevProc!=null && cum > prevCum;
     const remaining = Math.max(0, o.orderQty - cum);
-    // Aging นิยามและสีเดียวกับคอลัมน์ Aging บน Dashboard — ใช้ agingCell กับ computeStatus ตัวเดียวกัน
-    // ⚠️ นับถึง "วันนี้" ไม่ใช่วันที่เลือกคีย์ย้อนหลัง ไม่งั้นสองหน้าจะขึ้นอายุงานของใบเดียวกันไม่ตรงกัน
+    // Aging นิยามและสีเดียวกับคอลัมน์ Aging ในใบส่งสินค้า FM-ST-07 — ผ่าน agingCell ตัวเดียว
+    // ⚠️ นับถึง "วันนี้" ไม่ใช่วันที่เลือกคีย์ย้อนหลัง ไม่งั้นใบเดียวกันจะขึ้นอายุงานไม่ตรงกับที่เคยเห็น
+    //    ทุกครั้งที่มีคนคีย์ย้อนหลัง · ตั้งแต่ 5 พ.ย. 2026 หน้านี้เป็นที่เดียวที่มีช่องนี้ (Dashboard ตัดออกแล้ว)
     const st = computeStatus(o, allCum[o.id] || emptyCum(), computeDeadlines(o), ref);
     n++;
     lastRenderedOrderIds.push(o.id);
@@ -2906,24 +2907,19 @@ function dashSubName(){
   return el ? el.value : '';
 }
 
-/** ชุดใบสั่งที่หน้า Dashboard กำลังพูดถึง (กรองหน่วยแล้ว) */
-function dashScopedOrders(){
-  const subF = dashSubName();
-  return subF ? activeOrders().filter(o=>o.subName === subF) : activeOrders();
-}
-
 function renderWipCards(){
-  const allCum = buildCumMap(state.records);
+  const rows = dashFilteredRows();
   const subF = dashSubName();
   const note = document.getElementById('wipScopeNote');
-  if(note) note.textContent = subF ? 'นับเฉพาะ Sub-Name: ' + subF : 'นับรวมทุก Sub-Name';
+  // ⚠️ ข้อความนี้คือสิ่งเดียวที่บอกว่าการ์ดนับใบไหน — ต้องตรงกับชุดที่นับจริง จึงบอกจำนวนใบด้วย
+  if(note) note.textContent = `นับเฉพาะใบที่ผ่านตัวกรองบนหน้านี้ · ${numFmt(rows.length)} ใบ` + (subF ? ' · ' + subF : '');
   let totalQty=0, anomalyCount=0;
   const sum = emptyCum();
-  dashScopedOrders().forEach(o=>{
-    totalQty += o.orderQty;
-    const c = allCum[o.id] || emptyCum();
+  rows.forEach(({o, c})=>{
+    const q = Number(o.orderQty) || 0;   // ⚠️ เหมือนในตาราง — `0 + '100'` ได้ `'0100'` ไม่ใช่ 100
+    totalQty += q;
     if(hasOrderAnomaly(c)) anomalyCount++;
-    PROCESSES.forEach(p=>{ sum[p] += Math.min(c[p]||0, o.orderQty); });
+    PROCESSES.forEach(p=>{ sum[p] += Math.min(c[p]||0, q); });
   });
   const shipped = sum.shipping;
 
@@ -3164,20 +3160,16 @@ function renderDashFilterOptions(){
 
 /** แถบ progress 2 ส่วน: ฟ้า = ยอดที่บันทึกทันหรือก่อนวัน deadline ของขั้นนั้น, เหลือง = บันทึกหลังเลย
  *  deadline ไปแล้ว — เขียวทั้งแถบสงวนไว้เฉพาะกรณีเสร็จครบ "และ" ไม่มีส่วนที่ช้าเลยเท่านั้น (เสร็จครบ
- *  แบบมีส่วนช้าปนอยู่ ยังคงแสดงฟ้า+เหลืองตามจริง ไม่ใช่เขียว) ยอดแยกทัน/เกินโชว์เป็นตัวหนังสือในเซลล์
- *  เลย ไม่ต้องรอ hover เพราะผู้ใช้อยากเห็นตัวเลขทันทีตอนกวาดตาดูตาราง */
+ *  แบบมีส่วนช้าปนอยู่ ยังคงแสดงฟ้า+เหลืองตามจริง ไม่ใช่เขียว) · ยอดแยกทัน/เกินอยู่ใน title ของแถบเท่านั้น ไม่โชว์เป็นตัวหนังสือ — เจ้าของสั่งถอดออก 5 พ.ย. 2026 ("เลขเยอะจะไม่มีใครดู") ห้ามเติมกลับ */
 function progressCell(cum, split, qty){
   split = split || {onTime:0, late:0};
   const done = qty>0 && cum>=qty && split.late===0;
   const onTimePct = qty>0 ? Math.min(100, split.onTime/qty*100) : 0;
   const latePct = qty>0 ? Math.min(100-onTimePct, split.late/qty*100) : 0;
-  const splitNote = split.late>0
-    ? `<div class="split-note"><span class="on">ทัน ${numFmt(split.onTime)}</span> · <span class="late">เกิน ${numFmt(split.late)}</span></div>`
-    : '';
   return `<div class="small">${numFmt(cum)}/${numFmt(qty)}</div>
     <div class="progress ${done?'done':''}" title="ทันกำหนด ${numFmt(split.onTime)} · เกินกำหนด ${numFmt(split.late)}">
       <div class="seg-on" style="width:${onTimePct}%"></div><div class="seg-late" style="width:${latePct}%"></div>
-    </div>${splitNote}`;
+    </div>`;
 }
 
 /* ช่อง Aging — ระบายสีให้กวาดตาเจอใบที่ค้างนานได้ทันที (issue #41)
@@ -3198,10 +3190,13 @@ function agingCell(orderDate, ref, statusCode){
   return `<span class="badge green">${txt}</span>`;
 }
 
-function renderDashTable(){
+/** ใบสั่งที่หน้า Dashboard กำลังพูดถึง — ผ่านตัวกรองทุกช่องบนหน้านี้แล้ว · คืน {o, c, st} ต่อใบ
+ *  ⚠️ **การ์ดกับตารางต้องอ่านชุดเดียวกันจากที่นี่** (เจ้าของสั่ง 5 พ.ย. 2026 · เหตุผลเต็มใน CLAUDE.md §1)
+ *     ของเดิมการ์ดกรองแค่ Sub-Name ส่วนตารางกรองครบทุกช่อง สองเลขจึงต่างกันตั้งแต่เปิดโปรแกรม
+ *     เพราะ "ซ่อนงานที่ส่งของครบแล้ว" ติ๊กไว้เป็นค่าตั้งต้น (ผู้ตรวจ #119 วัดได้ 200 กับ 100)
+ *  ยอดแยกทันกำหนด/เกินกำหนดไม่คิดที่นี่ — การ์ดไม่ใช้ · ตารางไปหยิบ buildCumSplitMap เอง */
+function dashFilteredRows(){
   const allCum = buildCumMap(state.records);
-  const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
-  const splitMap = buildCumSplitMap(state.records, orderById);
   const ref = todayISO();
   const weekF = document.getElementById('dashWeekFilter').value;
   const subF = document.getElementById('dashSubFilter').value;
@@ -3212,10 +3207,8 @@ function renderDashTable(){
 
   let rows = activeOrders().map(o=>{
     const c = allCum[o.id] || emptyCum();
-    const dl = computeDeadlines(o);
-    const st = computeStatus(o, c, dl, ref);
-    const split = splitMap[o.id] || {};
-    return {o,c,dl,st,split};
+    const st = computeStatus(o, c, computeDeadlines(o), ref);
+    return {o, c, st};
   });
   if(weekF) rows = rows.filter(x=>x.o.week===weekF);
   if(subF) rows = rows.filter(x=>x.o.subName===subF);
@@ -3225,42 +3218,73 @@ function renderDashTable(){
   // ซ่อนงานที่ส่งครบแล้ว — แต่ต้องยอมให้คนที่ "เลือกดูเฉพาะเสร็จแล้ว" เห็นของที่ตัวเองขอดู
   // ไม่งั้นเลือกสถานะเสร็จแล้วจะได้ตารางว่าง โดยไม่มีอะไรบอกว่าเพราะติ๊กอีกช่องค้างไว้
   if(hideDone && statusF !== 'done') rows = rows.filter(x=>x.st.code !== 'done');
-  rows.sort((a,b)=> (a.o.week||'').localeCompare(b.o.week) || (a.o.orderDate||'').localeCompare(b.o.orderDate));
+  return rows;
+}
+
+/** ⚠️ ทุกช่องกรองบนหน้านี้ต้องผูกกับตัวนี้ ไม่ใช่กับ renderDashTable ตรง ๆ — ลืมช่องไหน
+ *     ช่องนั้นจะทำให้การ์ดกับตารางขัดกันทันทีที่มีคนเลือก (กราฟมีตัวจับของตัวเองอยู่แล้ว) */
+function renderDashScoped(){ renderWipCards(); renderDashTable(); }
+
+function renderDashTable(){
+  const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
+  const splitMap = buildCumSplitMap(state.records, orderById);
+  const rows = dashFilteredRows();
+
+  /* รวมเป็นราย P/N + Sub-Name — เจ้าของสั่ง 5 พ.ย. 2026 ("ข้อมูลเยอะเกินกว่าจะเรียกการมองภาพรวม")
+   *
+   * ⚠️ กุญแจต้องแปลง P/N เป็นข้อความก่อน แบบเดียวกับ `fgRows()` — เครื่องที่รับข้อมูลจากการซิงค์
+   *    ได้ P/N เป็นตัวเลข ส่วนเครื่องที่นำเข้าไฟล์เองได้เป็นข้อความ (บั๊กที่เจอ 1 ก.ย. 2026)
+   *    ไม่แปลงแล้ว P/N เดียวจะแตกเป็นสองแถวบนเครื่องที่ซิงค์มา
+   * ⚠️ จับกลุ่มด้วย P/N **คู่กับ Sub-Name** ตามแบบหน้า FG — P/N เดียวอยู่สองนิติบุคคลได้
+   *    รวมข้ามหน่วยแล้วคอลัมน์ Sub-Name ไม่มีความหมาย และยอดของสองบริษัทจะปนกัน
+   * ⚠️ ตัวกรองคัด "ใบ" ก่อน แล้วจึงรวม — ยอดในแถวจึงเป็นผลรวมของสิ่งที่กรองไว้เท่านั้น
+   *    (เลือกสถานะล่าช้าแล้วยอดสั่งรวมจะเล็กลง ซึ่งถูกต้องตามความหมายนี้)
+   * ⚠️ ครอบยอดสะสม **และ** ยอดแยกทัน/เกิน ที่ orderQty ต่อใบ · คีย์เกินฟ้องด้วยป้าย · **เฉพาะขั้นสายหลัก** (CLAUDE.md §1) */
+  const groups = new Map();
+  rows.forEach(({o, c})=>{
+    const pn = String(o.pn == null ? '' : o.pn), unit = String(o.subName || '');
+    /* ⚠️ ยอดสั่งต้องผ่าน Number() ด้วยเหตุผลเดียวกับที่ P/N ต้องผ่าน String() บรรทัดบน — ค่าที่ซิงค์มา
+     *    เป็นข้อความได้ · `'100' + 100` ได้ `'100100'` (ผู้ตรวจ #119 รันเจอ: ขึ้น 100,100 แทน 200) */
+    const q = Number(o.orderQty) || 0;
+    const key = pn + '|' + unit;
+    let g = groups.get(key);
+    if(!g){ g = {pn, unit, qty:0, n:0, cum:emptyCum(), split:{}, anomaly:false, over:false}; groups.set(key, g); }
+    g.qty += q;
+    g.n++;
+    if(hasOrderAnomaly(c)) g.anomaly = true;
+    PROCESSES.forEach(p=>{
+      const sp = (splitMap[o.id] || {})[p] || {}, cap = MAIN_PROCESSES.includes(p) ? q : Infinity;
+      g.cum[p] += Math.min(c[p]||0, cap);
+      if((c[p]||0) > cap) g.over = true;
+      const on = Math.min(sp.onTime || 0, cap);
+      g.split[p] = g.split[p] || {onTime:0, late:0};
+      g.split[p].onTime += on;
+      g.split[p].late += Math.min(sp.late || 0, cap - on);
+    });
+  });
+  const list = [...groups.values()].sort((a,b)=> a.pn.localeCompare(b.pn) || a.unit.localeCompare(b.unit));
 
   /* ⚠️ Item No. คือ "ลำดับของแถวที่เห็นอยู่ตอนนี้" ไม่ใช่เลขประจำใบสั่ง
-   *
    *    มีไว้ให้ชี้กันรู้เรื่องตอนคุยหรือตอนถือกระดาษที่พิมพ์ออกมา ("ดูแถวที่ 12")
    *    จึงต้องนับหลังกรองและเรียงแล้ว = นับตามที่ตาเห็น ไม่ใช่ตามลำดับในข้อมูล
-   *
-   *    เปลี่ยนตัวกรองเมื่อไหร่เลขก็เปลี่ยน ซึ่งถูกต้องตามความหมายนี้
-   *    และหัวกระดาษตอนพิมพ์บอกอยู่แล้วว่ากรองอะไรไว้ คนที่ถือกระดาษคนละใบจึงรู้ตัว
-   *
    *    ⚠️ ห้ามเอาไปใช้เป็นกุญแจอ้างอิงใบสั่ง — กุญแจจริงคือ PO|P/N (ดู INVARIANTS)
-   *       และเลข No. ในไฟล์แผนของลูกค้าก็ไม่ใช่ตัวนี้ (ของเขาเริ่มนับใหม่ทุกสัปดาห์
-   *       และมีเลขซ้ำกับช่องว่างปนอยู่) โปรแกรมไม่ได้เก็บเลขนั้นไว้ */
-  const bodyHtml = rows.map(({o,c,st,split}, idx)=>{
-    const anomaly = hasOrderAnomaly(c);
-    // อายุงาน = จำนวนวันนับจากวันสั่งถึงวันนี้ นิยามเดียวกับคอลัมน์ Aging ในใบส่งสินค้า FM-ST-07
-    // ใช้ ref ตัวเดียวกับที่ computeStatus ใช้ตัดสินล่าช้า ตัวเลขบนจอจึงมาจากวันเดียวกันเสมอ
-    return `<tr>
+   *       ยิ่งตอนนี้แถวหนึ่งรวมหลายใบ เลขนี้ยิ่งไม่ใช่ตัวแทนของใบไหนเลย */
+  const bodyHtml = list.map((g, idx)=>`<tr>
       <td class="hint">${idx + 1}</td>
-      <td class="left">${escapeHtml(o.week)}</td>
-      <td class="left" data-po="${escapeHtml(o.poNo)}">${escapeHtml(o.poNo)}</td>
-      <td class="left">${escapeHtml(o.pn)}</td>
-      <td class="left">${escapeHtml(o.subName)}</td>
-      <td>${numFmt(o.orderQty)}</td>
-      <td>${escapeHtml(fmtDateTH(o.orderDate))}</td>
-      <td data-aging>${agingCell(o.orderDate, ref, st.code)}</td>
-      ${PROCESSES.map(p=>`<td>${progressCell(c[p]||0, split[p], o.orderQty)}</td>`).join('')}
-      <td><span class="badge ${st.color}">${escapeHtml(st.label)}</span>${anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}</td>
-    </tr>`;
-  }).join('');
+      <td class="left" data-pn="${escapeHtml(g.pn)}">${escapeHtml(g.pn)}${g.anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}${g.over?' <span class="badge amber" title="มีใบที่คีย์ยอดสะสมเกินยอดสั่ง — แถบในแถวนี้ครอบไว้ที่ยอดสั่ง ส่วนเกินตรวจได้ที่หน้าแก้ไข/ลบรายการ">⚠ คีย์เกินยอดสั่ง</span>':''}</td>
+      <td class="left">${escapeHtml(g.unit)}</td>
+      <td>${numFmt(g.n)}</td>
+      <td>${numFmt(g.qty)}</td>
+      ${PROCESSES.map(p=>`<td>${progressCell(g.cum[p]||0, g.split[p], g.qty)}</td>`).join('')}
+    </tr>`).join('');
 
   document.getElementById('dashTable').innerHTML = `<thead><tr>
       <th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ ไว้ชี้กันตอนคุยหรือตอนดูกระดาษที่พิมพ์ออกมา — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>
-      <th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th><th>Order Date</th><th>Aging<br>(วัน)</th>
-      ${PROCESSES.map(p=>`<th>${processHeadHtml(p)}</th>`).join('')}<th>สถานะ</th>
-    </tr></thead><tbody>${bodyHtml || emptyRow(9 + PROCESSES.length)}</tbody>`;
+      <th>P/N</th><th>Sub-Name</th>
+      <th title="จำนวนใบสั่งซื้อของ P/N นี้ที่ผ่านตัวกรองอยู่ตอนนี้">ใบ</th>
+      <th title="ยอดสั่งรวมของใบที่ผ่านตัวกรองอยู่ตอนนี้">ยอดสั่งรวม</th>
+      ${PROCESSES.map(p=>`<th>${processHeadHtml(p)}</th>`).join('')}
+    </tr></thead><tbody>${bodyHtml || emptyRow(5 + PROCESSES.length)}</tbody>`;
 }
 
 /* ---------- Render: Data tab ---------- */
@@ -5222,14 +5246,13 @@ document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
   toast(`ลบแล้ว ${n} รายการ`);
 });
 
-document.getElementById('dashWeekFilter').addEventListener('change', renderDashTable);
+['dashWeekFilter','dashStatusFilter','dashWipFilter'].forEach(id=>
+  document.getElementById(id).addEventListener('change', renderDashScoped));
 // ⚠️ หน่วยคุมทั้งหน้า จึงต้องวาดใหม่ครบทั้งสามส่วน ไม่ใช่แค่ตาราง
 document.getElementById('dashSubFilter').addEventListener('change', ()=>{
   renderWipCards(); renderChart(); renderDashTable();
 });
-document.getElementById('dashStatusFilter').addEventListener('change', renderDashTable);
-document.getElementById('dashWipFilter').addEventListener('change', renderDashTable);
-document.getElementById('dashSearch').addEventListener('input', renderDashTable);
+document.getElementById('dashSearch').addEventListener('input', renderDashScoped);
 ['fgUnit','fgHideZero'].forEach(id=>
   document.getElementById(id).addEventListener('change', renderFg));
 // ช่องค้นหาอยู่นอกตาราง การวาดใหม่จึงไม่แย่งโฟกัส พิมพ์รัวได้ (INVARIANTS G2)
@@ -5243,7 +5266,7 @@ document.getElementById('dnDate').addEventListener('change', renderDeliveryNote)
 document.getElementById('dnSearch').addEventListener('input', renderDeliveryNote);
 document.getElementById('dnHideNoDelta').addEventListener('change', renderDeliveryNote);
 document.getElementById('dnUnit').addEventListener('change', renderDeliveryNote);
-document.getElementById('dashHideDone').addEventListener('change', renderDashTable);
+document.getElementById('dashHideDone').addEventListener('change', renderDashScoped);
 
 /* พิมพ์ / บันทึก PDF — ใช้ window.print() ของเบราว์เซอร์ล้วน ไม่เพิ่มไลบรารีทำ PDF (INVARIANTS F2)
    เขียนหัวกระดาษก่อนพิมพ์เสมอ ทั้งตอนกดปุ่มและตอนคนกด Ctrl+P เอง เพราะกระดาษที่ไม่บอกว่า

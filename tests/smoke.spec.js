@@ -81,8 +81,8 @@ test('ใบสั่งที่ยกเลิกแล้ว ต้องห�
   await page.click('.tab-btn[data-tab="dashboard"]');
   await page.waitForTimeout(150);
   const dash = await page.$$eval('#dashTable tbody tr', t => t.map(x => x.textContent));
-  expect(dash.join(' '), 'Dashboard ต้องไม่มีใบที่ยกเลิก').not.toContain('PO-1');
-  expect(dash.join(' '), 'ส่วนใบที่ยังใช้งานต้องอยู่ครบ').toContain('PO-2');
+  expect(dash.join(' '), 'Dashboard ต้องไม่มีใบที่ยกเลิก').not.toContain('PN-1');
+  expect(dash.join(' '), 'ส่วนใบที่ยังใช้งานต้องอยู่ครบ').toContain('PN-2');
 
   await page.click('.tab-btn[data-tab="entry"]');
   await page.waitForTimeout(150);
@@ -124,7 +124,7 @@ test('กู้คืนใบสั่งที่ยกเลิกแล้�
   await page.click('.tab-btn[data-tab="dashboard"]');
   await page.waitForTimeout(150);
   const dash = await page.$$eval('#dashTable tbody tr', t => t.map(x => x.textContent));
-  expect(dash.join(' '), 'กู้คืนแล้วต้องกลับมาบน Dashboard').toContain('PO-1');
+  expect(dash.join(' '), 'กู้คืนแล้วต้องกลับมาบน Dashboard').toContain('PN-1');
 });
 
 /** วันของ N วันก่อน ในรูปแบบ YYYY-MM-DD ตามนาฬิกาเครื่อง — ให้ตรงกับ todayISO() ของแอป */
@@ -568,15 +568,15 @@ test('Dashboard มีคอลัมน์ Item No. ที่นับตาม
     tds => tds.map(td => td.innerText.trim()));
 
   const nos = await col('first-child');
-  const pos = await page.$$eval('#dashTable tbody td[data-po]', t => t.map(x => x.innerText.trim()));
+  const pos = await page.$$eval('#dashTable tbody td[data-pn]', t => t.map(x => x.dataset.pn));
   expect(pos, 'ตารางต้องเรียงไม่ตรงกับลำดับในข้อมูล ไม่งั้นเทสนี้ไม่ได้ตรวจอะไร')
-    .toEqual(['PO-1', 'PO-2', 'PO-3']);
+    .toEqual(['PN-1', 'PN-2', 'PN-3']);
   expect(nos, 'ต้องไล่ 1..n ตามที่ตาเห็น ไม่ใช่ตามลำดับในข้อมูล').toEqual(['1', '2', '3']);
 
   // กรองแล้วต้องเริ่มนับ 1 ใหม่ ไม่ใช่ค้างเลขเดิมของแถวนั้นไว้
   await page.fill('#dashSearch', 'PO-3');
   await page.waitForTimeout(200);
-  expect(await page.$$eval('#dashTable tbody td[data-po]', t => t.map(x => x.innerText.trim())), 'ตัวกรองต้องเหลือแถวเดียว').toEqual(['PO-3']);
+  expect(await page.$$eval('#dashTable tbody td[data-pn]', t => t.map(x => x.dataset.pn)), 'ตัวกรองต้องเหลือแถวเดียว').toEqual(['PN-3']);
   expect(await col('first-child'), 'กรองแล้วแถวที่เห็นแถวแรกต้องเป็นเลข 1').toEqual(['1']);
 });
 
@@ -615,6 +615,12 @@ test('F4 + G1 — หัวกระดาษตอนพิมพ์ต้อ�
 
 test('G1 — ตอนพิมพ์ต้องซ่อนเมนู/ปุ่ม/ตัวกรอง พิมพ์ตารางครบทุกแถว และคงสีสถานะไว้', async ({ page }) => {
   await openApp(page);
+  /* ป้ายสถานะอยู่หน้า "ยอดรายวันทุกขั้น" แล้ว (ย้าย 4 พ.ย. 2026) — กฎพิมพ์สีเป็นกฎร่วมของทุกหน้า
+   * ⚠️ ต้องเตรียมหน้านั้นไว้ "ก่อน" เข้าโหมดพิมพ์ เพราะโหมดพิมพ์ซ่อนแถบเมนูกับตัวกรอง
+   *    คลิกแท็บหรือติ๊กสวิตช์ตอนนั้นไม่ได้เลย (เทสค้างจนหมดเวลา ไม่ใช่แดงแบบอ่านรู้เรื่อง) */
+  await page.click('.tab-btn[data-tab="daily"]');
+  await page.locator('#dayShowAll').setChecked(true);
+  await page.waitForTimeout(250);
   await gotoDashboard(page);
   await page.emulateMedia({ media: 'print' });
 
@@ -628,7 +634,7 @@ test('G1 — ตอนพิมพ์ต้องซ่อนเมนู/ปุ
 
   const colorAdjust = el => el.evaluate(e => getComputedStyle(e).getPropertyValue('print-color-adjust')
     || getComputedStyle(e).getPropertyValue('-webkit-print-color-adjust'));
-  expect(await colorAdjust(page.locator('#dashTable .badge').first()),
+  expect(await colorAdjust(page.locator('#dayTable .badge').first()),
     'ป้ายสถานะ ล่าช้า/ใกล้ครบกำหนด ต้องพิมพ์สีออกมา').toBe('exact');
   expect(await colorAdjust(page.locator('#dashTable tbody td').first()),
     'ช่องอื่นในตารางก็ต้องถูกบังคับให้พิมพ์สีเหมือนกัน ไม่ใช่เฉพาะป้ายสถานะ').toBe('exact');
@@ -741,7 +747,14 @@ test('A3 + E2 — state เก่าที่ยังไม่มี deadlineOf
   page.on('pageerror', e => errors.push(e.message));
 
   // seedState() ไม่มีคีย์ support เลย = ข้อมูลที่บันทึกไว้ก่อนจะมีขั้นนี้
-  await openApp(page, [rec('R1', 'O1', 'support', TEST_DATE, 30)]);
+  // ⚠️ ใบต้องยังไม่เลยกำหนดขั้นไหนเลย (สั่งเมื่อวาน · ขั้นอื่นตั้งไว้ 10–28 วัน) เพราะ A5
+  //    รายงานขั้นปลายน้ำก่อน · ใช้ใบของ seedState (สั่ง ส.ค.) แล้วได้ "เกินกำหนดส่งของ"
+  //    คำว่า "ล่าช้า Support" จึงไม่โผล่ทั้งที่ตัดสินผิด = เทสเขียวทั้งที่พัง (ทดลองแล้ว)
+  await openApp(page, [rec('R1', 'O1', 'support', TEST_DATE, 30)], [
+    { id: 'O1', week: 'W31', poNo: 'PO-1', pn: 'PN-1', orderQty: 100,
+      orderDate: isoDaysAgo(1), status: 'active',
+      importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false }
+  ]);
   await gotoDashboard(page);
 
   const head = await page.locator('#dashTable thead').innerText();
@@ -750,7 +763,12 @@ test('A3 + E2 — state เก่าที่ยังไม่มี deadlineOf
 
   // ยังไม่ตั้งค่า → ห้ามตัดสินว่าล่าช้า Support (A4: ห้ามเดาเลขวันแทนเจ้าของ)
   // ถ้าเผลอตีความ null เป็น orderDate + 0 ทุกใบจะกลายเป็นล่าช้าทันทีตั้งแต่วันสั่ง
-  await expect(page.locator('#dashTable tbody')).not.toContainText('ล่าช้า Support');
+  // ⚠️ ต้องอ่านที่หน้า "ยอดรายวันทุกขั้น" — แดชบอร์ดไม่มีคอลัมน์สถานะแล้ว การเช็ก #dashTable
+  //    จึงเป็นจริงเสมอโดยไม่ได้ตรวจอะไรเลย (ผู้ตรวจ #119 รันพิสูจน์)
+  const st = (await dashStatuses(page)).join(' ');
+  // ⚠️ ต้องมี assertion ฝั่งบวกคู่ไว้ด้วย — ลำพัง not.toContain จะเขียวเองถ้าตารางวาดศูนย์แถว
+  expect(st, 'ต้องมีแถวให้ตรวจจริง').toContain('กำลังดำเนินการ');
+  expect(st, 'Support ยังไม่กำหนดวัน ห้ามตัดสินว่าล่าช้า').not.toContain('ล่าช้า Support');
   expect(errors, 'state เก่าที่ไม่มีคีย์ support ต้องเปิดได้ ไม่พัง').toEqual([]);
 });
 
@@ -776,36 +794,36 @@ test('A4 — ตั้งค่า Support (+วัน) แล้วกำหน
   };
 
   await setOffsets('29');
-  await expect(page.locator('#dashTable tbody'),
-    'ครบกำหนดไปแล้วเมื่อวาน ต้องขึ้นล่าช้า Support').toContainText('ล่าช้า Support');
+  expect((await dashStatuses(page)).join(' '), 'ครบกำหนดไปแล้วเมื่อวาน ต้องขึ้นล่าช้า Support')
+    .toContain('ล่าช้า Support');
 
   await page.click('.tab-btn[data-tab="data"]');
   await expect(page.locator('#offSup'), 'ค่าที่บันทึกไว้ต้องกลับมาโชว์ในช่องตั้งค่า').toHaveValue('29');
 
   await setOffsets('31');
-  await expect(page.locator('#dashTable tbody'),
-    'ยังไม่ถึงกำหนด (อีก 1 วัน) ห้ามตัดสินว่าล่าช้า — พลาดข้างนี้แปลว่านับวันเกินไปหนึ่ง')
-    .not.toContainText('ล่าช้า Support');
+  expect((await dashStatuses(page)).join(' '), 'ยังไม่ถึงกำหนด (อีก 1 วัน) ห้ามตัดสินว่าล่าช้า — พลาดข้างนี้แปลว่านับวันเกินไปหนึ่ง')
+    .not.toContain('ล่าช้า Support');
 
   await setOffsets('');
   const off = (await readSaved(page, K_STATE)).deadlineOffsets;
   expect(off.support, 'เว้นช่องว่างต้องเก็บเป็น null (ยังไม่กำหนด) ไม่ใช่ 0 ที่จะทำให้ทุกใบเลยกำหนดทันที')
     .toBeNull();
-  await expect(page.locator('#dashTable tbody'),
-    'ไม่กำหนดวันแล้วต้องเลิกตัดสินว่าล่าช้า').not.toContainText('ล่าช้า Support');
+  expect((await dashStatuses(page)).join(' '), 'ไม่กำหนดวันแล้วต้องเลิกตัดสินว่าล่าช้า')
+    .not.toContain('ล่าช้า Support');
 });
 
 // ── ตัวกรอง "ค้างอยู่ที่ขั้น" ในตาราง Dashboard (issue #21) ────────────
 // นิยาม "ค้าง" ที่ผู้ใช้ยืนยัน = ผ่านขั้นก่อนหน้ามาแล้วแต่ขั้นนี้ยังไม่ครบ
 // ต้องเป็นสูตรเดียวกับการ์ด WIP ด้านบน ไม่งั้นการ์ดกับรายการจะบอกคนละยอด
 
-/** รายการ PO No. (คอลัมน์ที่ 2) ที่เหลืออยู่ในตาราง Dashboard หลังกรอง */
-/** รายชื่อ PO ที่ตารางแสดงอยู่
- *  ⚠️ อ่านจาก data-po ไม่ใช่ nth-child — เคยยึดตำแหน่งคอลัมน์ไว้ แล้วพอแทรก
+/** รายชื่อ P/N ที่เหลืออยู่ในตาราง Dashboard หลังกรอง — หน้านั้นรวมราย P/N ตั้งแต่ 5 พ.ย. 2026
+ *  ⚠️ อ่านจาก data-pn ไม่ใช่ nth-child — เคยยึดตำแหน่งคอลัมน์ไว้ แล้วพอแทรก
  *     คอลัมน์ Item No. เข้ามาข้างหน้า เทส 13 จุดพังพร้อมกันเพราะอ่านคอลัมน์ผิดช่อง */
-async function dashPoList(page) {
+async function dashPnList(page) {
   await page.waitForTimeout(100);
-  return page.locator('#dashTable tbody tr td[data-po]').allInnerTexts();
+  // อ่านจาก attribute ไม่ใช่ข้อความในช่อง — ช่อง P/N มีป้าย ⚠ ผิดลำดับ ปนได้
+  return page.locator('#dashTable tbody tr td[data-pn]')
+    .evaluateAll(els => els.map(e => e.dataset.pn));
 }
 
 test('A3 — กรอง "ค้างอยู่ที่ขั้น" ต้องได้เฉพาะใบที่ผ่านขั้นก่อนหน้าแล้ว แต่ขั้นนี้ยังไม่ครบ', async ({ page }) => {
@@ -820,20 +838,20 @@ test('A3 — กรอง "ค้างอยู่ที่ขั้น" ต้
   ]);
   await gotoDashboard(page);
 
-  expect(await dashPoList(page), 'ยังไม่เลือกตัวกรอง ต้องเห็นครบทุกใบเหมือนเดิม').toEqual(['PO-1', 'PO-2']);
+  expect(await dashPnList(page), 'ยังไม่เลือกตัวกรอง ต้องเห็นครบทุกใบเหมือนเดิม').toEqual(['PN-1', 'PN-2']);
 
   await page.selectOption('#dashWipFilter', 'assembly');
-  expect(await dashPoList(page), 'ค้างหน้า Assembly = พัน winding แล้วแต่ยังไม่ประกอบ').toEqual(['PO-2']);
+  expect(await dashPnList(page), 'ค้างหน้า Assembly = พัน winding แล้วแต่ยังไม่ประกอบ').toEqual(['PN-2']);
 
   await page.selectOption('#dashWipFilter', 'shipping');
-  expect(await dashPoList(page), 'รอส่งของ = ตรวจครบแล้วแต่ยังไม่ส่ง').toEqual(['PO-1']);
+  expect(await dashPnList(page), 'รอส่งของ = ตรวจครบแล้วแต่ยังไม่ส่ง').toEqual(['PN-1']);
 
   await page.selectOption('#dashWipFilter', 'support');
-  expect(await dashPoList(page), 'ไม่มีใบไหนค้างหน้า Support ต้องไม่โผล่ใบที่ผ่านไปแล้วมาปน').toEqual([]);
+  expect(await dashPnList(page), 'ไม่มีใบไหนค้างหน้า Support ต้องไม่โผล่ใบที่ผ่านไปแล้วมาปน').toEqual([]);
 
   await page.selectOption('#dashWipFilter', 'assembly');
   await page.fill('#dashSearch', 'PO-1');
-  expect(await dashPoList(page), 'ต้องกรองซ้อนกับตัวกรองเดิมได้ตามปกติ').toEqual([]);
+  expect(await dashPnList(page), 'ต้องกรองซ้อนกับตัวกรองเดิมได้ตามปกติ').toEqual([]);
 });
 
 test('A1 — ใบที่ยอดถูกยกเลิกไปแล้ว ต้องไม่ถูกนับว่าค้างอยู่หน้าขั้นถัดไป', async ({ page }) => {
@@ -842,10 +860,10 @@ test('A1 — ใบที่ยอดถูกยกเลิกไปแล้�
   await gotoDashboard(page);
 
   await page.selectOption('#dashWipFilter', 'assembly');
-  expect(await dashPoList(page), 'ยอดที่ยกเลิกแล้วห้ามทำให้ใบนั้นโผล่มาเป็นงานค้าง').toEqual([]);
+  expect(await dashPnList(page), 'ยอดที่ยกเลิกแล้วห้ามทำให้ใบนั้นโผล่มาเป็นงานค้าง').toEqual([]);
 
   await page.selectOption('#dashWipFilter', 'notStarted');
-  expect(await dashPoList(page), 'ทั้งสองใบยังไม่มียอด winding ที่ใช้ได้ = ยังไม่เริ่มผลิต').toEqual(['PO-1', 'PO-2']);
+  expect(await dashPnList(page), 'ทั้งสองใบยังไม่มียอด winding ที่ใช้ได้ = ยังไม่เริ่มผลิต').toEqual(['PN-1', 'PN-2']);
 });
 
 test('A1 — ใบที่คีย์ยอดเกิน Order Qty ต้องไม่ค้าง เพราะยอดถูกครอบด้วย Order Qty เหมือนการ์ด WIP', async ({ page }) => {
@@ -857,7 +875,7 @@ test('A1 — ใบที่คีย์ยอดเกิน Order Qty ต้�
   await gotoDashboard(page);
 
   await page.selectOption('#dashWipFilter', 'assembly');
-  expect(await dashPoList(page), 'ยอดส่วนที่เกิน Order Qty ต้องไม่กลายเป็นงานค้างที่ไม่มีจริง').toEqual([]);
+  expect(await dashPnList(page), 'ยอดส่วนที่เกิน Order Qty ต้องไม่กลายเป็นงานค้างที่ไม่มีจริง').toEqual([]);
 });
 
 // ── พิมพ์กล่อง "แก้ไข / ลบรายการที่บันทึกแล้ว" = รายงานยอดที่คีย์ในวันที่เลือก (issue #25) ──
@@ -942,9 +960,13 @@ test('กระดาษต้องไม่ขาดหายเงียบ �
 
 // ── Dashboard: Aging · ซ่อนงานที่ส่งของครบแล้ว · เลิกแสดง deadline รายขั้น ──
 
-/** ค่าในคอลัมน์ Aging (คอลัมน์ที่ 7 ถัดจาก Order Date) */
-function agingColumn(page) {
-  return page.locator('#dashTable tbody tr td[data-aging]').allInnerTexts();
+/* ⚠️ ช่อง Aging อยู่ที่หน้าคีย์ยอด ไม่ใช่แดชบอร์ด — ย้ายเมื่อ 5 พ.ย. 2026
+ * แดชบอร์ดรวมเป็นราย P/N แล้ว อายุงานของกลุ่มไม่มีความหมาย (P/N เดียวมีหลายใบ หลายวันสั่ง)
+ * หน้าคีย์ยอดเป็นราย PO และใช้ agingCell กับ computeStatus ตัวเดียวกัน จึงเป็นบ้านที่ตรงกว่า */
+async function agingColumn(page) {
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForTimeout(250);
+  return page.locator('#entryTable tbody tr td[data-aging]').allInnerTexts();
 }
 
 test('C1 + C3 — Aging ต้องเป็นจำนวนวันนับจาก Order Date ถึงวันนี้ ไม่ใช่วันที่', async ({ page }) => {
@@ -975,9 +997,11 @@ test('C1 — ใบที่ไม่มี Order Date ต้องขึ้น�
   expect(await agingColumn(page), 'ไม่มีวันสั่ง = คำนวณอายุงานไม่ได้ ต้องบอกตรง ๆ ว่าไม่มี').toEqual(['—']);
 });
 
-/** สีของช่อง Aging แต่ละแถว — '' แปลว่าไม่ได้ระบายสี */
-function agingColors(page) {
-  return page.locator('#dashTable tbody tr td[data-aging]').evaluateAll(
+/** สีของช่อง Aging แต่ละแถว — '' แปลว่าไม่ได้ระบายสี (อ่านที่หน้าคีย์ยอด) */
+async function agingColors(page) {
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForTimeout(250);
+  return page.locator('#entryTable tbody tr td[data-aging]').evaluateAll(
     tds => tds.map(td => {
       const b = td.querySelector('.badge');
       return b ? b.className.replace('badge', '').trim() : '';
@@ -1008,8 +1032,17 @@ function agingOrder(id, daysAgo) {
 /* ช่องสถานะคือ td สุดท้ายของแถว — ไม่มี data-* ให้เกาะ จึงเจาะด้วย :last-child
  * (เขียนเป็น td[data-status] ไว้ครั้งแรก ซึ่งไม่มีอยู่จริง แล้วได้สตริงว่างกลับมา
  *  ถ้าใช้ not.toContain อย่างเดียว เทสจะเขียวตลอดไปโดยไม่ได้ตรวจอะไร) */
-const dashStatuses = page =>
-  page.locator('#dashTable tbody tr td:last-child').allInnerTexts();
+/* ⚠️ ย้ายไปอ่านที่หน้า "ยอดรายวันทุกขั้น" เมื่อ 5 พ.ย. 2026 — แดชบอร์ดรวมเป็นราย P/N แล้ว
+ *    จึงไม่มีแถวราย PO ให้เกาะ · หน้านั้นเป็นราย PO และใช้ computeStatus ตัวเดียวกัน
+ *    จึงเป็นบ้านที่ตรงกว่าแดชบอร์ดตั้งแต่แรก · ต้องติ้ก "แสดงทุกใบ" ก่อน
+ *    เพราะตั้งต้นหน้านั้นโชว์เพาะใบที่ขั้นนั้นวันนั้นมีการคีย์ */
+const dashStatuses = async page => {
+  await page.click('.tab-btn[data-tab="daily"]');
+  await page.waitForTimeout(150);
+  await page.locator('#dayShowAll').setChecked(true);
+  await page.waitForTimeout(250);
+  return page.locator('#dayTable tbody tr td:last-child').allInnerTexts();
+};
 
 function lateOrder(id, daysAgo, qty = 100) {
   return { id, week: 'W31', poNo: 'PO-' + id, pn: 'PN-' + id, orderQty: qty,
@@ -1056,13 +1089,27 @@ test('A5 — ส่งของครบแล้ว ต้องชนะทุ
  * ⚠️ ขอบเขตคือ "วันครบกำหนดพอดี = ยังทัน" ไม่ใช่เกิน
  *    เปลี่ยนเป็น < เมื่อไหร่ ของที่ทำเสร็จวันสุดท้ายจะถูกนับเป็นสายทั้งหมด
  *    ซึ่งเป็นวันที่คนเร่งงานกันมากที่สุด = ตัวเลขจะดูแย่กว่าความจริงเป็นประจำ */
+/* เจ้าของสั่ง 5 พ.ย. 2026 ให้เลิกโชว์เลข "ทัน X · เกิน Y" เป็นตัวหนังสือบนแดชบอร์ด
+ * ("เลขเยอะจะไม่มีใครดู") เหลือ **แถบ** กับ tooltip · เทสจึงต้องอ่านสองอย่างนั้น
+ * ⚠️ ห้ามกลับไปอ่าน innerText ของแถว — ไม่มีเลขนั้นแล้ว `not.toContain` จะเขียวเองทันที
+ * ช่องของขั้นแรก (Winding) = td ที่ 5 (Item No. · P/N · Sub-Name · ใบ · ยอดสั่งรวม) */
+const dashBar = async (page, nth = 5) => {
+  const cell = page.locator('#dashTable tbody tr').first().locator('td').nth(nth);
+  return {
+    on: await cell.locator('.seg-on').evaluate(el => el.style.width),
+    late: await cell.locator('.seg-late').evaluate(el => el.style.width),
+    title: await cell.locator('.progress').getAttribute('title')
+  };
+};
+
 test('แถบ ทัน/เกิน — ทำเสร็จวันครบกำหนดพอดี ต้องนับว่าทัน ไม่ใช่เกิน', async ({ page }) => {
   // สั่งมา 20 วัน กำหนด Winding = วันสั่ง + 10 = 10 วันก่อน · คีย์ยอดลงวันนั้นเป๊ะ
   await openApp(page, [rec('R1', 'O1', 'winding', isoDaysAgo(10), 100)], [lateOrder('O1', 20)]);
   await gotoDashboard(page);
 
-  const row = await page.locator('#dashTable tbody tr').first().innerText();
-  expect(row, 'วันครบกำหนดพอดียังถือว่าทัน จึงต้องไม่ขึ้นป้ายแยก ทัน/เกิน').not.toContain('เกิน 100');
+  const bar = await dashBar(page);
+  expect(bar, 'วันครบกำหนดพอดียังถือว่าทัน แถบต้องเป็นสีทันทั้งแถบ')
+    .toMatchObject({ on: '100%', late: '0%', title: 'ทันกำหนด 100 · เกินกำหนด 0' });
 });
 
 test('แถบ ทัน/เกิน — ทำเสร็จหลังกำหนด ต้องแยกให้เห็นว่าเกินเท่าไหร่', async ({ page }) => {
@@ -1070,8 +1117,55 @@ test('แถบ ทัน/เกิน — ทำเสร็จหลังก�
   await openApp(page, [rec('R1', 'O1', 'winding', isoDaysAgo(9), 100)], [lateOrder('O1', 20)]);
   await gotoDashboard(page);
 
-  const row = await page.locator('#dashTable tbody tr').first().innerText();
-  expect(row, 'ของที่ทำหลังกำหนด ต้องถูกนับเป็นเกิน').toContain('เกิน 100');
+  const bar = await dashBar(page);
+  expect(bar, 'ของที่ทำหลังกำหนด ต้องถูกนับเป็นเกินทั้งแถบ')
+    .toMatchObject({ on: '0%', late: '100%', title: 'ทันกำหนด 0 · เกินกำหนด 100' });
+});
+
+/* ── สองเลขในช่องเดียวต้องไม่ขัดกันเอง (ผู้ตรวจ #119 รันเจอ) ──────────
+ *
+ * ยอดสะสมครอบที่ยอดสั่งต่อใบ แต่ยอดแยกทัน/เกินไม่ครอบ → แถวเขียน `150/200`
+ * ส่วนแถบกับ tooltip บอก `เกิน 200` ซึ่งโตกว่าทั้งยอดสะสมและยอดสั่งรวม
+ *
+ * เจ้าของเคาะ 5 พ.ย. 2026: ครอบทั้งคู่ แล้วฟ้องส่วนที่คีย์เกินด้วยป้ายแทน
+ * (ไม่กลบเงียบ ตามหลักที่ `fgRows()` เขียนไว้) */
+test('ช่องขั้นต้องไม่ขัดกันเอง — ยอดแยกทัน/เกินต้องครอบที่ยอดสั่งเหมือนยอดสะสม', async ({ page }) => {
+  // สอง P/N เดียวกัน ยอดสั่ง 100 + 100 · ใบแรกคีย์ 150 (เกินยอดสั่ง) · ใบสองคีย์ 50 · ทั้งคู่หลังกำหนด
+  await openApp(page,
+    [rec('R1', 'O1', 'winding', isoDaysAgo(9), 150), rec('R2', 'O2', 'winding', isoDaysAgo(9), 50)],
+    [{ ...lateOrder('O1', 20), pn: 'PN-X' }, { ...lateOrder('O2', 20), pn: 'PN-X' }]);
+  await gotoDashboard(page);
+
+  const cell = await page.locator('#dashTable tbody tr').first().locator('td').nth(5).innerText();
+  expect(cell, 'ยอดสะสมครอบที่ยอดสั่งต่อใบ = 100 + 50').toContain('150/200');
+  const bar = await dashBar(page);
+  expect(bar.title, 'เลขในแถบต้องรวมได้ 150 เท่ากับยอดสะสม ไม่ใช่ 200 ซึ่งเป็นยอดดิบ')
+    .toBe('ทันกำหนด 0 · เกินกำหนด 150');
+  expect(bar.late, 'แถบต้องไม่เกิน 75% ของช่อง (150 จาก 200)').toBe('75%');
+  await expect(page.locator('#dashTable tbody'),
+    'ครอบแล้วต้องไม่กลบเงียบ — ต้องมีป้ายบอกว่ามีใบที่คีย์เกินยอดสั่ง').toContainText('คีย์เกินยอดสั่ง');
+});
+
+test('ช่องขั้นต้องไม่ขัดกันเอง — ยอดที่คีย์เกินแบบทันกำหนดก็ต้องถูกครอบ', async ({ page }) => {
+  /* ⚠️ ต้องมีข้อนี้คู่กับข้อบน — ด้านทันกำหนดกับด้านเกินกำหนดเป็นโค้ดคนละบรรทัด
+   *    ทดลองถอดการครอบด้านทันกำหนดออกแล้ว ข้อบนยังเขียว เพราะฉากนั้นมีแต่ของเกินกำหนด
+   * ⚠️ และต้องเทียบที่ tooltip ด้วย ไม่ใช่ความกว้างแถบอย่างเดียว — ความกว้างถูกจำกัดที่ 100%
+   *    ด้วยคณิตศาสตร์ของเปอร์เซ็นต์อยู่แล้ว จึงไม่ขยับแม้ยอดจะทะลุยอดสั่ง */
+  await openApp(page, [rec('R1', 'O1', 'winding', isoDaysAgo(10), 150)], [lateOrder('O1', 20)]);
+  await gotoDashboard(page);
+
+  const bar = await dashBar(page);
+  expect(bar, 'ทันกำหนดต้องครอบที่ 100 เท่ากับยอดสะสม ไม่ใช่ยอดดิบ 150')
+    .toMatchObject({ on: '100%', late: '0%', title: 'ทันกำหนด 100 · เกินกำหนด 0' });
+  await expect(page.locator('#dashTable tbody'),
+    'ของที่คีย์เกินยังต้องฟ้อง แม้จะคีย์ทันกำหนด').toContainText('คีย์เกินยอดสั่ง');
+});
+
+test('ป้ายคีย์เกินยอดสั่ง — ใบที่คีย์ไม่เกิน ต้องไม่ขึ้นป้าย', async ({ page }) => {
+  // ⚠️ ต้องมีข้อนี้คู่ไว้ ไม่งั้นป้ายที่ขึ้นทุกแถวจะผ่านเทสข้างบนได้โดยไม่มีอะไรจับ
+  await openApp(page, [rec('R1', 'O1', 'winding', isoDaysAgo(9), 100)], [lateOrder('O1', 20)]);
+  await gotoDashboard(page);
+  await expect(page.locator('#dashTable tbody')).not.toContainText('คีย์เกินยอดสั่ง');
 });
 
 test('A4 — สีช่อง Aging ต้องมาจาก deadlineOffsets.shipping ไม่ใช่เลขตายตัว', async ({ page }) => {
@@ -1117,19 +1211,19 @@ test('ซ่อนงานที่ส่งของครบแล้ว — 
   await gotoDashboard(page);
 
   await expect(page.locator('#dashHideDone'), 'ต้องติ๊กไว้ตั้งแต่เปิดโปรแกรม').toBeChecked();
-  expect(await dashPoList(page), 'ใบที่ส่งครบแล้วต้องไม่กองอยู่ในตาราง').toEqual(['PO-2']);
+  expect(await dashPnList(page), 'ใบที่ส่งครบแล้วต้องไม่กองอยู่ในตาราง').toEqual(['PN-2']);
 
   await page.uncheck('#dashHideDone');
   await page.waitForTimeout(100);
-  expect(await dashPoList(page), 'ปลดติ๊กแล้วต้องกลับมาเห็นครบ').toEqual(['PO-1', 'PO-2']);
+  expect(await dashPnList(page), 'ปลดติ๊กแล้วต้องกลับมาเห็นครบ').toEqual(['PN-1', 'PN-2']);
 });
 
 test('A1 — ยอดส่งที่ถูกยกเลิกแล้ว ต้องไม่ทำให้ใบนั้นถูกซ่อนว่าส่งครบ', async ({ page }) => {
   await openApp(page, [rec('R1', 'O1', 'shipping', TEST_DATE, 100, true)]);
   await gotoDashboard(page);
 
-  expect(await dashPoList(page), 'ยอดที่ยกเลิกไม่นับ ใบนี้ยังไม่ส่ง ต้องยังอยู่ในตาราง')
-    .toEqual(['PO-1', 'PO-2']);
+  expect(await dashPnList(page), 'ยอดที่ยกเลิกไม่นับ ใบนี้ยังไม่ส่ง ต้องยังอยู่ในตาราง')
+    .toEqual(['PN-1', 'PN-2']);
 });
 
 test('ตัวกรองสองตัวต้องไม่ขัดกันเงียบ ๆ — เลือกสถานะ "เสร็จแล้ว" ต้องเห็นใบที่ส่งครบ แม้ยังติ๊กซ่อนค้างไว้', async ({ page }) => {
@@ -1139,7 +1233,7 @@ test('ตัวกรองสองตัวต้องไม่ขัดก�
 
   await page.selectOption('#dashStatusFilter', 'done');
   await page.waitForTimeout(100);
-  expect(await dashPoList(page), 'คนขอดูของที่เสร็จแล้ว ต้องได้เห็น ไม่ใช่ตารางว่าง').toEqual(['PO-1']);
+  expect(await dashPnList(page), 'คนขอดูของที่เสร็จแล้ว ต้องได้เห็น ไม่ใช่ตารางว่าง').toEqual(['PN-1']);
 });
 
 test('กระดาษต้องบอกว่ากรองอะไรไว้ — หัวกระดาษต้องบอกด้วยว่าซ่อนงานที่ส่งครบอยู่', async ({ page }) => {
@@ -1162,7 +1256,12 @@ test('เจ้าของสั่งเอา deadline รายขั้น�
 
   const head = await page.locator('#dashTable thead').innerText();
   expect(head, 'เจ้าของสั่งเอาวันครบกำหนดรายขั้นออกจากหน้าจอแล้ว').not.toContain('Deadline');
-  expect(head, 'คอลัมน์อายุงานต้องมาแทน').toContain('Aging');
+  // คอลัมน์ Aging ย้ายไปหน้าคีย์ยอด (4 พ.ย. 2026) — แดชบอร์ดรวมราย P/N อายุงานของกลุ่มไม่มีความหมาย
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForTimeout(200);
+  expect(await page.locator('#entryTable thead').innerText(),
+    'คอลัมน์อายุงานต้องอยู่ที่หน้าคีย์ยอด ซึ่งเป็นราย PO').toContain('Aging');
+  await gotoDashboard(page);
 
   // ⚠️ เทียบหัวกับแถวจริง ไม่ฮาร์ดโค้ดจำนวน — ของเดิมเขียน toBe(13) ไว้
   //    พอเพิ่มคอลัมน์ Item No. เทสก็แดงทั้งที่ตารางไม่ได้เพี้ยน

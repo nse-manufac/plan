@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-05.1">
+<meta name="app-version" content="2026-11-05.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -118,9 +118,6 @@
   .progress .seg-on{height:100%;background:var(--primary);float:left;}
   .progress .seg-late{height:100%;background:#f59e0b;float:left;}
   .progress.done .seg-on{background:var(--green);}
-  .split-note{font-size:10.5px;line-height:1.3;white-space:nowrap;}
-  .split-note .on{color:var(--primary);font-weight:700;}
-  .split-note .late{color:#b45309;font-weight:700;}
   .row-input{width:70px;padding:5px 6px;text-align:center;}
 
   /* ── หน้าบันทึกยอดรายวัน — ตัวใหญ่อ่านง่าย (เจ้าของขอเมื่อ 9 ก.ย. 2026 เพื่อให้คนสายตายาวอ่านได้) ──
@@ -668,7 +665,7 @@
   </div>
 
   <div class="panel">
-    <h2>สถานะแต่ละบรรทัดแผนงาน</h2>
+    <h2>ความคืบหน้าราย P/N</h2>
     <div class="row filters">
       <div class="field">
         <label>สัปดาห์</label>
@@ -884,6 +881,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-05.1"></script>
+<script src="app.js?v=2026-11-05.3"></script>
 </body>
 </html>
