@@ -5349,7 +5349,7 @@ document.getElementById('processTable').addEventListener('click', e=>{
   }
   const n = state.records.filter(r=>!r.voided && r.process === id).length;
   const msg = p.hidden ? `เลิกซ่อนขั้น "${p.label}"? ปุ่มและคอลัมน์จะกลับมาทุกเครื่อง`
-    : `ซ่อนขั้น "${p.label}"? ปุ่ม คอลัมน์ แถวในบัญชีของค้าง จะหายไปจากทุกเครื่อง`
+    : `ซ่อนขั้น "${p.label}"? ปุ่มคีย์ยอด · คอลัมน์ · แถวในบัญชีของค้าง จะหายไปจากทุกเครื่อง`
       + (n ? ` · ยอดที่คีย์ไว้ ${numFmt(n)} รายการยังอยู่ แต่จะไม่ถูกนับจนกว่าจะเลิกซ่อน` : '');
   if(!confirm(msg)) return;
   saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {hidden: !p.hidden, updatedBy: by, updatedAt: now}) : x),
