@@ -531,3 +531,48 @@ test('ขั้นนับแยกที่เป็นขั้นแรก �
   await expect(page.locator('#processFlow')).not.toContainText('งานซ่อม');
   await expect(page.locator('#processFlow')).toContainText('Assembly');
 });
+
+/* คำยืนยันตอนซ่อน/เลิกซ่อน — ไม่เคยมีเทสไหนอ่านมันเลย จึงเขียนคลาดได้เงียบ ๆ สองรอบติด
+ * (ผู้ตรวจ #123 รอบ 11 เจอว่าเขียนแคบกว่าจริง · รอบ 12 เจอว่ากว้างเกินจริงสำหรับขั้นนับแยก)
+ * ⚠️ บัญชีของค้างสร้างจาก MAIN_PROCESSES ขั้นนับแยกจึงไม่มีแถวตั้งแต่แรก —
+ *    บอกว่าแถวจะหาย/จะกลับมาคือส่งคนไปหาของที่ไม่มี และขัดกับป้าย "นับแยก" ที่แอปเขียนไว้เอง */
+const withRepair = () => {
+  const l = baseList();
+  l.splice(1, 0, { id: 'repair', label: 'งานซ่อม', short: 'ซ่อม', hidden: false, standalone: true });
+  return l;
+};
+const ROW_PHRASE = 'แถวในบัญชีของค้าง';
+
+test('A3 — คำยืนยันซ่อน/เลิกซ่อนขั้น ต้องตรงกับของที่หายจริง (ขั้นนับแยกไม่มีแถวในบัญชีของค้าง)', async ({ page }) => {
+  const gs = loadGs();
+  seedPin(gs);
+  expect(gs.api.doPushSettings({ processes: withRepair() }).ok).toBe(true);
+  await open(page, gs);
+  const seen = answerDialogs(page);
+  await unlock(page);
+
+  // ขั้นสายหลัก — มีแถวในบัญชีจริง จึงต้องบอก
+  await page.click('[data-proc-toggle="support"]');
+  await expect(page.locator('[data-proc-row="support"]')).toContainText('ซ่อนอยู่');
+  expect(seen.at(-1).message, 'ขั้นสายหลักมีแถวในบัญชี ต้องบอกว่าหายด้วย').toContain(ROW_PHRASE);
+  expect(seen.at(-1).message, 'ปุ่มหายทั้งหน้าคีย์ยอดและหน้ายอดรายวันทุกขั้น').toContain('ปุ่มเลือกขั้น');
+
+  // ขั้นนับแยก — ไม่มีแถวในบัญชีตั้งแต่แรก ห้ามบอกว่าจะหาย
+  await page.click('[data-proc-toggle="repair"]');
+  await expect(page.locator('[data-proc-row="repair"]')).toContainText('ซ่อนอยู่');
+  expect(seen.at(-1).message, 'ขั้นนับแยกไม่เคยมีแถวในบัญชีของค้าง').not.toContain(ROW_PHRASE);
+  expect(seen.at(-1).message).toContain('ปุ่มเลือกขั้น');
+
+  // เลิกซ่อนต้องสมมาตรกับตอนซ่อน — ของที่กลับมาคือชุดเดียวกับที่หาย
+  await page.click('[data-proc-toggle="repair"]');
+  await expect(page.locator('[data-proc-row="repair"]')).toContainText('แสดง');
+  expect(seen.at(-1).message).not.toContain(ROW_PHRASE);
+  await page.click('[data-proc-toggle="support"]');
+  await expect(page.locator('[data-proc-row="support"]')).toContainText('แสดง');
+  expect(seen.at(-1).message, 'เลิกซ่อนขั้นสายหลัก แถวกลับมาจริง ต้องบอก').toContain(ROW_PHRASE);
+
+  // และของที่ข้อความอ้างต้องมีอยู่จริง — ขั้นนับแยกต้องไม่มีแถวในบัญชีทั้งก่อนและหลัง
+  await tab(page, 'dashboard');
+  const rows = await page.locator('#wipCards .wlr .nm').allInnerTexts();
+  expect(rows.some(r => r.includes('ซ่อม')), 'ขั้นนับแยกต้องไม่มีแถวในบัญชีของค้าง (A3·A5)').toBe(false);
+});
