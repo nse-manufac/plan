@@ -5348,8 +5348,12 @@ document.getElementById('processTable').addEventListener('click', e=>{
     toast('ต้องเหลือขั้นผลิตที่แสดงอยู่อย่างน้อยหนึ่งขั้น'); return;
   }
   const n = state.records.filter(r=>!r.voided && r.process === id).length;
-  const msg = p.hidden ? `เลิกซ่อนขั้น "${p.label}"? ปุ่มและคอลัมน์จะกลับมาทุกเครื่อง`
-    : `ซ่อนขั้น "${p.label}"? ปุ่มคีย์ยอด · คอลัมน์ · แถวในบัญชีของค้าง จะหายไปจากทุกเครื่อง`
+  /* ⚠️ ของที่หาย/กลับมาเป็นชุดเดียวกัน สองข้อความจึงใช้รายการเดียวกัน
+     "ปุ่มเลือกขั้น" ครอบสองแถบ — หน้าคีย์ยอดรายวัน และ #dayProcBtns ของหน้ายอดรายวันทุกขั้น
+     ซึ่งวาดจาก PROCESSES เหมือนกัน · เขียนว่า "ปุ่มคีย์ยอด" แคบกว่าของจริง (ผู้ตรวจ #123 รอบ 11) */
+  const list = 'ปุ่มเลือกขั้น · คอลัมน์ · แถวในบัญชีของค้าง';
+  const msg = p.hidden ? `เลิกซ่อนขั้น "${p.label}"? ${list} จะกลับมาทุกเครื่อง`
+    : `ซ่อนขั้น "${p.label}"? ${list} จะหายไปจากทุกเครื่อง`
       + (n ? ` · ยอดที่คีย์ไว้ ${numFmt(n)} รายการยังอยู่ แต่จะไม่ถูกนับจนกว่าจะเลิกซ่อน` : '');
   if(!confirm(msg)) return;
   saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {hidden: !p.hidden, updatedBy: by, updatedAt: now}) : x),
