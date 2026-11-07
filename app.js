@@ -2936,23 +2936,39 @@ function renderWipCards(){
     if(hasOrderAnomaly(c)) anomalyCount++;
     PROCESSES.forEach(p=>{ sum[p] += Math.min(c[p]||0, q); });
   });
-  const shipped = sum.shipping;
+  const shipped = sum.shipping, left = Math.max(0, totalQty - shipped);
 
-  // การ์ดค้างหน้าขั้น = ยอดขั้นก่อนหน้า − ยอดขั้นนั้น · ขั้นแรกไม่มีการ์ดค้างหน้า (อยู่ในยังไม่เริ่มผลิต)
-  const cards = [
-    {label:'ยอดแผนรวม (Order Qty)', value:numFmt(totalQty), unit:'pcs', accent:'blue'},
-    {label:'ยังไม่เริ่มผลิต', value:numFmt(Math.max(0, totalQty - sum[MAIN_PROCESSES[0]])), unit:'pcs', accent:'blue'},
-    ...MAIN_PROCESSES.slice(1).map((p, i)=>({label:ptext(p, 'waitCard'),
-      // ชื่อการ์ดของขั้นสุดท้ายซ้ำกับหน้ายอดคงคลัง FG แต่เลขคนละเกณฑ์ ต้องเขียนกำกับไม่ให้คนเทียบแล้วสับสน
-      title: p === MAIN_PROCESSES[MAIN_PROCESSES.length - 1]
-        ? 'ของที่ผ่าน Inspection แล้วแต่ยังไม่ส่ง · ครอบที่ยอดสั่งต่อใบและไม่ติดลบ จึงอาจไม่เท่ากับ "FG คงเหลือ" ในหน้ายอดคงคลัง FG ที่โชว์ยอดดิบ' : '',
-      value:numFmt(Math.max(0, sum[MAIN_PROCESSES[i]] - sum[p])), unit:'pcs', accent:'amber'})),
-    {label:'ส่งของแล้ว (Shipped)', value:numFmt(shipped), unit:`pcs (${totalQty? Math.round(shipped/totalQty*100):0}%)`, accent:'green'}
-  ];
-  let html = cards.map(c=>`<div class="card accent-${c.accent}" title="${escapeHtml(c.title || '')}"><div class="label">${escapeHtml(c.label)}</div><div class="value">${c.value}<span class="unit">${c.unit}</span></div></div>`).join('');
+  /* แถวของค้าง = ยอดขั้นก่อนหน้า − ยอดขั้นนั้น · ขั้นแรกเทียบกับยอดสั่ง = "ยังไม่เริ่มผลิต"
+     สูตรเดิมทุกตัว ไม่ได้เปลี่ยนเกณฑ์ เปลี่ยนแค่การ์ดเป็นแถว · ขั้นนับแยกไม่อยู่ในสาย จึงไม่มีแถว (A3/A5) */
+  const stages = MAIN_PROCESSES.map((p, i)=>({
+    key: i===0 ? 'notStarted' : p, color: PROCESS_COLORS[p], n: 0,
+    label: i===0 ? 'ยังไม่เริ่มผลิต' : ptext(p, 'waitCard'),
+    // ขั้นสุดท้ายชื่อซ้ำกับหน้ายอดคงคลัง FG แต่เลขคนละเกณฑ์ ต้องเขียนกำกับไม่ให้คนเทียบแล้วสับสน
+    note: i===MAIN_PROCESSES.length-1
+      ? 'ของที่ผ่าน Inspection แล้วแต่ยังไม่ส่ง · ครอบที่ยอดสั่งต่อใบและไม่ติดลบ จึงอาจไม่เท่ากับ "FG คงเหลือ" ในหน้ายอดคงคลัง FG ที่โชว์ยอดดิบ' : '',
+    qty: Math.max(0, (i===0 ? totalQty : sum[MAIN_PROCESSES[i-1]]) - sum[p])
+  }));
+  /* ⚙ จำนวน PO นับด้วย wipQtyAtStage() ซึ่งเป็นสูตรเดียวกับตัวกรอง "ค้างอยู่ที่ขั้น"
+     กดกรองแล้วจึงได้จำนวนแถวเท่าเลขนี้เสมอ · ต่างจากคอลัมน์ชิ้นที่ครอบ 0 ที่ยอดรวม (สูตรเดิม) */
+  rows.forEach(({o, c})=>stages.forEach(s=>{ if(wipQtyAtStage(o, c, s.key) > 0) s.n++; }));
+
+  const pctOf = v => left ? v/left*100 : 0;
+  const head = (k, v, u, sub) => `<div${sub?' class="sub"':''}><div class="k">${k}</div><div class="v">${v}<small>${u}</small></div></div>`;
+  let html = `<div class="wh">`
+    + head('ยอดแผนรวม', numFmt(totalQty), `ชิ้น · <b>${numFmt(rows.length)}</b> PO`)
+    + head('ส่งไปแล้ว', numFmt(shipped), `ชิ้น · <b>${totalQty? Math.round(shipped/totalQty*100):0}%</b>`)
+    + head('ยังไม่ได้ส่ง', numFmt(left), 'ชิ้น', true) + `</div>`;
   if(anomalyCount>0){
-    html += `<div class="card accent-red"><div class="label">ข้อมูลย้อนแย้ง</div><div class="value" style="color:var(--red)">${anomalyCount}<span class="unit">รายการ (สะสมขั้นถัดไป &gt; ขั้นก่อนหน้า)</span></div></div>`;
+    html += `<div class="wanom">⚠<span><b>ข้อมูลย้อนแย้ง ${numFmt(anomalyCount)} PO</b> — สะสมขั้นถัดไปมากกว่าขั้นก่อนหน้า ซึ่งเป็นไปไม่ได้ ตัวเลขค้างรายขั้นของ PO เหล่านี้จึงยังเชื่อไม่ได้</span></div>`;
   }
+  html += `<div class="wlt"><b>ของที่ยังไม่ได้ส่ง — ค้างอยู่ขั้นไหน</b>`
+    + `<span>หน่วยเป็นชิ้น · เปอร์เซ็นต์คิดจาก ${numFmt(left)} ชิ้นที่ยังไม่ได้ส่ง</span></div>`
+    + `<div class="wlh"><span></span><span></span><span>ขั้นที่ค้าง</span><span class="r">ชิ้นที่ค้าง</span><span class="r">PO</span><span></span><span class="r">สัดส่วน</span></div>`
+    + stages.map((s, i)=>`<div class="wlr"><i class="t" style="background:${s.color}"></i><div class="n">${i+1}</div>`
+      + `<div class="nm" title="${escapeHtml(s.note)}">${escapeHtml(s.label)}</div>`
+      + `<div class="q">${numFmt(s.qty)}</div><div class="q">${numFmt(s.n)}</div>`
+      + `<div class="b"><span style="width:${pctOf(s.qty).toFixed(1)}%;background:${s.color}"></span></div>`
+      + `<div class="q">${pctOf(s.qty).toFixed(1)}%</div></div>`).join('');
   document.getElementById('wipCards').innerHTML = html;
 }
 

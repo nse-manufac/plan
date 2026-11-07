@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-07.4">
+<meta name="app-version" content="2026-11-07.5">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -105,15 +105,31 @@
   tr.dn-group td{background:transparent;}
   tr.row-voided{opacity:.5;}
   tr.row-voided td{background:var(--gray-light);}
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:18px;}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);}
-  .card .label{font-size:12px;color:var(--text-dim);font-weight:600;margin-bottom:6px;}
-  .card .value{font-size:24px;font-weight:800;}
-  .card .unit{font-size:12px;color:var(--text-dim);font-weight:500;margin-left:4px;}
-  .card.accent-blue{border-top:4px solid var(--primary);}
-  .card.accent-amber{border-top:4px solid var(--amber);}
-  .card.accent-green{border-top:4px solid var(--green);}
-  .card.accent-red{border-top:4px solid var(--red);}
+  /* หัวตัวเลขรวม + บัญชีของค้างรายขั้น (แทนการ์ด 7 ใบ)
+     แถบสัดส่วนของทุกขั้นเริ่มที่เส้นเดียวกัน จึงเทียบด้วยตาได้ว่าขั้นไหนกองหนักกว่า
+     ซึ่งแถบที่อยู่ในกรอบการ์ดใครกรอบมันทำไม่ได้ */
+  #wipCards{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:18px;box-shadow:var(--shadow);}
+  .wh{display:flex;flex-wrap:wrap;gap:10px 44px;align-items:flex-end;padding-bottom:14px;border-bottom:1px solid var(--border);}
+  .wh .k{font-size:15px;font-weight:600;color:var(--text-dim);}
+  .wh .v{font-size:30px;font-weight:800;line-height:1.2;font-variant-numeric:tabular-nums;}
+  .wh .v small{font-size:15px;font-weight:500;color:var(--text-dim);margin-left:8px;}
+  .wh .v small b{font-size:17px;font-weight:700;color:var(--text);}
+  .wh .sub .v{font-size:22px;color:var(--text-dim);}
+  .wlt{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:16px 0 10px;}
+  .wlt b{font-size:19px;font-weight:600;}
+  .wlt span{font-size:12px;color:var(--text-dim);}
+  .wlh,.wlr{display:grid;grid-template-columns:13px 20px minmax(130px,1fr) 112px 84px minmax(80px,.62fr) 76px;align-items:center;gap:0 14px;}
+  .wlh{padding-bottom:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-dim);}
+  .wlr{padding:12px 0;border-bottom:1px solid var(--border);}
+  .wlh .r,.wlr .q{text-align:right;font-variant-numeric:tabular-nums;}
+  .wlr .t{width:13px;height:13px;border-radius:3px;}
+  .wlr .n{font-size:12.5px;color:var(--text-dim);}
+  .wlr .nm{font-size:17px;font-weight:600;}
+  .wlr .q{font-size:21px;font-weight:700;}
+  .wlr .b{height:8px;border-radius:2px;background:var(--gray-light);overflow:hidden;}
+  .wlr .b span{display:block;height:100%;border-radius:2px;}
+  .wanom{display:flex;gap:8px;margin-top:14px;font-size:13px;color:var(--text-dim);line-height:1.5;}
+  .wanom b{color:var(--red);font-weight:700;}
   .progress{width:90px;height:8px;background:var(--gray-light);border-radius:5px;overflow:hidden;display:inline-block;vertical-align:middle;}
   .progress .seg-on{height:100%;background:var(--primary);float:left;}
   .progress .seg-late{height:100%;background:#f59e0b;float:left;}
@@ -633,7 +649,7 @@
     <div class="small muted" id="printMeta"></div>
   </div>
   <div class="small muted" id="wipScopeNote" style="margin-bottom:8px;"></div>
-  <div class="cards" id="wipCards"></div>
+  <div id="wipCards"></div>
 
   <div class="panel">
     <h2>ยอดผลิตรายวัน (Throughput)</h2>
@@ -905,6 +921,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-07.4"></script>
+<script src="app.js?v=2026-11-07.5"></script>
 </body>
 </html>

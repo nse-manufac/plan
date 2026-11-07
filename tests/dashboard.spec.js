@@ -455,16 +455,20 @@ test('หัวกระดาษต้องบอกช่วงวันด�
 // ⚠️ ต้องเทียบ "การ์ดกับตาราง" ไม่ใช่ "การ์ดกับเลขที่เขียนไว้ในเทส" — เลขตายตัวจะเขียว
 //    ทั้งที่สองที่บนจอขัดกัน ถ้าวันหนึ่งมีคนเปลี่ยนนิยามของฝั่งตารางไปอีกทาง
 
-/** ป้าย → ค่าบนการ์ดทุกใบ (ตัดหน่วยที่อยู่ใน <span> ท้ายค่าออก) */
-const cardVals = page => page.locator('#wipCards .card').evaluateAll(els => {
+/** ป้าย → ค่า ทั้งหัวตัวเลขรวม (.wh) และแถวของค้างรายขั้น (.wlr)
+ *  หน่วยอยู่ใน <small> ท้ายค่า จึงหยิบเฉพาะ childNodes[0] เหมือนเดิม */
+const cardVals = page => page.evaluate(() => {
   const out = {};
-  els.forEach(el => {
-    out[el.querySelector('.label').textContent.trim()] =
-      el.querySelector('.value').childNodes[0].textContent.trim();
+  document.querySelectorAll('#wipCards .wh > div').forEach(el => {
+    out[el.querySelector('.k').textContent.trim()] =
+      el.querySelector('.v').childNodes[0].textContent.trim();
+  });
+  document.querySelectorAll('#wipCards .wlr').forEach(el => {
+    out[el.querySelector('.nm').textContent.trim()] = el.querySelector('.q').textContent.trim();
   });
   return out;
 });
-const PLAN_CARD = 'ยอดแผนรวม (Order Qty)';
+const PLAN_CARD = 'ยอดแผนรวม';
 
 test('การ์ดต้องไม่นับใบที่ตารางซ่อนไว้เพราะส่งของครบแล้ว', async ({ page }) => {
   /* ⚠️ ยอดส่งต้องลงวันเก่า ไม่ใช่วันนี้ — ตั้งแต่ 7 พ.ย. 2026 ใบที่มียอดในช่วงวันที่เลือก
@@ -709,9 +713,26 @@ test('การ์ดของขั้นสุดท้ายชื่อ "ย
   // นิยามย้ายไปอยู่ใน title แล้ว (เจ้าของสั่งเอาวงเล็บออกจากป้าย 7 พ.ย. 2026) — ต้องยังอ่านได้
   expect(cards, 'ป้ายบนการ์ดต้องสั้น ไม่มีวงเล็บนิยามแล้ว').not.toContain('เสร็จ Inspection แต่ยังไม่ส่ง');
 
-  const title = await page.locator('#wipCards .card')
+  const title = await page.locator('#wipCards .wlr .nm')
     .filter({ hasText: 'ยอด FG คงคลัง' }).getAttribute('title');
   expect(title, 'ต้องบอกว่าทำไมอาจไม่ตรงกับหน้ายอดคงคลัง FG').toContain('FG คงเหลือ');
+});
+
+test('จำนวน PO บนแถวของค้าง ต้องตรงกับจำนวนที่ตัวกรอง "ค้างอยู่ที่ขั้น" กรองออกมา', async ({ page }) => {
+  /* เลขสองที่นี้มาจากสูตรเดียวกัน (wipQtyAtStage) โดยตั้งใจ — คนที่อ่านเลขบนแถว
+     แล้วอยากรู้ว่าเป็นใบไหน ต้องกดกรองแล้วได้จำนวนเท่ากันเสมอ ไม่งั้นเลขนั้นตามต่อไม่ได้
+     ⚠️ คอลัมน์ชิ้นหักที่ยอดรวม ส่วนการนับ PO หักทีละใบ — คนละเกณฑ์โดยตั้งใจ จึงต้องมีเทสคุมข้อนี้ไว้ */
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-B', 100), orderPn('ZZ-3', 'PN-C', 100)], [
+    rec('a1', 'ZZ-1|PN-A', 'winding', 100), rec('a2', 'ZZ-1|PN-A', 'assembly', 40),
+    rec('b1', 'ZZ-2|PN-B', 'winding', 100), rec('b2', 'ZZ-2|PN-B', 'assembly', 100)
+  ]);
+  const poCell = label => page.locator('#wipCards .wlr', { hasText: label }).locator('.q').nth(1);
+  expect(await poCell('ยังไม่เริ่มผลิต').innerText(), 'ZZ-3 ใบเดียวที่ยังไม่เริ่ม').toBe('1');
+  expect(await poCell('WIP ค้างหน้า Assembly').innerText(), 'ZZ-1 ใบเดียวที่ค้างหน้า Assembly').toBe('1');
+
+  await page.selectOption('#dashWipFilter', 'assembly');
+  await page.waitForTimeout(200);
+  expect((await dashGroups(page)).length, 'กดกรองแล้วต้องได้จำนวนเท่าเลขบนแถว').toBe(1);
 });
 
 test('ช่วงวันกลับข้าง (จาก > ถึง) ต้องฟ้อง ไม่ใช่โชว์ขีดทั้งแถวเฉย ๆ', async ({ page }) => {
