@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-07.2">
+<meta name="app-version" content="2026-11-07.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -720,8 +720,8 @@
       </div>
       <div class="field">
         <label>&nbsp;</label>
-        <label style="font-weight:500;"><input type="checkbox" id="dashHideDone" checked>
-          ซ่อนงานที่ส่งของครบแล้ว</label>
+        <label style="font-weight:500;" title="ใบที่ส่งครบแล้ว แต่มียอดคีย์อยู่ในช่วงวันที่เลือก จะยังขึ้นอยู่ ไม่ถูกซ่อน"><input type="checkbox" id="dashHideDone" checked>
+          ซ่อนงานที่ส่งของครบแล้ว <span class="hint">(เว้นใบที่มียอดในช่วง)</span></label>
       </div>
     </div>
     <div class="table-wrap">
@@ -905,6 +905,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-07.2"></script>
+<script src="app.js?v=2026-11-07.4"></script>
 </body>
 </html>

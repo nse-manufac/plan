@@ -227,8 +227,12 @@ const DEFAULT_PROCESSES = [
   {id:'inspection', label:'Inspection',        short:'Inspection', icon:'🔍', color:'#16a34a', defaultOffset:24,   offsetInputId:'offI'},
   {id:'shipping',   label:'ส่งของ (Shipping)', short:'Shipping',   icon:'🚚', color:'#7c3aed', defaultOffset:28,   offsetInputId:'offS',
     headHtml:'ส่งของ<br>(Shipping)',
-    text:{late:'เกินกำหนดส่งของ', wait:'รอส่งของ', waitCard:'WIP รอส่งของ (เสร็จ Inspection แต่ยังไม่ส่ง)',
-          waitExport:'WIP รอส่งของ', deadlineExport:'กำหนดส่งของ', offset:'กำหนดส่งของ (+วัน)'}}
+    /* ⚠️ เจ้าของสั่งเปลี่ยนชื่อ 7 พ.ย. 2026 — เลขนี้คือของที่ผ่าน Inspection แล้วแต่ยังไม่ส่ง
+     *    ซึ่งเป็นนิยามเดียวกับหน้ายอดคงคลัง FG · ชื่อเดิม "WIP รอส่งของ" อ่านไม่ออกว่าเป็นของในคลัง
+     *    ⚠️ แต่ **ตัวเลขสองที่ไม่เท่ากันได้** — การ์ดครอบที่ยอดสั่งต่อใบและไม่ติดลบ
+     *       หน้า FG โชว์ยอดดิบ (ตั้งใจ ดู fgRows) · ชื่อเหมือนกันแล้วยิ่งต้องเขียนกำกับไว้ */
+    text:{late:'เกินกำหนดส่งของ', wait:'รอส่งของ', waitCard:'ยอด FG คงคลัง',
+          waitExport:'ยอด FG คงคลัง', deadlineExport:'กำหนดส่งของ', offset:'กำหนดส่งของ (+วัน)'}}
 ];
 /* ⚠️ อ็อบเจกต์ข้างล่างเป็นตัวเดิมตลอดอายุหน้า — applyProcessList() ล้างแล้วเติมค่าลงตัวเดิม
  *    ห้ามเปลี่ยนเป็น let แล้วสร้างใหม่ ฟังก์ชันทั้งแอปอ้างตัวแปรพวกนี้ไว้ตรง ๆ
@@ -2939,10 +2943,13 @@ function renderWipCards(){
     {label:'ยอดแผนรวม (Order Qty)', value:numFmt(totalQty), unit:'pcs', accent:'blue'},
     {label:'ยังไม่เริ่มผลิต', value:numFmt(Math.max(0, totalQty - sum[MAIN_PROCESSES[0]])), unit:'pcs', accent:'blue'},
     ...MAIN_PROCESSES.slice(1).map((p, i)=>({label:ptext(p, 'waitCard'),
+      // ชื่อการ์ดของขั้นสุดท้ายซ้ำกับหน้ายอดคงคลัง FG แต่เลขคนละเกณฑ์ ต้องเขียนกำกับไม่ให้คนเทียบแล้วสับสน
+      title: p === MAIN_PROCESSES[MAIN_PROCESSES.length - 1]
+        ? 'ของที่ผ่าน Inspection แล้วแต่ยังไม่ส่ง · ครอบที่ยอดสั่งต่อใบและไม่ติดลบ จึงอาจไม่เท่ากับ "FG คงเหลือ" ในหน้ายอดคงคลัง FG ที่โชว์ยอดดิบ' : '',
       value:numFmt(Math.max(0, sum[MAIN_PROCESSES[i]] - sum[p])), unit:'pcs', accent:'amber'})),
     {label:'ส่งของแล้ว (Shipped)', value:numFmt(shipped), unit:`pcs (${totalQty? Math.round(shipped/totalQty*100):0}%)`, accent:'green'}
   ];
-  let html = cards.map(c=>`<div class="card accent-${c.accent}"><div class="label">${escapeHtml(c.label)}</div><div class="value">${c.value}<span class="unit">${c.unit}</span></div></div>`).join('');
+  let html = cards.map(c=>`<div class="card accent-${c.accent}" title="${escapeHtml(c.title || '')}"><div class="label">${escapeHtml(c.label)}</div><div class="value">${c.value}<span class="unit">${c.unit}</span></div></div>`).join('');
   if(anomalyCount>0){
     html += `<div class="card accent-red"><div class="label">ข้อมูลย้อนแย้ง</div><div class="value" style="color:var(--red)">${anomalyCount}<span class="unit">รายการ (สะสมขั้นถัดไป &gt; ขั้นก่อนหน้า)</span></div></div>`;
   }
@@ -3229,17 +3236,29 @@ function dashFilteredRows(){
   if(wipF) rows = rows.filter(x=>wipQtyAtStage(x.o, x.c, wipF) > 0);
   // ซ่อนงานที่ส่งครบแล้ว — แต่ต้องยอมให้คนที่ "เลือกดูเฉพาะเสร็จแล้ว" เห็นของที่ตัวเองขอดู
   // ไม่งั้นเลือกสถานะเสร็จแล้วจะได้ตารางว่าง โดยไม่มีอะไรบอกว่าเพราะติ๊กอีกช่องค้างไว้
-  if(hideDone && statusF !== 'done') rows = rows.filter(x=>x.st.code !== 'done');
+  /* ⚠️ **ใบที่มียอดในช่วงวันที่เลือก ไม่ถูกซ่อน แม้ส่งครบแล้ว** (เจ้าของเคาะ 7 พ.ย. 2026)
+   *    ใบที่ส่งครบ *วันนี้* คือใบที่ทำงานเยอะที่สุดของวัน · ซ่อนไปแล้วแถวรวมอ่านว่า
+   *    วันนี้ทำได้ 7 ทั้งที่ทำได้ 107 และสี่ขั้นขึ้นขีดทั้งที่คีย์ครบ (ผู้ตรวจ #120 รันพิสูจน์)
+   *    ตัวกรองนี้มีไว้ซ่อน "งานที่จบแล้วและไม่ขยับอีก" — ใบที่ขยับในช่วงที่กำลังดูไม่ใช่ของนั้น
+   *    ⚠️ record ยอด 0 ก็นับว่า "มียอดในช่วง" (เทียบ `!= null`) — มีคนคีย์ว่าวันนี้ผลิต 0
+   *       คือการขยับ กฎเดียวกับที่ช่องในตารางแยก `0` ออกจาก `—`
+   *    ⚠️ อยู่ใน dashFilteredRows() จุดเดียว การ์ดจึงนับชุดเดียวกับตารางต่อไป (กฎจาก #119) */
+  if(hideDone && statusF !== 'done'){
+    const act = buildRangeMap(dashRangeRecords());
+    rows = rows.filter(x=> x.st.code !== 'done'
+      || PROCESSES.some(p=> (act[x.o.id] || {})[p] != null));
+  }
   return rows;
 }
 
 /** ยอดที่คีย์ภายในช่วงวันที่เลือกบนแดชบอร์ด — คืน record ที่อยู่ในช่วง ให้ buildRangeMap รวมต่อ
  *  (ช่องว่าง = ไม่จำกัดด้านนั้น · ว่างทั้งคู่ = "ทั้งหมด") · เทียบสตริง YYYY-MM-DD ตรง ๆ ได้ เพราะ record.date เป็นวันปฏิทินล้วนที่ normalize แล้ว
  *
- *  ⚠️ **ช่วงวันเปลี่ยนแค่ "เลขตัวใหญ่" ในช่องของแต่ละขั้น กับแถวรวมท้ายตาราง**
- *     ไม่ตัดแถวทิ้ง และไม่แตะการ์ดสรุป — การ์ดกับตารางยังต้องนับใบชุดเดียวกัน (กฎจาก #119)
- *     ถ้าวันหนึ่งให้ช่วงวันตัดแถว ต้องย้ายไปอยู่ใน dashFilteredRows() ไม่ใช่ที่นี่
- *     ไม่งั้นการ์ดกับตารางจะขัดกันทันที ซึ่งเป็นบั๊กที่ #119 ใช้สามรอบแก้
+ *  ⚠️ **ตัวมันเองไม่ตัดแถวและไม่แตะการ์ด** — มันคืน record ไม่ใช่ใบ
+ *     การตัดแถวตามช่วงวันทำได้ทางเดียวคือใน dashFilteredRows() ซึ่งการ์ด ตาราง และแถวรวม
+ *     อ่านชุดเดียวกัน (กฎจาก #119) · ทำที่นี่เมื่อไหร่ การ์ดกับตารางขัดกันทันที
+ *     ที่นั่นมีข้อยกเว้นหนึ่งข้อใช้ช่วงวันอยู่จริง — "ซ่อนงานที่ส่งของครบแล้ว" (7 พ.ย. 2026)
+ *     **การ์ดกับ #wipScopeNote จึงขยับตามช่วงวันได้** และนั่นถูกตามกฎ ไม่ใช่การรั่ว
  *
  *  ⚠️ **ยอดในช่วงไม่ครอบที่ orderQty** ต่างจากยอดสะสมในบรรทัดล่างซึ่งครอบ — คนละความหมาย
  *     ยอดสะสม = "เดินไปถึงไหนของใบนี้" จึงไม่เกินยอดสั่งโดยนิยาม
@@ -5399,7 +5418,8 @@ function fillPrintHeader(){
   const hiddenProcs = Array.from(chartHiddenProcs());
   if(hiddenProcs.length) parts.push('กราฟซ่อนขั้น: '+hiddenProcs.map(x=>PROCESS_LABELS[x]||x).join(', '));
   // กระดาษที่ไม่บอกว่าซ่อนอะไรไว้ จะถูกอ่านว่า "งานทั้งหมดมีเท่านี้" ซึ่งไม่จริง
-  if(document.getElementById('dashHideDone').checked) parts.push('ซ่อนงานที่ส่งของครบแล้ว');
+  // ต้องเขียนข้อยกเว้นด้วย — ใบที่ส่งครบแต่มียอดในช่วงยังอยู่บนกระดาษ ไม่งั้นหัวกระดาษขัดกับตัวกระดาษเอง
+  if(document.getElementById('dashHideDone').checked) parts.push('ซ่อนงานที่ส่งของครบแล้ว (เว้นใบที่มียอดในช่วง)');
   const now = new Date();
   const hhmm = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
   parts.push('พิมพ์เมื่อ '+fmtDateTH(todayISO())+' '+hhmm);
