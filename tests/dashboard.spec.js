@@ -718,21 +718,29 @@ test('การ์ดของขั้นสุดท้ายชื่อ "ย
   expect(title, 'ต้องบอกว่าทำไมอาจไม่ตรงกับหน้ายอดคงคลัง FG').toContain('FG คงเหลือ');
 });
 
-test('จำนวน PO บนแถวของค้าง ต้องตรงกับจำนวนที่ตัวกรอง "ค้างอยู่ที่ขั้น" กรองออกมา', async ({ page }) => {
+test('จำนวน PO บนแถวของค้าง ต้องตรงกับจำนวน "ใบ" ที่ตัวกรอง "ค้างอยู่ที่ขั้น" กรองออกมา', async ({ page }) => {
   /* เลขสองที่นี้มาจากสูตรเดียวกัน (wipQtyAtStage) โดยตั้งใจ — คนที่อ่านเลขบนแถว
      แล้วอยากรู้ว่าเป็นใบไหน ต้องกดกรองแล้วได้จำนวนเท่ากันเสมอ ไม่งั้นเลขนั้นตามต่อไม่ได้
+     ⚠️ **หน่วยที่ต้องเท่ากันคือ "ใบ" ไม่ใช่ "แถว"** — ตารางรวมเป็นราย P/N มาตั้งแต่ 5 พ.ย. 2026
+     สองใบของ P/N เดียวกันจึงเหลือแถวเดียว · fixture ข้อนี้จึงจงใจให้ ZZ-1 กับ ZZ-2 ใช้ P/N เดียวกัน
+     เพื่อให้ "จำนวนแถว" กับ "จำนวนใบ" ไม่เท่ากัน ถ้าใช้ P/N คนละตัวเทสจะเขียวเองโดยไม่ได้ตรวจอะไร
      ⚠️ คอลัมน์ชิ้นหักที่ยอดรวม ส่วนการนับ PO หักทีละใบ — คนละเกณฑ์โดยตั้งใจ จึงต้องมีเทสคุมข้อนี้ไว้ */
-  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-B', 100), orderPn('ZZ-3', 'PN-C', 100)], [
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-A', 100), orderPn('ZZ-3', 'PN-B', 100)], [
     rec('a1', 'ZZ-1|PN-A', 'winding', 100), rec('a2', 'ZZ-1|PN-A', 'assembly', 40),
-    rec('b1', 'ZZ-2|PN-B', 'winding', 100), rec('b2', 'ZZ-2|PN-B', 'assembly', 100)
+    rec('b1', 'ZZ-2|PN-A', 'winding', 100), rec('b2', 'ZZ-2|PN-A', 'assembly', 30)
   ]);
   const poCell = label => page.locator('#wipCards .wlr', { hasText: label }).locator('.q').nth(1);
   expect(await poCell('ยังไม่เริ่มผลิต').innerText(), 'ZZ-3 ใบเดียวที่ยังไม่เริ่ม').toBe('1');
-  expect(await poCell('WIP ค้างหน้า Assembly').innerText(), 'ZZ-1 ใบเดียวที่ค้างหน้า Assembly').toBe('1');
+  expect(await poCell('WIP ค้างหน้า Assembly').innerText(), 'ZZ-1 กับ ZZ-2 ค้างหน้า Assembly ทั้งคู่').toBe('2');
 
   await page.selectOption('#dashWipFilter', 'assembly');
   await page.waitForTimeout(200);
-  expect((await dashGroups(page)).length, 'กดกรองแล้วต้องได้จำนวนเท่าเลขบนแถว').toBe(1);
+  const g = await dashGroups(page);
+  expect(g.length, 'สองใบของ P/N เดียวกัน ตารางรวมเหลือแถวเดียว — แถวจึงไม่ใช่หน่วยที่เทียบกับ PO').toBe(1);
+  expect(g.reduce((s, r) => s + Number(r.n.replace(/,/g, '')), 0),
+    'คอลัมน์ "ใบ" รวมกันต้องเท่าเลข PO บนแถว ไม่งั้นเลขนั้นตามต่อไม่ได้').toBe(2);
+  expect(await page.locator('#wipScopeNote').innerText(),
+    'ข้อความใต้การ์ดก็ต้องบอกจำนวนเดียวกัน').toContain('2 ใบ');
 });
 
 test('ช่วงวันกลับข้าง (จาก > ถึง) ต้องฟ้อง ไม่ใช่โชว์ขีดทั้งแถวเฉย ๆ', async ({ page }) => {
