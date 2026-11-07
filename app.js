@@ -2926,7 +2926,7 @@ function renderWipCards(){
   const rows = dashFilteredRows();
   const subF = dashSubName();
   const note = document.getElementById('wipScopeNote');
-  // ⚠️ ข้อความนี้คือสิ่งเดียวที่บอกว่าการ์ดนับใบไหน — ต้องตรงกับชุดที่นับจริง จึงบอกจำนวนใบด้วย
+  // ⚠️ ข้อความนี้คือสิ่งเดียวที่บอกว่าหัวเลขกับบัญชีของค้างนับใบไหน — ต้องตรงกับชุดที่นับจริง จึงบอกจำนวนใบด้วย
   if(note) note.textContent = `นับเฉพาะใบที่ผ่านตัวกรองบนหน้านี้ · ${numFmt(rows.length)} ใบ` + (subF ? ' · ' + subF : '');
   let totalQty=0, anomalyCount=0;
   const sum = emptyCum();
@@ -5222,7 +5222,7 @@ function renderProcessAdmin(){
         : p.hidden ? '<span class="badge amber">ซ่อนอยู่</span>' : '<span class="badge green">แสดง</span>')
         // ชนิดของขั้นเปลี่ยนทีหลังไม่ได้ จึงต้องเห็นได้ตลอดว่าขั้นไหนไม่ได้อยู่ในสายการผลิต
         // ⚠️ ต้องมีคลาสสีด้วย — `.badge` เปล่า ๆ ไม่มีพื้นหลัง จะออกมาเป็นตัวหนาเล็ก ๆ ไม่เหมือนป้ายอื่น
-        + (p.standalone ? ' <span class="badge gray" title="ยอดไม่เกี่ยวกับสายหลัก ไม่มีการ์ด WIP และไม่ถูกตัดสินล่าช้า">นับแยก</span>' : '');
+        + (p.standalone ? ' <span class="badge gray" title="ยอดไม่เกี่ยวกับสายหลัก ไม่มีแถวในบัญชีของค้าง และไม่ถูกตัดสินล่าช้า">นับแยก</span>' : '');
       const who = p.updatedBy || p.addedBy;
       const audit = who ? `<div class="hint">${escapeHtml((p.updatedBy ? 'แก้ล่าสุดโดย ' : 'เพิ่มโดย ') + who)}</div>` : '';
       const actions = unlocked && !locked
@@ -5312,7 +5312,7 @@ document.getElementById('btnProcessAdd').addEventListener('click', ()=>{
   const where = after === '__first__' ? 'เป็นขั้นแรก' : 'ต่อจาก ' + PROCESS_LABELS[after];
   // ⚠️ ชนิดของขั้นเปลี่ยนทีหลังไม่ได้ (มีแต่เปลี่ยนชื่อกับซ่อน) จึงต้องบอกให้ชัดตั้งแต่ตอนกด
   const kind = standalone
-    ? ' · เป็นขั้นนับแยก ยอดไม่เกี่ยวกับสายหลัก ไม่มีการ์ด WIP และไม่ถูกตัดสินล่าช้า'
+    ? ' · เป็นขั้นนับแยก ยอดไม่เกี่ยวกับสายหลัก ไม่มีแถวในบัญชีของค้าง และไม่ถูกตัดสินล่าช้า'
     : ' · อยู่ในสายการผลิต';
   if(!confirm(`เพิ่มขั้น "${label}" ${where}?${kind}\n— ทุกเครื่องจะเห็นขั้นนี้หลังซิงค์ · ลบทีหลังไม่ได้ ซ่อนได้อย่างเดียว · ชนิดของขั้นเปลี่ยนทีหลังไม่ได้`)) return;
   list.splice(at, 0, {id: 'p' + Date.now().toString(36), label, short, icon: standalone ? '🧰' : '🔹',
@@ -5349,7 +5349,7 @@ document.getElementById('processTable').addEventListener('click', e=>{
   }
   const n = state.records.filter(r=>!r.voided && r.process === id).length;
   const msg = p.hidden ? `เลิกซ่อนขั้น "${p.label}"? ปุ่มและคอลัมน์จะกลับมาทุกเครื่อง`
-    : `ซ่อนขั้น "${p.label}"? ปุ่ม คอลัมน์ การ์ด จะหายไปจากทุกเครื่อง`
+    : `ซ่อนขั้น "${p.label}"? ปุ่ม คอลัมน์ แถวในบัญชีของค้าง จะหายไปจากทุกเครื่อง`
       + (n ? ` · ยอดที่คีย์ไว้ ${numFmt(n)} รายการยังอยู่ แต่จะไม่ถูกนับจนกว่าจะเลิกซ่อน` : '');
   if(!confirm(msg)) return;
   saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {hidden: !p.hidden, updatedBy: by, updatedAt: now}) : x),
@@ -5381,9 +5381,11 @@ document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
 ['dashWeekFilter','dashStatusFilter','dashWipFilter'].forEach(id=>
   document.getElementById(id).addEventListener('change', renderDashScoped));
 
-/* ช่วงวันไม่ได้เปลี่ยนชุดใบที่นับ จึงไม่จำเป็นต้องวาดการ์ดใหม่ — แต่เรียก renderDashScoped()
- * เหมือนช่องอื่นโดยตั้งใจ เพื่อให้กฎ "ทุกช่องผูกกับตัวกลาง" ไม่มีข้อยกเว้นให้ใครเข้าใจผิด
- * (การ์ดใช้เวลา ~5 ms ที่ 712 ใบ · ผู้ตรวจ #119 วัดไว้) */
+/* ⚠️ ช่วงวัน **เปลี่ยนชุดใบที่นับจริง** ตั้งแต่ #122 — ข้อยกเว้นของ
+ * "ซ่อนงานที่ส่งของครบแล้ว" อ่านช่วงวันอยู่ใน dashFilteredRows() หัวเลขกับจำนวนใบจึงขยับตาม
+ * **การวาดใหม่จึงจำเป็น ห้ามถอด renderDashScoped() ออกจากปุ่มช่วงวัน**
+ * ถอดเมื่อไหร่ หัวเลขกับตารางขัดกันทันที ซึ่งเป็นบั๊กที่ #119 ใช้สามรอบแก้
+ * (ผู้ตรวจ #123 รอบ 9 รันวัดได้ 1 ใบ → 2 ใบ · คอมเมนต์เดิมเขียนกลับกัน) */
 document.getElementById('dashPresets').addEventListener('click', e=>{
   const kind = e.target.dataset && e.target.dataset.range;
   if(!kind) return;
