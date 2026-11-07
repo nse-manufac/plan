@@ -144,7 +144,7 @@ test('ยอดสะสมต้องครอบ min(สะสม, ยอด�
     [rec('r1', 'ZZ-1|PN-A', 'winding', 150), rec('r2', 'ZZ-2|PN-A', 'winding', 50)]);
   const g = await dashGroups(page);
   expect(g[0].winding).toContain('150/200');
-  expect(await page.locator('#wipCards').innerText(), 'ต้องตรงกับการ์ด WIP').toContain('150');
+  expect(await page.locator('#wipCards').innerText(), 'ต้องตรงกับบัญชีของค้างรายขั้น').toContain('150');
 });
 
 test('P/N เดียวกันแต่คนละหน่วย ต้องเป็นคนละแถว ยอดห้ามปนกัน', async ({ page }) => {
@@ -780,4 +780,42 @@ test('ยอดสั่งที่เป็นข้อความ การ�
   /* การ์ดนี้บวกยอดหลายใบมาตั้งแต่ต้น `0 + '100'` ได้ `'0100'` ไม่ใช่ 100
      ผิดเงียบมาตลอดเพราะยังไม่มีคอลัมน์ไหนให้เอามาเทียบ */
   expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องได้เลขเดียวกับตาราง').toBe(rows[0].qty);
+});
+
+/* G3 — สีของขั้นมาจากรายการที่ซิงค์มา และแผงจัดการขั้นไม่กรองอักขระ
+ * ค่าที่ลง innerHTML ต้องผ่าน escapeHtml() ทุกที่ รวมที่อยู่ใน attribute ของ style
+ * ไม่งั้น `#111" onmouseover="…` ปิด attribute แล้วแทรก attribute ใหม่ได้ (ผู้ตรวจ #123 รันพิสูจน์)
+ * ⚠️ ต้องใช้ขั้นที่ "ไม่ใช่ห้าขั้นตั้งต้น" — สีของห้าขั้นนั้นมาจากโค้ดเสมอ ที่ซิงค์มาทับไม่ได้ */
+test('G3 — สีของขั้นที่ซิงค์มาต้องไม่กลายเป็น attribute บนบัญชีของค้าง', async ({ page }) => {
+  const EVIL = '#111" onmouseover="window.__pwned=1';
+  const procs = [
+    { id: 'winding', label: 'Winding/Trimming', short: 'Winding', hidden: false },
+    { id: 'assembly', label: 'Assembly', short: 'Assembly', hidden: false },
+    { id: 'evilstage', label: 'ขั้นทดสอบ', short: 'ทดสอบ', color: EVIL, hidden: false },
+    { id: 'support', label: 'Support', short: 'Support', hidden: false },
+    { id: 'inspection', label: 'Inspection', short: 'Inspection', hidden: false },
+    { id: 'shipping', label: 'ส่งของ (Shipping)', short: 'Shipping', hidden: false }
+  ];
+  await page.addInitScript(([k, o, r, p]) => localStorage.setItem(k, JSON.stringify({
+    version: 1, deviceName: 't',
+    deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
+    chartPref: { mode: '14', from: '', to: '' }, processes: p,
+    orders: o, records: r, deliveryNotes: [], deltaWip: [], importHistory: []
+  })), [K_STATE, ORDERS, RECORDS, procs]);
+  await page.goto(APP);
+  await waitReady(page);
+  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.waitForTimeout(250);
+
+  // ขั้นที่ซิงค์มาต้องมีแถวของตัวเองจริง ไม่งั้นเทสนี้เขียวเองโดยไม่ได้ตรวจอะไร
+  await expect(page.locator('#wipCards .wlr', { hasText: 'ค้างหน้า ทดสอบ' })).toHaveCount(1);
+
+  const swatch = page.locator('#wipCards .wlr i.t').nth(2);
+  expect(await swatch.getAttribute('onmouseover'), 'สีที่ซิงค์มาแตก attribute ออกมาได้').toBeNull();
+  await swatch.hover();
+  await page.waitForTimeout(120);
+  expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
+
+  const bar = page.locator('#wipCards .wlr .b span').nth(2);
+  expect(await bar.getAttribute('onmouseover'), 'แถบสัดส่วนก็แตก attribute ออกมาได้').toBeNull();
 });

@@ -2964,10 +2964,10 @@ function renderWipCards(){
   html += `<div class="wlt"><b>ของที่ยังไม่ได้ส่ง — ค้างอยู่ขั้นไหน</b>`
     + `<span>หน่วยเป็นชิ้น · เปอร์เซ็นต์คิดจาก ${numFmt(left)} ชิ้นที่ยังไม่ได้ส่ง</span></div>`
     + `<div class="wlh"><span></span><span></span><span>ขั้นที่ค้าง</span><span class="r">ชิ้นที่ค้าง</span><span class="r">PO</span><span></span><span class="r">สัดส่วน</span></div>`
-    + stages.map((s, i)=>`<div class="wlr"><i class="t" style="background:${s.color}"></i><div class="n">${i+1}</div>`
+    + stages.map((s, i)=>`<div class="wlr"><i class="t" style="background:${escapeHtml(s.color)}"></i><div class="n">${i+1}</div>`
       + `<div class="nm" title="${escapeHtml(s.note)}">${escapeHtml(s.label)}</div>`
       + `<div class="q">${numFmt(s.qty)}</div><div class="q">${numFmt(s.n)}</div>`
-      + `<div class="b"><span style="width:${pctOf(s.qty).toFixed(1)}%;background:${s.color}"></span></div>`
+      + `<div class="b"><span style="width:${pctOf(s.qty).toFixed(1)}%;background:${escapeHtml(s.color)}"></span></div>`
       + `<div class="q">${pctOf(s.qty).toFixed(1)}%</div></div>`).join('');
   document.getElementById('wipCards').innerHTML = html;
 }
