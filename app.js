@@ -221,11 +221,11 @@ const NOTE_CLEARED = 'เคลียร์แล้ว';
  * ⚠️ สีของแต่ละขั้นอยู่ที่นี่ที่เดียว ทั้งแท่งกราฟและคำอธิบายสีเหนือกราฟ
  *    เดิมสีถูกเขียนไว้สองที่ แก้ที่เดียวแล้วอีกที่ค้างไว้ = คำอธิบายชี้ผิดแท่ง โดยไม่มีอะไรฟ้อง */
 const DEFAULT_PROCESSES = [
-  {id:'winding',    label:'Winding/Trimming',  short:'Winding',    icon:'🌀', color:'#2563eb', defaultOffset:10,   offsetInputId:'offW'},
-  {id:'assembly',   label:'Assembly',          short:'Assembly',   icon:'🔧', color:'#d97706', defaultOffset:17,   offsetInputId:'offA'},
-  {id:'support',    label:'Support',           short:'Support',    icon:'🧩', color:'#0891b2', defaultOffset:null, offsetInputId:'offSup'},
-  {id:'inspection', label:'Inspection',        short:'Inspection', icon:'🔍', color:'#16a34a', defaultOffset:24,   offsetInputId:'offI'},
-  {id:'shipping',   label:'ส่งของ (Shipping)', short:'Shipping',   icon:'🚚', color:'#7c3aed', defaultOffset:28,   offsetInputId:'offS',
+  {id:'winding',    label:'Winding/Trimming',  short:'Winding',    icon:'🌀', color:'#2a78d6', defaultOffset:10,   offsetInputId:'offW'},
+  {id:'assembly',   label:'Assembly',          short:'Assembly',   icon:'🔧', color:'#eb6834', defaultOffset:17,   offsetInputId:'offA'},
+  {id:'support',    label:'Support',           short:'Support',    icon:'🧩', color:'#1baf7a', defaultOffset:null, offsetInputId:'offSup'},
+  {id:'inspection', label:'Inspection',        short:'Inspection', icon:'🔍', color:'#dfa800', defaultOffset:24,   offsetInputId:'offI'},
+  {id:'shipping',   label:'ส่งของ (Shipping)', short:'Shipping',   icon:'🚚', color:'#d6409f', defaultOffset:28,   offsetInputId:'offS',
     headHtml:'ส่งของ<br>(Shipping)',
     /* ⚠️ เจ้าของสั่งเปลี่ยนชื่อ 7 พ.ย. 2026 — เลขนี้คือของที่ผ่าน Inspection แล้วแต่ยังไม่ส่ง
      *    ซึ่งเป็นนิยามเดียวกับหน้ายอดคงคลัง FG · ชื่อเดิม "WIP รอส่งของ" อ่านไม่ออกว่าเป็นของในคลัง
@@ -265,8 +265,12 @@ const PROCESS_COLORS = {};
 const PREV_PROCESS = {};
 const LOCKED_PROCESS_IDS = ['inspection', 'shipping'];
 const DEFAULT_BY_ID = Object.fromEntries(DEFAULT_PROCESSES.map(p=>[p.id, p]));
-/* สีของขั้นที่เพิ่มจากหน้าจัดการขั้น — ไม่ซ้ำสีของห้าขั้นตั้งต้น */
-const PROCESS_PALETTE = ['#be185d', '#0d9488', '#9333ea', '#ca8a04', '#4f46e5', '#dc2626', '#059669', '#ea580c'];
+/* สีของขั้นที่เพิ่มจากหน้าจัดการขั้น — หยิบสีแรกที่ยังไม่มีขั้นไหนใช้ (ตัวจับคลิก btnProcessAdd)
+ * ⚠️ สองหัวแรกคือสีขั้นที่ 6 กับ 7 — วัดมาคู่กับห้าขั้นข้างบน ห้ามสลับลำดับหรือแทรกอะไรก่อน
+ *    ตัวถัดไปเป็นสีเก่าที่ยังห่างจากทุกสีข้างบนเกิน 8 (วัดแล้ว) แต่ไม่ได้วัดกันเอง
+ *    ตัดออกสามสี — #dc2626 คือสี var(--red) ที่แอปใช้เป็นป้าย "ล่าช้า" อยู่แล้ว (สีเดียวกันเป๊ะ ขั้นที่เพิ่มจะอ่านเหมือนป้ายล่าช้า)
+ *    ส่วน #059669 กับ #ea580c ชนกับสีของ Support กับ Assembly */
+const PROCESS_PALETTE = ['#8e24aa', '#008300', '#be185d', '#0d9488', '#9333ea', '#ca8a04', '#4f46e5'];
 const PROCESS_AUDIT_KEYS = ['addedBy', 'addedAt', 'updatedBy', 'updatedAt'];
 
 /** รูปของรายการขั้นที่รับได้ — กฎเดียวกับ processListError ใน google-apps-script.gs
