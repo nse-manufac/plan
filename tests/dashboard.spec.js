@@ -1180,3 +1180,23 @@ test('หัวคอลัมน์ขวาสุดต้องบอกว�
   expect(txt, 'ช่องซ้ายเป็นยอดสะสม').toContain('Assembly 450');
   expect(txt, 'ช่องขวาเป็นรายการล่าสุด ไม่ใช่สะสม').toContain(fmtDateTH(isoAgo(7)));
 });
+
+test('G2 — โฟกัสบนปุ่มเลข PO ต้องไม่ตกไป BODY ตอนหน้าถูกวาดใหม่', async ({ page }) => {
+  /* ⚠️ ซิงค์อัตโนมัติวาดแดชบอร์ดใหม่ทุก 20 วิ · คนที่ Tab มาค้างบนปุ่มเลข PO
+     จะตกไป BODY เองโดยไม่ได้กดอะไรเลย แล้วต้อง Tab จากต้นหน้าใหม่ (ผู้ตรวจ #127 รอบ 5)
+     ปุ่มกาง (#wanomToggle) มีตัวคืนโฟกัสมาตั้งแต่รอบ 1 แต่ปุ่มในแถวไม่มี */
+  await openDash(page, [order('PO-R1', 9000, 'TUE-U'), order('PO-R2', 9000, 'TUE-U')], [
+    ...anomRecs('PO-R1', { winding: 100, assembly: 900 }),
+    ...anomRecs('PO-R2', { winding: 100, assembly: 400 })
+  ]);
+  await openAnomList(page);
+
+  await page.locator('[data-anom-po="PO-R2"]').focus();
+  // วาดใหม่แบบเดียวกับที่รอบซิงค์ทำ
+  await page.evaluate(() => renderWipCards());
+
+  expect(await page.evaluate(() => {
+    const a = document.activeElement;
+    return a && a.dataset ? (a.dataset.anomPo || a.tagName) : 'NONE';
+  }), 'ต้องกลับมาที่ปุ่มเดิม ไม่ใช่ปุ่มแรกและไม่ใช่ BODY').toBe('PO-R2');
+});

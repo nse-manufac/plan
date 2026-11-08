@@ -3085,17 +3085,24 @@ function renderWipCards(){
       + `<div class="q">${pctOf(s.qty).toFixed(1)}%</div></div>`).join('');
   /* ⚠️ ปุ่มกางถูกวาดใหม่ทั้งปุ่มทุกครั้งที่เปลี่ยนตัวกรอง — ไม่คืนโฟกัสแล้วคนที่ไล่ด้วยแป้นพิมพ์
      ตกไป BODY แล้วต้องเริ่มจากต้นหน้าใหม่ (กฎเดียวกับ #dayProcBtns และ pendingFocusOrderId) */
-  const refocus = document.activeElement && document.activeElement.id === 'wanomToggle';
+  const act = document.activeElement;
+  const wasToggle = !!(act && act.id === 'wanomToggle');
+  const wasPo = act && act.dataset ? act.dataset.anomPo : null;
   const box = document.getElementById('wipCards');
   box.innerHTML = html;
   const tg = document.getElementById('wanomToggle');
-  if(tg){
-    tg.addEventListener('click', ()=>{ anomOpen = !anomOpen; renderWipCards(); });
-    if(refocus) tg.focus();
-  }
+  if(tg) tg.addEventListener('click', ()=>{ anomOpen = !anomOpen; renderWipCards(); });
   box.querySelectorAll('[data-anom-po]').forEach(el=>{
     el.addEventListener('click', ()=> openRecordsForPo(el.dataset.anomPo));
   });
+  /* ⚠️ ปุ่มในแถวก็ต้องคืนโฟกัส ไม่ใช่แค่ปุ่มกาง — ซิงค์อัตโนมัติวาดหน้าใหม่ทุก 20 วิ
+     คนที่ Tab มาค้างบนปุ่มเลข PO จะตกไป BODY เองโดยไม่ได้กดอะไร (ผู้ตรวจ #127 รอบ 5)
+     CSS.escape เพราะรหัส PO ซิงค์ข้ามเครื่องได้ และไม่ได้กรองอักขระ (G3) */
+  if(wasToggle){ if(tg) tg.focus(); }
+  else if(wasPo){
+    const back = box.querySelector(`[data-anom-po="${CSS.escape(wasPo)}"]`);
+    if(back) back.focus();
+  }
 }
 
 /** ยอดที่ค้างอยู่หน้าขั้น stage ของใบสั่งซื้อใบเดียว — **หักทีละใบ**
