@@ -464,7 +464,7 @@ test('การ์ดสรุปด้านบนต้องยังนั�
     rec('r2', 'PO-D1|' + PN_A, 'shipping', 1200, '2026-08-22')
   ]);
   const cards = await page.locator('#wipCards').innerText();
-  expect(cards, 'การ์ด "ส่งของแล้ว" ต้องยังมีและยังนับถูก').toContain('1,200');
+  expect(cards, 'หัวเลข "ส่งไปแล้ว" ต้องยังมีและยังนับถูก').toContain('1,200');
   expect(cards, 'และการ์ด "ยอด FG คงคลัง" ยังเป็น 1,800 เหมือนเดิม').toContain('1,800');
 });
 
