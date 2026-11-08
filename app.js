@@ -2976,11 +2976,9 @@ function anomalyListHtml(list){
   const keys = new Set();
   list.forEach(x=> x.bad.forEach(b=> keys.add(x.o.id + '|' + b.p)));
   const last = lastKeyedOf(keys);
-  /* เรียงเองเสมอ — ของเดิมตามลำดับใน state.orders ซึ่งเครื่องที่นำเข้าไฟล์เองกับเครื่องที่ซิงค์มา
-     ไม่เหมือนกัน คนสองคนเปิดเทียบกันจะไล่บรรทัดตรงกันไม่ได้ (กฎเดียวกับหน้ายอดรายวันทุกขั้น)
-     เกินมากสุดขึ้นก่อน = ใบที่ผิดหนักสุดอยู่บนสุด ซึ่งเป็นลำดับที่คนไล่แก้ต้องการ
-     ⚠️ **ต้องครอบ String() ก่อน localeCompare** — เครื่องที่ซิงค์มาได้ poNo/pn เป็นตัวเลข
-        ตัวเลขไม่มีเมธอดนี้ แล้วทั้งรายการจะพังทั้งก้อน (บั๊กแบบเดียวกับตารางราย P/N ใน CLAUDE.md) */
+  /* เรียงเองเสมอ — ลำดับใน state.orders ต่างกันระหว่างเครื่องที่นำเข้าเองกับที่ซิงค์มา
+     ⚠️ ครอบ String() ก่อน localeCompare — ตัวเลขไม่มีเมธอดนี้ รายการจะพังทั้งก้อน
+     เหตุผลเต็มอยู่ใน CLAUDE.md */
   const worst = x => Math.max.apply(null, x.bad.map(b=> b.over));
   list = list.slice().sort((a, b)=> worst(b) - worst(a)
     || String(a.o.poNo).localeCompare(String(b.o.poNo))
