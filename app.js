@@ -130,6 +130,27 @@ function fmtDateTH(iso){
   const [y,m,d]=parts;
   return `${d}/${m}/${y}`;
 }
+/** เทียบข้อความสำหรับเรียงลำดับ — ครอบ String() ทั้งสองฝั่งเสมอ
+ *
+ *  ⚠️ **ค่าที่ซิงค์มาจาก Google Sheets เป็นค่าดิบของเซลล์** — `getValues()` แปลงกลับเป็นสตริงให้
+ *     เฉพาะคอลัมน์วันที่ (`DATE_ONLY_COLS`) ช่องที่ "ดูเป็นตัวเลข" อย่าง P/N · สัปดาห์ ·
+ *     รหัส PO ที่เป็นเลขล้วน จึงกลับมาเป็น number
+ *     ตัวเลขไม่มีเมธอด localeCompare → throw ตอนเรียง ซึ่งทำให้ **ทั้งตารางไม่ขึ้นเลย**
+ *     ไม่ใช่แค่แถวเดียวหาย · เครื่องที่นำเข้าไฟล์เองได้สตริง จึงไม่เจอ
+ *     เจอเฉพาะเครื่องที่ดึงจากเซิร์ฟเวอร์ (CLAUDE.md §8.2 บันทึกกับดักนี้ไว้ตั้งแต่ 1 ก.ย. 2026)
+ *
+ *  null/undefined ก็ throw เหมือนกัน จึงแปลงเป็นค่าว่างให้ด้วย
+ *
+ *
+ *  ⚠️ **ที่เรียก localeCompare ตรง ๆ ไม่ได้พลาด — มันปลอดภัยด้วยสองเหตุคนละแบบ**
+ *     · `fgRows()` กับรายงาน Excel — ครอบ `String()` ตอนสร้างกลุ่มแล้ว ค่าในแถวจึงเป็นสตริงเสมอ
+ *     · ช่องวันที่กับ timestamp — ฝั่งเซิร์ฟเวอร์แปลงกลับเป็นสตริงให้ (`DATE_ONLY_COLS` ใน .gs)
+ *     สองแบบนี้ดีกว่ามาครอบตอนเรียง เพราะความเป็นสตริงถูกรับประกันตั้งแต่ต้นทาง
+ *     **ที่เหลือคือที่อ่านค่าจาก order ตรง ๆ ซึ่งไม่มีใครรับประกันชนิดให้ — ต้องใช้ cmpText** */
+function cmpText(a, b){
+  return String(a == null ? '' : a).localeCompare(String(b == null ? '' : b));
+}
+
 function numFmt(n){ return (Number(n)||0).toLocaleString('en-US'); }
 
 let toastTimer=null;
@@ -2309,8 +2330,8 @@ function renderEntryTable(){
   if(search) orders = orders.filter(o=> String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
   // ตัวตัดสินที่สามจำเป็น — ของจริง orderDate ซ้ำกันทั้งไฟล์ ถ้าเหลือสองชั้นลำดับจะตกไปเป็น
   // ลำดับในอาร์เรย์ แล้วเครื่องที่นำเข้าเองกับที่ดึงจากเซิร์ฟเวอร์โชว์คนละลำดับ (ผู้ตรวจ #118 รอบห้า)
-  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week)
-    || (a.orderDate||'').localeCompare(b.orderDate) || (a.poNo||'').localeCompare(b.poNo));
+  orders = orders.slice().sort((a,b)=> cmpText(a.week, b.week)
+    || cmpText(a.orderDate, b.orderDate) || cmpText(a.poNo, b.poNo));
 
   lastRenderedOrderIds = [];
   let rowsHtml = '';
@@ -2863,8 +2884,8 @@ function renderDayTable(){
   if(subFilter) orders = orders.filter(o=>o.subName===subFilter);
   if(search) orders = orders.filter(o=> String(o.poNo).toLowerCase().includes(search) || String(o.pn).toLowerCase().includes(search));
   // สามชั้นและต้องตรงกับหน้าคีย์ยอด — ดู CLAUDE.md (ของจริง orderDate ซ้ำกันทั้งไฟล์)
-  orders = orders.slice().sort((a,b)=> (a.week||'').localeCompare(b.week)
-    || (a.orderDate||'').localeCompare(b.orderDate) || (a.poNo||'').localeCompare(b.poNo));
+  orders = orders.slice().sort((a,b)=> cmpText(a.week, b.week)
+    || cmpText(a.orderDate, b.orderDate) || cmpText(a.poNo, b.poNo));
 
   // เลขบนปุ่ม = ยอดรวมของวันนั้นทุกขั้น · คิดจากชุดใบที่กรองแล้ว จึงตรงกับตารางข้างล่างเสมอ
   const dayTotals = {};
@@ -2978,7 +2999,7 @@ function anomalyListHtml(list){
   const last = lastKeyedOf(keys);
   /* เรียงเองเสมอ — ลำดับใน state.orders ต่างกันระหว่างเครื่องที่นำเข้าเองกับที่ซิงค์มา
      ⚠️ ครอบ String() ก่อน localeCompare — ตัวเลขไม่มีเมธอดนี้ รายการจะพังทั้งก้อน
-     เหตุผลเต็มอยู่ใน CLAUDE.md */
+     เหตุผลเต็มอยู่ที่ cmpText */
   const worst = x => Math.max.apply(null, x.bad.map(b=> b.over));
   list = list.slice().sort((a, b)=> worst(b) - worst(a)
     || String(a.o.poNo).localeCompare(String(b.o.poNo))
