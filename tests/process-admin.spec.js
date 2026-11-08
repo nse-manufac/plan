@@ -449,7 +449,7 @@ test('A3 — ติ๊กนับแยกแล้วเพิ่มขั้�
   const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
   expect(opts).not.toContain(added.id);
   // ขั้นที่ตามหลังมันต้องข้ามไปเทียบกับ Winding (800) ไม่ใช่ขั้นนับแยก (0)
-  await expect(page.locator('#wipCards')).toContainText('WIP ค้างหน้า Assembly');
+  await expect(page.locator('#wipCards')).toContainText('WIP Assembly');
   await expect(page.locator('#wipCards')).not.toContainText('ข้อมูลย้อนแย้ง');
 });
 
@@ -573,6 +573,6 @@ test('A3 — คำยืนยันซ่อน/เลิกซ่อนขั
 
   // และของที่ข้อความอ้างต้องมีอยู่จริง — ขั้นนับแยกต้องไม่มีแถวในบัญชีทั้งก่อนและหลัง
   await tab(page, 'dashboard');
-  const rows = await page.locator('#wipCards .wlr .nm').allInnerTexts();
+  const rows = await page.locator('#wipCards .wcard .top b').allInnerTexts();
   expect(rows.some(r => r.includes('ซ่อม')), 'ขั้นนับแยกต้องไม่มีแถวในบัญชีของค้าง (A3·A5)').toBe(false);
 });

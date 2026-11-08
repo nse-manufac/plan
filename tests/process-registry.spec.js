@@ -98,9 +98,9 @@ test('การ์ด WIP — ค้างหน้าขั้นที่เ�
   // Winding 800 · Coating 500 · Assembly 300 → ค้างหน้า Coating 300 · ค้างหน้า Assembly 200
   await open(page);
   await tab(page, 'dashboard');
-  const card = label => page.locator('#wipCards .wlr', { hasText: label }).locator('.q').first();
-  expect(await card('WIP ค้างหน้า Coating').innerText()).toContain('300');
-  expect(await card('WIP ค้างหน้า Assembly').innerText(), 'ต้องหักจาก Coating ไม่ใช่ Winding').toContain('200');
+  const card = label => page.locator('#wipCards .wcard', { hasText: label }).locator('.q').first();
+  expect(await card('WIP Coating').innerText()).toContain('300');
+  expect(await card('WIP Assembly').innerText(), 'ต้องหักจาก Coating ไม่ใช่ Winding').toContain('200');
 });
 
 test('ตัวกรองค้างอยู่ที่ขั้น — มีขั้นที่เพิ่มและกรองได้', async ({ page }) => {
@@ -213,12 +213,13 @@ test('ห้าขั้นเดิม — ปุ่ม ตัวกรอง �
   // แดชบอร์ดเหลือห้าคอลัมน์หน้าขั้น (Item No. · P/N · Sub-Name · ใบ · ยอดสั่งรวม)
   expect(heads.slice(0, 5)).toEqual(['Item No.', 'P/N', 'Sub-Name', 'ใบ', 'ยอดสั่งรวม']);
   expect(heads.slice(5)).toEqual(['Winding', 'Assembly', 'Support', 'Inspection', 'ส่งของ (Shipping)']);
-  expect(await page.locator('#wipCards .wh .k').allInnerTexts(), 'หัวตัวเลขรวมสามตัว')
-    .toEqual(['ยอดแผนรวม', 'ส่งไปแล้ว', 'ยังไม่ได้ส่ง']);
-  const cards = await page.locator('#wipCards .wlr .nm').allInnerTexts();
+  /* หัวเลขเหลือสองตัว — เจ้าของเอา "ส่งไปแล้ว" กับ % ออก (8 พ.ย. 2026) */
+  expect(await page.locator('#wipCards .wh .k').allInnerTexts(), 'หัวตัวเลขรวมสองตัว')
+    .toEqual(['ยอดแผนรวม', 'ยังไม่ได้ส่ง']);
+  const cards = await page.locator('#wipCards .wcard .top b').allInnerTexts();
   expect(cards, 'แถวของค้าง ขั้นละแถว เรียงตามสายการผลิต')
-    .toEqual(['ยังไม่เริ่มผลิต', 'WIP ค้างหน้า Assembly', 'WIP ค้างหน้า Support',
-      'WIP ค้างหน้า Inspection', 'ยอด FG คงคลัง']);
+    .toEqual(['ยังไม่เริ่มผลิต', 'WIP Assembly', 'WIP Support',
+      'WIP Inspection', 'ยอด FG คงคลัง']);
 });
 
 test('ชื่อขั้นต้นน้ำต้องไม่ถูกเขียนตายตัวนอกรายการขั้น', async () => {

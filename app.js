@@ -339,7 +339,7 @@ function ptext(id, kind){
   switch(kind){
     case 'late': return 'ล่าช้า ' + d.short;
     case 'wait': return 'ค้างหน้า ' + d.short;
-    case 'waitCard': return 'WIP ค้างหน้า ' + d.short;
+    case 'waitCard': return 'WIP ' + d.short;
     case 'waitExport': return 'WIP หน้า ' + d.short;
     case 'deadlineExport': return 'Deadline ' + d.short;
     case 'cumExport': return 'สะสม ' + d.short;
@@ -3030,6 +3030,18 @@ function openRecordsForPo(po){
   search.focus();
 }
 
+/** สีอ่อนของสีขั้น สำหรับใช้เป็นพื้นการ์ด — ผสมกับขาวตามสัดส่วนที่ให้
+ *  ⚠️ รับเฉพาะ `#rrggbb` ถ้าไม่ใช่คืนค่าว่าง แล้วการ์ดจะใช้พื้นปกติ
+ *     ผลพลอยได้: ค่าที่คืนเป็น `rgb(...)` ที่เราประกอบเอง จึงปิดรูสี CSS ของช่องนี้ไปด้วย
+ *     (สีขั้นซิงค์ข้ามเครื่องได้และไม่ได้กรองอักขระ — G3) */
+function tintOf(hex, amt){
+  const m = /^#([0-9a-fA-F]{6})$/.exec(String(hex == null ? '' : hex));
+  if(!m) return '';
+  const n = parseInt(m[1], 16);
+  const mix = c => Math.round(c + (255 - c) * amt);
+  return `rgb(${mix(n >> 16 & 255)},${mix(n >> 8 & 255)},${mix(n & 255)})`;
+}
+
 function renderWipCards(){
   const rows = dashFilteredRows();
   const subF = dashSubName();
@@ -3066,23 +3078,40 @@ function renderWipCards(){
 
   const pctOf = v => left ? v/left*100 : 0;
   const head = (k, v, u, sub) => `<div${sub?' class="sub"':''}><div class="k">${k}</div><div class="v">${v}<small>${u}</small></div></div>`;
+  /* ⚠️ หัวเลขเหลือสองตัว — เจ้าของสั่งเอา "ส่งไปแล้ว" กับ % ออก (8 พ.ย. 2026)
+     "ยอดแผนรวม" ต้องอยู่ — มันคือตัวที่เทสเอาไปเทียบกับ "ยอดสั่งรวม" ของตาราง
+     เพื่อบังคับกฎ "การ์ดกับตารางต้องนับชุดใบเดียวกัน" (กฎจาก #119)
+     ถอดออกเมื่อไหร่ กฎข้อนั้นจะไม่เหลือตัวยึดฝั่งการ์ดอีกเลย */
   let html = `<div class="wh">`
     + head('ยอดแผนรวม', numFmt(totalQty), `ชิ้น · <b>${numFmt(rows.length)}</b> PO`)
-    + head('ส่งไปแล้ว', numFmt(shipped), `ชิ้น · <b>${totalQty? Math.round(shipped/totalQty*100):0}%</b>`)
     + head('ยังไม่ได้ส่ง', numFmt(left), 'ชิ้น', true) + `</div>`;
   if(anom.length){
     html += `<div class="wanom">⚠<span><b>ข้อมูลย้อนแย้ง ${numFmt(anom.length)} PO</b> — สะสมขั้นถัดไปมากกว่าขั้นก่อนหน้า ซึ่งเป็นไปไม่ได้ ตัวเลขค้างรายขั้นของ PO เหล่านี้จึงยังเชื่อไม่ได้</span>`
       + `<button type="button" class="wanom-t" id="wanomToggle" aria-expanded="${anomOpen}">${anomOpen ? 'ซ่อนรายการ ▴' : 'ดูรายการ ▾'}</button></div>`
       + (anomOpen ? anomalyListHtml(anom) : '');
   }
-  html += `<div class="wlt"><b>ของที่ยังไม่ได้ส่ง — ค้างอยู่ขั้นไหน</b>`
+  html += `<div class="wlt"><b>ค้างอยู่ขั้นไหน</b>`
     + `<span>หน่วยเป็นชิ้น · เปอร์เซ็นต์คิดจาก ${numFmt(left)} ชิ้นที่ยังไม่ได้ส่ง</span></div>`
-    + `<div class="wlh"><span></span><span></span><span>ขั้นที่ค้าง</span><span class="r">ชิ้นที่ค้าง</span><span class="r">PO</span><span></span><span class="r">สัดส่วน</span></div>`
-    + stages.map((s, i)=>`<div class="wlr"><i class="t" style="background:${escapeHtml(s.color)}"></i><div class="n">${i+1}</div>`
-      + `<div class="nm" title="${escapeHtml(s.note)}">${escapeHtml(s.label)}</div>`
-      + `<div class="q">${numFmt(s.qty)}</div><div class="q">${numFmt(s.n)}</div>`
-      + `<div class="b"><span style="width:${pctOf(s.qty).toFixed(1)}%;background:${escapeHtml(s.color)}"></span></div>`
-      + `<div class="q">${pctOf(s.qty).toFixed(1)}%</div></div>`).join('');
+    + `<div class="wgrid">` + stages.map(s=>{
+      /* ⚠️ สีบนการ์ดต้องเป็น **สีเดียวกับแท่งในกราฟ** ไม่ใช่สีที่เจือจางแล้ว
+         หน้าที่ของมันคือโยงการ์ดกับแท่งที่อยู่หน้าเดียวกัน คนละเฉดแล้วโยงไม่ติด
+         (เจ้าของทักเอง 8 พ.ย. 2026) · วัดแล้วพื้นทึบทั้งใบใช้ไม่ได้ เพราะไม่มีสีตัวอักษร
+         เดียวที่อ่านออกบนทั้งหกสี · จึงเอาสีเต็มมาเป็นแถบหนา แล้วพื้นเจือจาง ๆ พอให้รู้ว่าเป็นชุดเดียวกัน */
+      /* ⚠️ จุดสีใช้ภาษาเดียวกับคำอธิบายสีเหนือกราฟเป๊ะ ๆ (จุดสีเต็ม + ชื่อ)
+         สีบนการ์ดจึง "เท่ากับ" สีแท่งจริง ๆ ไม่ใช่เฉดที่เจือแล้ว ซึ่งเป็นหน้าที่ของมัน
+         พื้นเจือไว้ให้การ์ดเป็นก้อน แต่ตัวที่โยงกับกราฟคือจุด ไม่ใช่พื้น */
+      const bg = tintOf(s.color, 0.60);
+      return `<div class="wcard" data-stage="${escapeHtml(s.key)}"`
+        + (bg ? ` style="background:${bg}"` : '') + `>`
+        + `<div class="top"><i style="background:${escapeHtml(s.color)}"></i>`
+        + `<b title="${escapeHtml(s.note)}">${escapeHtml(s.label)}</b>`
+        /* ⚠️ % กับจำนวน PO อยู่ก้อนเดียวกันบนบรรทัดชื่อ ไม่ใช่ไปอยู่คนละมุมกับเลขใหญ่
+           ทั้งคู่เป็นตัวขยายของเลขใหญ่เหมือนกัน และวางแบบนี้การ์ดสูงเท่ากันทุกใบ
+           ไม่ว่าเลขจะกี่หลัก (เลขหกหลักเคยดันบรรทัดที่สาม ทำให้ใบนั้นสูงกว่าเพื่อน) */
+        + `<span class="po">: ${numFmt(s.n)} PO</span></div>`
+        + `<div class="mid"><span class="q">${numFmt(s.qty)}</span>`
+        + `<span class="pc">: ${pctOf(s.qty).toFixed(1)}%</span></div></div>`;
+    }).join('') + `</div>`;
   /* ⚠️ ปุ่มกางถูกวาดใหม่ทั้งปุ่มทุกครั้งที่เปลี่ยนตัวกรอง — ไม่คืนโฟกัสแล้วคนที่ไล่ด้วยแป้นพิมพ์
      ตกไป BODY แล้วต้องเริ่มจากต้นหน้าใหม่ (กฎเดียวกับ #dayProcBtns และ pendingFocusOrderId) */
   const act = document.activeElement;

@@ -455,7 +455,7 @@ test('หัวกระดาษต้องบอกช่วงวันด�
 // ⚠️ ต้องเทียบ "การ์ดกับตาราง" ไม่ใช่ "การ์ดกับเลขที่เขียนไว้ในเทส" — เลขตายตัวจะเขียว
 //    ทั้งที่สองที่บนจอขัดกัน ถ้าวันหนึ่งมีคนเปลี่ยนนิยามของฝั่งตารางไปอีกทาง
 
-/** ป้าย → ค่า ทั้งหัวตัวเลขรวม (.wh) และแถวของค้างรายขั้น (.wlr)
+/** ป้าย → ค่า ทั้งหัวตัวเลขรวม (.wh) และการ์ดรายขั้น (.wcard)
  *  หน่วยอยู่ใน <small> ท้ายค่า จึงหยิบเฉพาะ childNodes[0] เหมือนเดิม */
 const cardVals = page => page.evaluate(() => {
   const out = {};
@@ -463,8 +463,8 @@ const cardVals = page => page.evaluate(() => {
     out[el.querySelector('.k').textContent.trim()] =
       el.querySelector('.v').childNodes[0].textContent.trim();
   });
-  document.querySelectorAll('#wipCards .wlr').forEach(el => {
-    out[el.querySelector('.nm').textContent.trim()] = el.querySelector('.q').textContent.trim();
+  document.querySelectorAll('#wipCards .wcard').forEach(el => {
+    out[el.querySelector('.top b').textContent.trim()] = el.querySelector('.q').textContent.trim();
   });
   return out;
 });
@@ -713,7 +713,7 @@ test('การ์ดของขั้นสุดท้ายชื่อ "ย
   // นิยามย้ายไปอยู่ใน title แล้ว (เจ้าของสั่งเอาวงเล็บออกจากป้าย 7 พ.ย. 2026) — ต้องยังอ่านได้
   expect(cards, 'ป้ายบนการ์ดต้องสั้น ไม่มีวงเล็บนิยามแล้ว').not.toContain('เสร็จ Inspection แต่ยังไม่ส่ง');
 
-  const title = await page.locator('#wipCards .wlr .nm')
+  const title = await page.locator('#wipCards .wcard .top b')
     .filter({ hasText: 'ยอด FG คงคลัง' }).getAttribute('title');
   expect(title, 'ต้องบอกว่าทำไมอาจไม่ตรงกับหน้ายอดคงคลัง FG').toContain('FG คงเหลือ');
 });
@@ -729,9 +729,12 @@ test('จำนวน PO บนแถวของค้าง ต้องตร
     rec('a1', 'ZZ-1|PN-A', 'winding', 100), rec('a2', 'ZZ-1|PN-A', 'assembly', 40),
     rec('b1', 'ZZ-2|PN-A', 'winding', 100), rec('b2', 'ZZ-2|PN-A', 'assembly', 30)
   ]);
-  const poCell = label => page.locator('#wipCards .wlr', { hasText: label }).locator('.q').nth(1);
-  expect(await poCell('ยังไม่เริ่มผลิต').innerText(), 'ZZ-3 ใบเดียวที่ยังไม่เริ่ม').toBe('1');
-  expect(await poCell('WIP ค้างหน้า Assembly').innerText(), 'ZZ-1 กับ ZZ-2 ค้างหน้า Assembly ทั้งคู่').toBe('2');
+  /* ⚠️ ข้อความในช่องคือ ": 2 PO" จึงต้องดึงเฉพาะตัวเลขออกมาเทียบ
+     เทียบทั้งสตริงจะพังทันทีที่มีคนแก้ตัวคั่น ซึ่งไม่ใช่เรื่องที่ข้อนี้ตรวจ */
+  const poCell = async label => (await page.locator('#wipCards .wcard', { hasText: label })
+    .locator('.po').innerText()).replace(/[^0-9]/g, '');
+  expect(await poCell('ยังไม่เริ่มผลิต'), 'ZZ-3 ใบเดียวที่ยังไม่เริ่ม').toBe('1');
+  expect(await poCell('WIP Assembly'), 'ZZ-1 กับ ZZ-2 ค้างหน้า Assembly ทั้งคู่').toBe('2');
 
   await page.selectOption('#dashWipFilter', 'assembly');
   await page.waitForTimeout(200);
@@ -819,43 +822,39 @@ test('G3 — สีของขั้นที่ซิงค์มาต้อ�
   await page.waitForTimeout(250);
 
   // ขั้นที่ซิงค์มาต้องมีแถวของตัวเองจริง ไม่งั้นเทสนี้เขียวเองโดยไม่ได้ตรวจอะไร
-  await expect(page.locator('#wipCards .wlr', { hasText: 'ค้างหน้า ทดสอบ' })).toHaveCount(1);
+  await expect(page.locator('#wipCards .wcard', { hasText: 'WIP ทดสอบ' })).toHaveCount(1);
 
-  const swatch = page.locator('#wipCards .wlr i.t').nth(2);
+  /* ⚠️ แถบสัดส่วนถูกถอดออกแล้ว (เจ้าของสั่ง 8 พ.ย. 2026) จุดสีจึงเป็นที่เดียวที่รับสีดิบ
+     ส่วนพื้นการ์ดใช้ tintOf() ซึ่งคืน rgb() ที่ประกอบเอง จึงไม่ใช่ทางที่สีหลุดได้ */
+  const swatch = page.locator('#wipCards .wcard .top i').nth(2);
   expect(await swatch.getAttribute('onmouseover'), 'สีที่ซิงค์มาแตก attribute ออกมาได้').toBeNull();
   await swatch.hover();
   await page.waitForTimeout(120);
   expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
-
-  const bar = page.locator('#wipCards .wlr .b span').nth(2);
-  expect(await bar.getAttribute('onmouseover'), 'แถบสัดส่วนก็แตก attribute ออกมาได้').toBeNull();
+  const card = page.locator('#wipCards .wcard').nth(2);
+  expect(await card.getAttribute('onmouseover'), 'พื้นการ์ดก็ต้องไม่แตก attribute').toBeNull();
 });
 
-/* แถบสัดส่วนคือเหตุผลหลักที่ใบนี้เปลี่ยนการ์ดเป็นบัญชี — ทุกแถบเริ่มที่เส้นเดียวกันจึงเทียบด้วยตาได้
- * ⚠️ ตัวหารต้องเป็น "ยังไม่ได้ส่ง" (left) ไม่ใช่ยอดแผนรวม · บรรทัดกำกับบนจอเขียนเลขตัวหารไว้ตรง ๆ
+/* ⚠️ ตัวหารต้องเป็น "ยังไม่ได้ส่ง" (left) ไม่ใช่ยอดแผนรวม · บรรทัดกำกับบนจอเขียนเลขตัวหารไว้ตรง ๆ
  *    เปลี่ยนตัวหารแล้วจอจะขัดกับคำกำกับของตัวเองแบบเงียบ ๆ (ผู้ตรวจ #123 รอบ 7 รันพิสูจน์ว่า
- *    ก่อนมีข้อนี้ ทั้งชุดยังเขียวทั้งที่เปอร์เซ็นต์ผิดทุกแถว) */
-test('แถบสัดส่วนต้องคิดจาก "ยังไม่ได้ส่ง" ไม่ใช่ยอดแผนรวม และเลขต้องตรงกับความกว้างแถบ', async ({ page }) => {
+ *    ก่อนมีข้อนี้ ทั้งชุดยังเขียวทั้งที่เปอร์เซ็นต์ผิดทุกแถว)
+ * ⚠️ แถบสัดส่วนถูกถอดออกแล้ว (เจ้าของสั่ง 8 พ.ย. 2026) **ตัวเลขจึงเป็นตัวเดียวที่บอกสัดส่วน**
+ *    ข้อนี้จึงสำคัญกว่าเดิม ไม่ใช่เบาลง — ไม่มีแถบให้เทียบด้วยตาแล้ว */
+test('เปอร์เซ็นต์ต้องคิดจาก "ยังไม่ได้ส่ง" ไม่ใช่ยอดแผนรวม', async ({ page }) => {
   // ยอดแผนรวม 300 · ส่งแล้ว 50 · ยังไม่ได้ส่ง 250 — สามเลขนี้ต่างกันหมด ตัวหารผิดจึงเห็นทันที
   await openDash(page, [orderPn('ZZ-1', 'PN-A', 200), orderPn('ZZ-2', 'PN-B', 100)], [
     rec('r1', 'ZZ-1|PN-A', 'winding', 200), rec('r2', 'ZZ-1|PN-A', 'assembly', 200),
     rec('r3', 'ZZ-1|PN-A', 'support', 200), rec('r4', 'ZZ-1|PN-A', 'inspection', 200),
     rec('r5', 'ZZ-1|PN-A', 'shipping', 50)
   ]);
-  const row = label => page.locator('#wipCards .wlr', { hasText: label });
-  const pct = label => row(label).locator('.q').nth(2).innerText();
+  const row = label => page.locator('#wipCards .wcard', { hasText: label });
+  /* ข้อความในช่องคือ ": 40.0%" จึงดึงเฉพาะตัวเลขออกมา — ตัวคั่นไม่ใช่เรื่องที่ข้อนี้ตรวจ */
+  const pct = async label => (await row(label).locator('.pc').innerText()).replace(/[^0-9.]/g, '');
 
   // 100/250 = 40.0% · ถ้าหารด้วย 300 จะได้ 33.3%
-  expect(await pct('ยังไม่เริ่มผลิต'), 'ZZ-2 ทั้งใบ = 100 ชิ้น จาก 250').toBe('40.0%');
+  expect(await pct('ยังไม่เริ่มผลิต'), 'ZZ-2 ทั้งใบ = 100 ชิ้น จาก 250').toBe('40.0');
   // 150/250 = 60.0% · ถ้าหารด้วย 300 จะได้ 50.0%
-  expect(await pct('ยอด FG คงคลัง'), 'ZZ-1 ผ่าน Inspection 200 ส่งแล้ว 50').toBe('60.0%');
-
-  // ความกว้างแถบต้องเป็นเลขเดียวกับตัวหนังสือ ไม่ใช่คนละฐาน
-  // ⚠️ เบราว์เซอร์ตัด `.0` ทิ้ง (`40.0%` → `40%`) จึงต้องเทียบเป็นตัวเลข ห้ามเทียบข้อความ
-  const barW = async label => parseFloat(
-    await row(label).locator('.b span').evaluate(el => el.style.width));
-  expect(await barW('ยังไม่เริ่มผลิต'), 'แถบกับเลขต้องมาจากตัวเดียวกัน').toBeCloseTo(40, 1);
-  expect(await barW('ยอด FG คงคลัง')).toBeCloseTo(60, 1);
+  expect(await pct('ยอด FG คงคลัง'), 'ZZ-1 ผ่าน Inspection 200 ส่งแล้ว 50').toBe('60.0');
 
   // บรรทัดกำกับต้องบอกตัวหารตัวจริง ไม่งั้นคนอ่านเทียบเองไม่ได้
   expect(await page.locator('#wipCards .wlt').innerText(), 'ต้องบอกว่าเปอร์เซ็นต์คิดจากเลขไหน')
@@ -1212,4 +1211,121 @@ test('G2 — โฟกัสบนปุ่มกางก็ต้องไม�
 
   expect(await page.evaluate(() => document.activeElement && document.activeElement.id))
     .toBe('wanomToggle');
+});
+
+/* ───────── การ์ดรายขั้น (เจ้าของออกแบบ 8 พ.ย. 2026) ─────────
+ * ของเดิมเป็นแถวในตารางเจ็ดคอลัมน์ ซึ่ง **ล้นจอมือถือ** — เจ้าของเจอเองบนเว็บจริง
+ * แบบใหม่เป็นการ์ดที่กว้างเท่าเนื้อใน และเต็มความกว้างเมื่อจอแคบ */
+
+/** การ์ดของขั้นหนึ่ง · ดึงเฉพาะตัวเลขออกมา เพราะข้อความจริงมี ": " คั่น
+ *  ⚠️ ตัวคั่นไม่ใช่เรื่องที่เทสพวกนี้ตรวจ เทียบทั้งสตริงจะพังทันทีที่มีคนแก้ตัวคั่น */
+const wipCard = (page, label) => page.locator('#wipCards .wcard', { hasText: label });
+const numIn = async (loc, sel) => (await loc.locator(sel).innerText()).replace(/[^0-9.]/g, '');
+
+test('การ์ดต้องมีครบสี่ช่อง และเป็นเลขของขั้นนั้นจริง', async ({ page }) => {
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 200), orderPn('ZZ-2', 'PN-B', 100)], [
+    rec('r1', 'ZZ-1|PN-A', 'winding', 200), rec('r2', 'ZZ-1|PN-A', 'assembly', 200),
+    rec('r3', 'ZZ-1|PN-A', 'support', 200), rec('r4', 'ZZ-1|PN-A', 'inspection', 200),
+    rec('r5', 'ZZ-1|PN-A', 'shipping', 50)
+  ]);
+  const c = wipCard(page, 'ยังไม่เริ่มผลิต');
+  expect(await numIn(c, '.q'), 'ZZ-2 ทั้งใบยังไม่เริ่ม').toBe('100');
+  expect(await numIn(c, '.po'), 'ใบเดียว').toBe('1');
+  expect(await numIn(c, '.pc'), '100 จาก 250').toBe('40.0');
+  await expect(c.locator('.top b')).toHaveText('ยังไม่เริ่มผลิต');
+});
+
+test('ชื่อการ์ดต้องเป็น "WIP <ขั้น>" ไม่ใช่ "WIP ค้างหน้า <ขั้น>"', async ({ page }) => {
+  /* ⚠️ เจ้าของสั่งตัด "ค้างหน้า" ออก 8 พ.ย. 2026 · แก้ที่ ptext() จุดเดียว
+     ซึ่งแปลว่าถ้ามีใครเผลอแก้กลับ ที่อื่นที่ใช้ waitCard ก็เปลี่ยนตามไปด้วย */
+  await openDash(page, ORDERS, RECORDS);
+  const names = await page.locator('#wipCards .wcard .top b').allInnerTexts();
+  expect(names).toContain('WIP Assembly');
+  expect(names.join(' '), 'คำว่า "ค้างหน้า" ต้องไม่เหลือบนการ์ดแล้ว').not.toContain('ค้างหน้า');
+  // สองใบนี้มีชื่อเฉพาะของตัวเอง ไม่ใช่ "WIP X" — ห้ามโดนลูกหลง
+  expect(names[0]).toBe('ยังไม่เริ่มผลิต');
+  expect(names[names.length - 1]).toBe('ยอด FG คงคลัง');
+});
+
+test('จุดสีบนการ์ดต้องเป็นสีเดียวกับแท่งในกราฟเป๊ะ ๆ', async ({ page }) => {
+  /* ⚠️ นี่คือหน้าที่ทั้งหมดของสีบนการ์ด — โยงการ์ดกับแท่งที่อยู่หน้าเดียวกัน
+     เจ้าของทักเองว่า "ถ้าสีการ์ดไม่เหมือนแท่งในกราฟ การทำสีจะไม่มีความหมาย"
+     จึงต้องเป็นสีเต็มไม่เจือ · พื้นการ์ดเป็นสีเจือได้ เพราะมันไม่ใช่ตัวที่ทำหน้าที่นี้ */
+  await openDash(page, ORDERS, RECORDS);
+  const dot = await page.locator('#wipCards .wcard .top i').first()
+    .evaluate(el => getComputedStyle(el).backgroundColor);
+  const legend = await page.locator('.legend-item i').first()
+    .evaluate(el => getComputedStyle(el).backgroundColor);
+  expect(dot, 'จุดบนการ์ดใบแรก = จุดในคำอธิบายสีของกราฟตัวแรก (ทั้งคู่คือ Winding)').toBe(legend);
+});
+
+test('พื้นการ์ดต้องรับเฉพาะสี #rrggbb — สีที่ซิงค์มาแปลก ๆ ต้องไม่หลุดเข้า CSS', async ({ page }) => {
+  /* ⚠️ สีขั้นซิงค์ข้ามเครื่องได้และแผงจัดการขั้นไม่กรองอักขระ (G3)
+     tintOf() รับเฉพาะ #rrggbb แล้วคืน rgb() ที่ประกอบเอง จึงปิดทางของช่องนี้
+     ถ้าสีไม่ใช่รูปแบบนั้น การ์ดต้องใช้พื้นปกติ ไม่ใช่พังหรือปล่อยค่าดิบลงไป */
+  const procs = [
+    { id: 'winding', label: 'Winding', short: 'Winding', hidden: false },
+    { id: 'evil', label: 'ทดสอบ', short: 'ทดสอบ', hidden: false,
+      color: '#111" onmouseover="window.__pwned=1' },
+    { id: 'assembly', label: 'Assembly', short: 'Assembly', hidden: false },
+    { id: 'support', label: 'Support', short: 'Support', hidden: false },
+    { id: 'inspection', label: 'Inspection', short: 'Inspection', hidden: false },
+    { id: 'shipping', label: 'ส่งของ (Shipping)', short: 'Shipping', hidden: false }
+  ];
+  await page.addInitScript(([k, o, r, p]) => localStorage.getItem(k) || localStorage.setItem(k, JSON.stringify({
+    version: 1, deviceName: 't', processes: p,
+    deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
+    chartPref: { mode: '14', from: '', to: '' },
+    orders: o, records: r, deliveryNotes: [], deltaWip: [], importHistory: []
+  })), [K_STATE, ORDERS, RECORDS, procs]);
+  await page.goto(APP);
+  await waitReady(page);
+  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.waitForTimeout(250);
+
+  const card = page.locator('#wipCards .wcard', { hasText: 'WIP ทดสอบ' });
+  await expect(card, 'ขั้นที่ซิงค์มาต้องมีการ์ดจริง ไม่งั้นข้อนี้เขียวเองโดยไม่ได้ตรวจอะไร').toHaveCount(1);
+  expect(await card.getAttribute('onmouseover'), 'สีแปลก ๆ แตก attribute ออกมาได้').toBeNull();
+  expect(await card.getAttribute('style'), 'สีที่ไม่ใช่ #rrggbb ต้องไม่ถูกเขียนลง style เลย').toBeNull();
+  await card.hover();
+  await page.waitForTimeout(120);
+  expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
+});
+
+test('จอมือถือ — ต้องไม่ล้นแนวนอน และการ์ดต้องกว้างเท่ากันทุกใบ', async ({ page }) => {
+  /* ⚠️ ของเดิมเป็นตารางเจ็ดคอลัมน์ซึ่งล้นจอมือถือจริง เจ้าของเจอเองบนเว็บจริง 8 พ.ย. 2026
+     ⚠️ และการ์ดต้องกว้างเท่ากันเมื่อเรียงลงมาแถวเดียว — กว้างเท่าเนื้อในแล้วขอบขวาไม่ตรงกัน
+        อ่านแล้วรู้สึกเอียง (เจ้าของทัก) · บนจอกว้างเรียงข้างกัน ขอบไม่ตรงจึงไม่เป็นปัญหา */
+  await page.setViewportSize({ width: 390, height: 860 });
+  await openDash(page, ORDERS, RECORDS);
+
+  const over = await page.evaluate(() => ({
+    page: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    box: (el => el.scrollWidth - el.clientWidth)(document.getElementById('wipCards'))
+  }));
+  expect(over.page, 'ทั้งหน้าต้องไม่เลื่อนแนวนอน').toBe(0);
+  expect(over.box, 'กล่องการ์ดก็ต้องไม่ล้น').toBe(0);
+
+  const widths = await page.locator('#wipCards .wcard')
+    .evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().width)));
+  expect(widths.length).toBeGreaterThan(3);
+  expect(new Set(widths).size, 'ทุกใบต้องกว้างเท่ากัน · ได้ ' + widths.join('/')).toBe(1);
+});
+
+test('ทุกองค์ประกอบในการ์ดต้องเด่นเท่ากัน — ห้ามมีตัวไหนจางหรือเล็กกว่าเพื่อน', async ({ page }) => {
+  /* ⚠️ เจ้าของสั่งข้อนี้หลังโดนลดขนาด/ทำสีจางไปสามรอบ (8 พ.ย. 2026)
+     "ให้ทุกองค์ประกอบในการ์ดเด่นเท่ากันไปเลย" — ลำดับความสำคัญเป็นของเจ้าของ ไม่ใช่ของคนเขียนโค้ด
+     เทียบภายในบรรทัดเดียวกัน เพราะสองบรรทัดตั้งใจให้ขนาดต่างกัน */
+  await openDash(page, ORDERS, RECORDS);
+  const st = await page.locator('#wipCards .wcard').first().evaluate(card => {
+    const g = s => { const c = getComputedStyle(card.querySelector(s));
+      return { size: parseFloat(c.fontSize), weight: Number(c.fontWeight), color: c.color }; };
+    return { name: g('.top b'), po: g('.po'), qty: g('.q'), pc: g('.pc') };
+  });
+  expect(st.po.size, 'PO ต้องขนาดเท่าชื่อขั้น').toBe(st.name.size);
+  expect(st.po.weight).toBe(st.name.weight);
+  expect(st.pc.size, '% ต้องขนาดเท่าตัวเลขจำนวน').toBe(st.qty.size);
+  expect(st.pc.weight).toBe(st.qty.weight);
+  expect(new Set([st.name.color, st.po.color, st.qty.color, st.pc.color]).size,
+    'ทั้งสี่ตัวต้องสีเดียวกัน ห้ามมีตัวไหนจาง').toBe(1);
 });

@@ -77,12 +77,12 @@ test('A3 — ขั้นนับแยกต้องไม่ทำให้�
   await expect(page.locator('#wipCards')).not.toContainText('ข้อมูลย้อนแย้ง');
 });
 
-test('A3 — ขั้นนับแยกต้องไม่มีการ์ด WIP ค้างหน้าขั้น', async ({ page }) => {
+test('A3 — ขั้นนับแยกต้องไม่มีการ์ดของค้างเป็นของตัวเอง', async ({ page }) => {
   await open(page);
   await tab(page, 'dashboard');
   await expect(page.locator('#wipCards')).not.toContainText('ค้างหน้า ซ่อม');
   // การ์ดของสายหลักยังครบเหมือนเดิม
-  await expect(page.locator('#wipCards')).toContainText('WIP ค้างหน้า Assembly');
+  await expect(page.locator('#wipCards')).toContainText('WIP Assembly');
 });
 
 test('A3 — ตัวกรอง "ค้างอยู่ที่ขั้น" ต้องไม่มีตัวเลือกของขั้นนับแยก', async ({ page }) => {

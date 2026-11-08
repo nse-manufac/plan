@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-08.3">
+<meta name="app-version" content="2026-11-08.5">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -118,16 +118,28 @@
   .wlt{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:16px 0 10px;}
   .wlt b{font-size:19px;font-weight:600;}
   .wlt span{font-size:12px;color:var(--text-dim);}
-  .wlh,.wlr{display:grid;grid-template-columns:13px 20px minmax(130px,1fr) 112px 84px minmax(80px,.62fr) 76px;align-items:center;gap:0 14px;}
-  .wlh{padding-bottom:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-dim);}
-  .wlr{padding:12px 0;border-bottom:1px solid var(--border);}
-  .wlh .r,.wlr .q{text-align:right;font-variant-numeric:tabular-nums;}
-  .wlr .t{width:13px;height:13px;border-radius:3px;}
-  .wlr .n{font-size:12.5px;color:var(--text-dim);}
-  .wlr .nm{font-size:17px;font-weight:600;}
-  .wlr .q{font-size:21px;font-weight:700;}
-  .wlr .b{height:8px;border-radius:2px;background:var(--gray-light);overflow:hidden;}
-  .wlr .b span{display:block;height:100%;border-radius:2px;}
+  /* การ์ดรายขั้น — พื้นการ์ดเป็นสีอ่อนของสีขั้น (เจ้าของออกแบบ 8 พ.ย. 2026)
+     ไม่มีแถบสีซ้ายและไม่มี progress bar แล้ว · สีมาจาก tintOf() ซึ่งคืน rgb() ที่ประกอบเอง */
+  /* การ์ดรายขั้น — จุดสีใช้ภาษาเดียวกับคำอธิบายสีเหนือกราฟ (เจ้าของออกแบบ 8 พ.ย. 2026)
+     เตี้ยสองบรรทัด · % กับจำนวน PO อยู่ก้อนเดียวกัน เพราะทั้งคู่เป็นตัวขยายของเลขใหญ่ */
+  /* การ์ดรายขั้น (เจ้าของออกแบบ 8 พ.ย. 2026)
+     ⚠️ **ไม่ใช่กริด** — การ์ดกว้างเท่าเนื้อในของตัวเอง ขอบขวามาพอดีกับ ": NN PO"
+        ใช้กริดแล้วทุกใบถูกยืดเท่าช่อง เหลือที่ว่างด้านขวาเป็นแถบยาว (เจ้าของทัก)
+     ⚠️ ตัวใหญ่โดยเจตนา — คนอ่านตัวจริงคือคุณพ่อของเจ้าของ ซึ่งไม่ถนัดคอม
+        ตกสองแถวไม่เป็นไร เจ้าของเลือกตัวใหญ่มากกว่าแถวเดียว */
+  .wgrid{display:flex;flex-wrap:wrap;gap:10px;}
+  .wcard{flex:0 0 auto;border:1px solid var(--border);border-radius:12px;
+         padding:13px 17px 14px;background:var(--panel);}
+  .wcard .top{display:flex;align-items:baseline;gap:8px;}
+  .wcard .top i{width:13px;height:13px;border-radius:4px;flex:0 0 13px;align-self:center;}
+  /* ⚠️ **ทุกองค์ประกอบเด่นเท่ากัน** (เจ้าของสั่ง 8 พ.ย. 2026)
+     ห้ามทำ PO กับ % เป็นสีจางหรือย่อเล็ก — ผิดมาสามรอบแล้ว
+     สองตัวบนบรรทัดเดียวกันใช้ขนาดกับน้ำหนักเท่ากัน และสีเดียวกันทั้งการ์ด */
+  .wcard .top b{font-size:20px;font-weight:700;white-space:nowrap;}
+  .wcard .po{font-size:20px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;}
+  .wcard .mid{display:flex;align-items:baseline;gap:9px;margin-top:3px;}
+  .wcard .q{font-size:33px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums;}
+  .wcard .pc{font-size:33px;font-weight:800;white-space:nowrap;font-variant-numeric:tabular-nums;}
   .wanom{display:flex;gap:8px;margin-top:14px;font-size:13px;color:var(--text-dim);line-height:1.5;}
   .wanom b{color:var(--red);font-weight:700;}
   .wanom-t{background:none;border:1px solid var(--border);border-radius:6px;padding:2px 10px;font:inherit;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap;align-self:flex-start;}
@@ -195,6 +207,19 @@
   /* บนมือถือบีบ "ระยะห่าง" คืน แต่ไม่แตะขนาดตัวอักษร
      ⚠️ คนที่ต้องใช้ตัวใหญ่คือคนกลุ่มเดียวกับที่ถือมือถือ ลดฟอนต์ตรงนี้เท่ากับยกเลิกสิ่งที่เพิ่งทำ
         ตารางเลื่อนแนวนอนในกรอบของตัวเอง (.table-wrap) ทั้งหน้าต้องไม่เลื่อนตาม */
+  /* ⚠️ บนมือถือการ์ดต้องเต็มความกว้างทุกใบ — ของเดิมกว้างเท่าเนื้อใน พอเรียงลงมาเป็นแถวเดียว
+     ขอบขวาของแต่ละใบไม่ตรงกัน อ่านแล้วรู้สึกเอียง (เจ้าของทัก 8 พ.ย. 2026)
+     บนจอกว้างการ์ดเรียงข้างกัน ขอบไม่ตรงจึงไม่เป็นปัญหา — คนละเรื่องกัน
+     และย่อตัวอักษรลง เพราะขนาดที่พอดีจอ 1366 ใหญ่เกินไปบนมือถือ */
+  @media (max-width:640px){
+    .wgrid{gap:8px;}
+    .wcard{flex:1 1 100%;padding:10px 13px 11px;border-radius:10px;}
+    .wcard .top i{width:11px;height:11px;flex:0 0 11px;}
+    .wcard .top b{font-size:17px;}
+    .wcard .po{font-size:17px;}
+    .wcard .q{font-size:26px;}
+    .wcard .pc{font-size:26px;}
+  }
   @media (max-width:600px){
     #entryTable th,#entryTable td{padding-left:5px;padding-right:5px;}
     #entryTable .row-input,#entryTable .ship-today{width:92px;}
@@ -251,11 +276,10 @@
     .panel, #wipCards{border:none;box-shadow:none;padding:0;margin-bottom:12px;}
     /* หน้ากระดาษผ่ากลางแถวได้ แล้วเลขกับแถบของขั้นเดียวกันไปคนละหน้า
        หัวตารางก็ต้องไม่หลุดไปนอนท้ายหน้าเดี่ยว ๆ โดยไม่มีแถวไหนตาม */
-    .wlr{break-inside:avoid;}
+    .wcard{break-inside:avoid;}
     .wanr{break-inside:avoid;}
     .wanl{overflow:visible;}
     .wanom-t{display:none;}
-    .wlh{break-after:avoid;}
     /* บนจอตารางอยู่ในกรอบสูง 70vh แล้วเลื่อนดู ถ้าไม่ปลดล็อกจะพิมพ์ได้แค่แถวที่มองเห็น */
     .table-wrap{overflow:visible;max-height:none;}
     table{font-size:10.5px;}
@@ -942,6 +966,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-08.3"></script>
+<script src="app.js?v=2026-11-08.5"></script>
 </body>
 </html>

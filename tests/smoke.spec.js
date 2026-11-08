@@ -759,7 +759,7 @@ test('A3 + E2 — state เก่าที่ยังไม่มี deadlineOf
 
   const head = await page.locator('#dashTable thead').innerText();
   expect(head, 'ตาราง Dashboard ต้องมีคอลัมน์ของขั้น Support').toContain('Support');
-  await expect(page.locator('#wipCards'), 'ต้องมีการ์ด WIP ค้างหน้า Support').toContainText('WIP ค้างหน้า Support');
+  await expect(page.locator('#wipCards'), 'ต้องมีการ์ด WIP Support').toContainText('WIP Support');
 
   // ยังไม่ตั้งค่า → ห้ามตัดสินว่าล่าช้า Support (A4: ห้ามเดาเลขวันแทนเจ้าของ)
   // ถ้าเผลอตีความ null เป็น orderDate + 0 ทุกใบจะกลายเป็นล่าช้าทันทีตั้งแต่วันสั่ง
