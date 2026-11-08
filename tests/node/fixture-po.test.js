@@ -23,7 +23,10 @@ const path = require('node:path');
    ข้าม lib/ (ไลบรารีที่ vendor ไว้ · F2) กับของที่เครื่องสร้าง */
 const ROOT = path.join(__dirname, '..', '..');
 const SKIP = new Set(['node_modules', 'lib', '.git', 'test-results', 'playwright-report', 'evidence']);
-const EXT = /\.(js|html|md|gs|json)$/;
+/* ⚠️ ต้องครอบทุกนามสกุลที่คนเขียนเอง รวม .mjs/.yml/.sh ของ .github/
+   ตอนเพิ่มด่านนี้ครั้งแรกเขียนแค่ห้านามสกุล ซึ่งขัดกับประโยคข้างบนที่ตัวมันเองเขียนไว้
+   ว่า "ด่านที่ดูแค่บางที่ อ่านได้ว่าที่อื่นปลอดภัย ซึ่งไม่จริง" (ผู้ตรวจ #127 รอบ 6) */
+const EXT = /\.(js|mjs|cjs|html|md|gs|json|ya?ml|sh)$/;
 const PO = /\bTM[0-9A-Z]{6,10}\b/g;
 const REAL_YEAR = /^TM2/;   // TM + 2x = ปีจริง
 

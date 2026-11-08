@@ -1200,3 +1200,16 @@ test('G2 — โฟกัสบนปุ่มเลข PO ต้องไม่
     return a && a.dataset ? (a.dataset.anomPo || a.tagName) : 'NONE';
   }), 'ต้องกลับมาที่ปุ่มเดิม ไม่ใช่ปุ่มแรกและไม่ใช่ BODY').toBe('PO-R2');
 });
+
+test('G2 — โฟกัสบนปุ่มกางก็ต้องไม่ตกไป BODY ตอนหน้าถูกวาดใหม่', async ({ page }) => {
+  /* ปุ่มกางมีตัวคืนโฟกัสมาตั้งแต่รอบ 1 แต่ **ไม่เคยมีเทสจับ** — ปุ่มในแถวมีแล้ว
+     ผู้ตรวจ #127 รอบ 6 ทักว่าการรื้อบล็อกนั้นครั้งถัดไปจะไม่มีอะไรฟ้อง */
+  await openDash(page, [order('PO-T1', 9000, 'TUE-U')],
+    anomRecs('PO-T1', { winding: 100, assembly: 500 }));
+
+  await page.locator('#wanomToggle').focus();
+  await page.evaluate(() => renderWipCards());   // แบบเดียวกับที่รอบซิงค์ทำทุก 20 วิ
+
+  expect(await page.evaluate(() => document.activeElement && document.activeElement.id))
+    .toBe('wanomToggle');
+});
