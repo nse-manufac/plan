@@ -5348,7 +5348,7 @@ function renderProcessAdmin(){
   const unlocked = processUnlocked();
   const counts = {};
   state.records.forEach(r=>{ if(!r.voided) counts[r.process] = (counts[r.process] || 0) + 1; });
-  table.innerHTML = '<thead><tr><th>#</th><th>ชื่อขั้น</th><th>ชื่อสั้น</th><th>สถานะ</th><th>ยอดที่คีย์ไว้ (รายการ)</th><th></th></tr></thead><tbody>'
+  table.innerHTML = '<thead><tr><th>#</th><th>ชื่อขั้น</th><th>ชื่อสั้น</th><th title="สีของแท่งในกราฟ จุดบนการ์ด และคำอธิบายสีเหนือกราฟ">สี</th><th>สถานะ</th><th>ยอดที่คีย์ไว้ (รายการ)</th><th></th></tr></thead><tbody>'
     + PROCESS_LIST.map((p, i)=>{
       const locked = LOCKED_PROCESS_IDS.includes(p.id);
       const status = (locked ? '<span class="badge gray">ล็อก</span>'
@@ -5358,11 +5358,21 @@ function renderProcessAdmin(){
         + (p.standalone ? ' <span class="badge gray" title="ยอดไม่เกี่ยวกับสายหลัก ไม่มีแถวในบัญชีของค้าง และไม่ถูกตัดสินล่าช้า">นับแยก</span>' : '');
       const who = p.updatedBy || p.addedBy;
       const audit = who ? `<div class="hint">${escapeHtml((p.updatedBy ? 'แก้ล่าสุดโดย ' : 'เพิ่มโดย ') + who)}</div>` : '';
+      /* สีเก็บใน state.processes เฉพาะขั้นที่เพิ่มเอง (ดู storedProcessList)
+         ห้าขั้นตั้งต้นจึงเปลี่ยนสีไม่ได้ — สีของมันวัดมาเป็นชุดใน #124
+         และการเก็บสีของขั้นตั้งต้นต้องเพิ่มฟิลด์ที่ต้องซิงค์ ซึ่งเกินขอบเขตของใบนี้
+         โชว์สีให้เห็นทุกขั้น แต่แก้ได้เฉพาะขั้นที่เพิ่มเอง */
+      const canColor = unlocked && !DEFAULT_BY_ID[p.id];
+      const colorCell = canColor
+        ? `<input type="color" class="proc-color" data-proc-color="${p.id}" value="${escapeHtml(p.color)}"`
+          + ` title="เปลี่ยนสีของขั้นนี้ — มีผลกับกราฟและการ์ดทุกเครื่อง">`
+        : `<i class="proc-swatch" style="background:${escapeHtml(p.color)}"`
+          + ` title="${DEFAULT_BY_ID[p.id] ? 'สีของขั้นตั้งต้น เปลี่ยนในโปรแกรมไม่ได้' : 'ใส่รหัสหัวหน้าก่อนถึงแก้สีได้'}"></i>`;
       const actions = unlocked && !locked
         ? `<button class="btn-mini" data-proc-rename="${p.id}">เปลี่ยนชื่อ</button> `
           + `<button class="btn-mini" data-proc-toggle="${p.id}">${p.hidden ? 'เลิกซ่อน' : 'ซ่อน'}</button>` : '';
       return `<tr data-proc-row="${p.id}"><td>${i + 1}</td><td class="left">${escapeHtml(p.icon + ' ' + p.label)}${audit}</td>`
-        + `<td class="left">${escapeHtml(p.short)}</td><td>${status}</td><td>${numFmt(counts[p.id] || 0)}</td><td>${actions}</td></tr>`;
+        + `<td class="left">${escapeHtml(p.short)}</td><td>${colorCell}</td><td>${status}</td><td>${numFmt(counts[p.id] || 0)}</td><td>${actions}</td></tr>`;
     }).join('') + '</tbody>';
 
   document.getElementById('btnProcessUnlock').hidden = unlocked;
@@ -5455,6 +5465,31 @@ document.getElementById('btnProcessAdd').addEventListener('click', ()=>{
     if(ok){ document.getElementById('newProcLabel').value = ''; document.getElementById('newProcShort').value = '';
       document.getElementById('newProcStandalone').checked = false; }
   });
+});
+
+/* เปลี่ยนสีประจำขั้น — ใช้ช่องสีของเบราว์เซอร์ ซึ่งคืนค่าเป็น #rrggbb เสมอ
+ *
+ * ⚠️ **ยังตรวจรูปแบบซ้ำก่อนบันทึก** ถึงแม้ช่องจะคืน #rrggbb ให้อยู่แล้ว —
+ *    ทางนี้ไม่ใช่ทางเดียวที่เขียน color ได้ (ค่าที่ซิงค์มาจากเครื่องอื่นก็ลงที่เดียวกัน)
+ *    และ tintOf() กับจุดสีบนการ์ดพึ่งรูปแบบนี้อยู่ (G3)
+ *
+ * ⚠️ **แก้ได้เฉพาะขั้นที่เพิ่มเอง** — ห้าขั้นตั้งต้นไม่เก็บ color ลง state.processes
+ *    (ดู storedProcessList) สีของมันวัดมาเป็นชุดใน #124 แล้ว การเปิดให้แก้
+ *    ต้องเพิ่มฟิลด์ที่ต้องซิงค์ ซึ่งเกินขอบเขตของใบนี้
+ *
+ * ⚠️ ใช้ 'change' ไม่ใช่ 'input' — ช่องสียิง input รัว ๆ ระหว่างลากเมาส์
+ *    ผูกกับ input แล้วจะยิง pushSettings ขึ้นเซิร์ฟเวอร์เป็นสิบครั้งต่อการเลือกสีหนึ่งครั้ง */
+document.getElementById('processTable').addEventListener('change', e=>{
+  const id = e.target.dataset.procColor;
+  if(!id) return;
+  const p = PROCESS_BY_ID[id];
+  const color = String(e.target.value || '').toLowerCase();
+  if(!p || DEFAULT_BY_ID[id]){ renderProcessAdmin(); return; }
+  if(!/^#[0-9a-f]{6}$/.test(color)){ toast('สีไม่ถูกรูปแบบ — ไม่ได้บันทึก'); renderProcessAdmin(); return; }
+  if(color === String(p.color || '').toLowerCase()) return;
+  const by = state.deviceName || '', now = new Date().toISOString();
+  saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {color, updatedBy: by, updatedAt: now}) : x),
+    `เปลี่ยนสีของ ${p.label} แล้ว`);
 });
 
 document.getElementById('processTable').addEventListener('click', e=>{

@@ -576,3 +576,106 @@ test('A3 — คำยืนยันซ่อน/เลิกซ่อนขั
   const rows = await page.locator('#wipCards .wlr .nm').allInnerTexts();
   expect(rows.some(r => r.includes('ซ่อม')), 'ขั้นนับแยกต้องไม่มีแถวในบัญชีของค้าง (A3·A5)').toBe(false);
 });
+
+// ── เปลี่ยนสีประจำขั้น (เจ้าของสั่ง 8 พ.ย. 2026) ──────────────────────
+//
+// เหตุ: Trimming ที่เจ้าของเพิ่มเองได้สีจาก PROCESS_PALETTE ซึ่งใกล้กับสีของขั้นส่งของมาก
+// วัดได้ ΔE 11.2 สำหรับตาปกติ (เกณฑ์คือ 15) และบนกราฟสีคือกุญแจเดียว ไม่มีชื่อกำกับแท่ง
+// ก่อนหน้านี้ไม่มีที่ไหนให้แก้สีเลย — ระบบแจกให้ตอนกดเพิ่มขั้นแล้วจบ
+
+const colorInput = (page, id) => page.locator(`[data-proc-color="${id}"]`);
+
+/** ตั้งค่าช่องสีแล้วยิง change — ช่องสีของเบราว์เซอร์กดเลือกจาก Playwright ตรง ๆ ไม่ได้ */
+const setColor = (page, id, v) => colorInput(page, id).evaluate((el, val) => {
+  el.value = val;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}, v);
+
+test('เปลี่ยนสีของขั้นที่เพิ่มเองได้ และมีผลกับกราฟกับการ์ดทันที', async ({ page }) => {
+  const gs = loadGs();
+  seedPin(gs);
+  await open(page, gs);
+  answerDialogs(page);
+  await unlock(page);
+  await addStep(page, 'Trimming ทดสอบ', 'Trimming', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(6);
+  const id = serverIds(gs)[1];
+
+  // ต้องมีช่องสีจริง ไม่งั้นข้อนี้เขียวเองโดยไม่ได้ตรวจอะไร
+  await expect(colorInput(page, id)).toHaveCount(1);
+  const before = (await colorInput(page, id).inputValue()).toLowerCase();
+  expect(before, 'สีที่ระบบแจกต้องไม่ใช่สีที่เรากำลังจะตั้ง ไม่งั้นเทียบไม่ได้').not.toBe('#8a5a2b');
+
+  await setColor(page, id, '#8a5a2b');
+  await expect.poll(() => (serverList(gs)[1] || {}).color).toBe('#8a5a2b');
+  expect((await colorInput(page, id).inputValue()).toLowerCase(),
+    'ช่องต้องจำค่าใหม่หลังวาดตารางใหม่').toBe('#8a5a2b');
+
+  // ต้องไปถึงจอจริงทั้งสองที่ที่ใช้สีขั้น
+  await tab(page, 'dashboard');
+  await page.waitForTimeout(300);
+  expect(await page.locator('.legend-item', { hasText: 'Trimming ทดสอบ' }).locator('i')
+    .evaluate(el => getComputedStyle(el).backgroundColor),
+    'คำอธิบายสีของกราฟต้องเปลี่ยนตาม').toBe('rgb(138, 90, 43)');
+});
+
+test('ห้าขั้นตั้งต้นเปลี่ยนสีไม่ได้ — โชว์สีให้ดูเฉย ๆ', async ({ page }) => {
+  /* ⚠️ storedProcessList ไม่เก็บ color ของขั้นตั้งต้น ถ้าเปิดให้แก้แล้วค่าจะหายทุกครั้งที่ซิงค์
+     สีของห้าขั้นนั้นวัดมาเป็นชุดใน #124 แล้ว การเปลี่ยนจึงควรผ่านโค้ด ไม่ใช่ผ่านหน้าจอ */
+  const gs = loadGs();
+  seedPin(gs);
+  await open(page, gs);
+  answerDialogs(page);
+  await unlock(page);
+  for (const id of ['winding', 'assembly', 'support', 'inspection', 'shipping']) {
+    await expect(colorInput(page, id), id + ' ต้องไม่มีช่องสีให้แก้').toHaveCount(0);
+  }
+  // แต่ต้องยังเห็นสีของมันได้ ไม่ใช่ช่องว่าง
+  expect(await page.locator('#processTable .proc-swatch').count(),
+    'ทุกขั้นที่แก้ไม่ได้ต้องยังมีจุดสีให้ดู').toBeGreaterThanOrEqual(5);
+});
+
+test('สีที่ไม่ใช่ #rrggbb ต้องไม่ถูกบันทึก', async ({ page }) => {
+  /* ⚠️ ช่องสีของเบราว์เซอร์คืน #rrggbb เสมอ แต่นี่ไม่ใช่ทางเดียวที่เขียน color ได้
+     และ tintOf() กับจุดสีบนการ์ดพึ่งรูปแบบนี้อยู่ (G3) — ด่านจึงต้องอยู่ฝั่งที่บันทึก */
+  const gs = loadGs();
+  seedPin(gs);
+  await open(page, gs);
+  answerDialogs(page);
+  await unlock(page);
+  await addStep(page, 'Trimming ทดสอบ', 'Trimming', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(6);
+  const id = serverIds(gs)[1];
+  const before = (await colorInput(page, id).inputValue()).toLowerCase();
+
+  /* ⚠️ ช่อง type=color แปลงค่าผิดรูปเป็น #000000 ให้เองก่อนที่โค้ดเราจะเห็น
+     ด่านจึงไม่เคยถูกเรียกถ้ายิงผ่านช่องตรง ๆ — เทสแบบนั้นเขียวโดยไม่ได้ตรวจอะไร (รันเจอเอง)
+     ฉากจริงที่ด่านมีไว้กันคือ "ค่ามาจากทางอื่น" เช่นสีที่ซิงค์มาจากเครื่องอื่น
+     จึงถอด type ออกก่อน เพื่อให้ค่าดิบไปถึงตัวจับ change จริง ๆ */
+  await colorInput(page, id).evaluate(el => {
+    el.type = 'text';
+    el.value = 'red; background:url(x)';
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(400);
+  expect(String(serverList(gs)[1].color).toLowerCase(),
+    'ค่าที่บันทึกต้องยังเป็นสีเดิม').toBe(before);
+});
+
+test('หมดเวลาปลดล็อกแล้วต้องไม่เหลือช่องให้แก้สี', async ({ page }) => {
+  /* ⚠️ saveProcessList มีด่านรหัสหัวหน้าอยู่บรรทัดแรกอยู่แล้ว ข้อนี้ยืนยันว่าทางใหม่
+     ไม่ได้เปิดช่องข้ามด่านนั้น — ทุกทางที่เขียน processes ต้องผ่าน saveProcessList ทางเดียว */
+  const gs = loadGs();
+  seedPin(gs);
+  await open(page, gs);
+  answerDialogs(page);
+  await unlock(page);
+  await addStep(page, 'Trimming ทดสอบ', 'Trimming', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(6);
+  const id = serverIds(gs)[1];
+  await expect(colorInput(page, id), 'ปลดล็อกอยู่ต้องมีช่อง ไม่งั้นข้อนี้เขียวฟรี').toHaveCount(1);
+
+  await page.click('#btnProcessLock');
+  await page.waitForTimeout(200);
+  await expect(colorInput(page, id), 'ล็อกแล้วต้องไม่เหลือช่องให้แก้').toHaveCount(0);
+});
