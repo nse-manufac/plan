@@ -2976,20 +2976,29 @@ function anomalyListHtml(list){
   const keys = new Set();
   list.forEach(x=> x.bad.forEach(b=> keys.add(x.o.id + '|' + b.p)));
   const last = lastKeyedOf(keys);
-  const pair = b => `<u class="hi">${escapeHtml(short(b.p))} ${numFmt(b.cur)}</u> &gt; `
-    + `<u>${escapeHtml(short(b.prev))} ${numFmt(b.bef)}</u> · `
-    + `<b>เกิน ${numFmt(b.over)}</b>`;
+  /* เรียงเองเสมอ — ของเดิมตามลำดับใน state.orders ซึ่งเครื่องที่นำเข้าไฟล์เองกับเครื่องที่ซิงค์มา
+     ไม่เหมือนกัน คนสองคนเปิดเทียบกันจะไล่บรรทัดตรงกันไม่ได้ (กฎเดียวกับหน้ายอดรายวันทุกขั้น)
+     เกินมากสุดขึ้นก่อน = ใบที่ผิดหนักสุดอยู่บนสุด ซึ่งเป็นลำดับที่คนไล่แก้ต้องการ
+     ⚠️ **ต้องครอบ String() ก่อน localeCompare** — เครื่องที่ซิงค์มาได้ poNo/pn เป็นตัวเลข
+        ตัวเลขไม่มีเมธอดนี้ แล้วทั้งรายการจะพังทั้งก้อน (บั๊กแบบเดียวกับตารางราย P/N ใน CLAUDE.md) */
+  const worst = x => Math.max.apply(null, x.bad.map(b=> b.over));
+  list = list.slice().sort((a, b)=> worst(b) - worst(a)
+    || String(a.o.poNo).localeCompare(String(b.o.poNo))
+    || String(a.o.pn).localeCompare(String(b.o.pn)));
+  const pair = b => `<u class="hi">${escapeHtml(short(b.p))}\u00A0${numFmt(b.cur)}</u> &gt; `
+    + `<u>${escapeHtml(short(b.prev))}\u00A0${numFmt(b.bef)}</u> · `
+    + `<b>เกิน\u00A0${numFmt(b.over)}</b>`;
   const when = (o, b) => {
     const L = last[o.id + '|' + b.p];
     if(!L) return '—';
-    return `<u>${escapeHtml(fmtDateTH(L.date))} · ${numFmt(L.qty)}</u>`
+    return `<u>${escapeHtml(fmtDateTH(L.date))}\u00A0·\u00A0${numFmt(L.qty)}</u>`
       + (L.by ? ` · <u>${escapeHtml(L.by)}</u>` : '');
   };
   return `<div class="wanl"><div class="wanh"><span>PO No.</span><span>P/N</span><span>Sub-Name</span>`
     + `<span class="r">สัปดาห์</span><span class="r">ยอดสั่ง</span>`
     + `<span>ขั้นที่เพี้ยน (สะสม)</span>`
-    + `<span>ยอดล่าสุดของขั้นนั้น</span></div>`
-    + list.map(({ o, bad })=>`<div class="wanr" data-anom-row="${escapeHtml(String(o.poNo))}">`
+    + `<span>รายการล่าสุดของขั้นนั้น</span></div>`
+    + list.map(({ o, bad })=>`<div class="wanr" data-anom-row="${escapeHtml(String(o.id))}" data-anom-pn="${escapeHtml(String(o.pn))}">`
       + `<span><button type="button" class="lnk" data-anom-po="${escapeHtml(String(o.poNo))}"`
       + ` title="เปิดหน้าแก้ไข/ลบรายการ แล้วกรองเฉพาะใบนี้">${escapeHtml(String(o.poNo))}</button></span>`
       + `<span>${escapeHtml(String(o.pn))}</span><span>${escapeHtml(o.subName || '—')}</span>`

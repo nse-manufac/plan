@@ -894,13 +894,16 @@ async function openAnomList(page) {
   await expect(page.locator('.wanl')).toBeVisible();
 }
 
-/** ข้อความในแถว — แปลงเว้นวรรคทุกแบบเป็นเว้นวรรคธรรมดาก่อนเทียบ
- *  ⚠️ ตอนนี้แอปมัดหน่วยด้วย `<u>` + CSS `nowrap` **ไม่ได้ใช้ \u00a0 แล้ว** การแปลงจึงไม่ทำอะไร
- *     เก็บไว้เป็นตาข่ายเผื่อใครสลับกลับไปใช้ \u00a0 อีก — เทสจะได้ไม่แดงเพราะเรื่องการจัดหน้า
- *     (คอมเมนต์เดิมเขียนว่า "แอปใช้ \u00a0" ซึ่งเลิกจริงไปแล้ว — ผู้ตรวจ #127 จับ
- *      คอมเมนต์ที่ผิดพาคนถัดไปไปแก้ผิดจุด) */
+/** ข้อความในแถว — แปลงเว้นวรรคไม่ตัดบรรทัดเป็นเว้นวรรคธรรมดาก่อนเทียบ
+ *  แอปมัดหน่วยไว้ **สองชั้น**: \u00A0 ระหว่างคำกับเลข และ `<u>` + CSS `nowrap` รอบทั้งหน่วย
+ *  ชั้นแรกกันไม่ให้ "เกิน" ขาดจาก "400" แม้ CSS ไม่ทำงาน · ชั้นสองกันหน่วยหลายคำอย่าง
+ *  "30/10/2026 · 1,332" ซึ่ง \u00A0 อย่างเดียวไม่พอ
+ *  ⚠️ **การแปลงนี้จำเป็น ห้ามถอด** — วัดแล้ว innerText คืน \u00A0 ออกมาจริง (ไม่ได้ถูก normalize)
+ *     ถอดแล้วเทสจะแดงเพราะเรื่องการจัดหน้า ไม่ใช่เพราะเลขผิด ซึ่งคนละเรื่องกับที่ข้อนี้ตรวจ
+ *     (ผู้ตรวจ #127 รอบ 2 ทักว่าแอปเลิกใช้ \u00A0 แล้ว — รันวัดเองแล้วไม่จริง ยังใช้อยู่ทั้งสองชั้น) */
+const rowOf = (page, po) => page.locator(`[data-anom-row="${po}|${PN}"]`);
 const rowText = async (page, po) =>
-  (await page.locator(`[data-anom-row="${po}"]`).innerText()).replace(/\u00A0/g, ' ');
+  (await rowOf(page, po).innerText()).replace(/\u00A0/g, ' ');
 
 test('รายการย้อนแย้งต้องบอกคู่ขั้นที่เพี้ยนและส่วนต่าง ไม่ใช่แค่จำนวนใบ', async ({ page }) => {
   await openDash(page,
@@ -994,7 +997,7 @@ test('รายการย้อนแย้งต้องนับชุด�
      ไม่งั้นแถบบอก 1 PO แต่กางออกมาได้ 2 แถว = คนเลิกเชื่อทั้งแถบ */
   await expect(page.locator('.wanom')).toContainText('ข้อมูลย้อนแย้ง 1 PO');
   await expect(page.locator('.wanr'), 'เลขบนแถบกับจำนวนแถวต้องตรงกันเสมอ').toHaveCount(1);
-  await expect(page.locator('[data-anom-row="PO-U9"]')).toBeVisible();
+  await expect(rowOf(page, 'PO-U9')).toBeVisible();
 
   /* ⚠️ และต้องไม่หุบเองตอนเปลี่ยนตัวกรอง — แถบถูกวาดใหม่ทั้งก้อนทุกครั้ง
      ถ้าเก็บสถานะเปิด/ปิดไว้ในฟังก์ชัน รายการจะหายทุกครั้งที่คนขยับตัวกรอง */
@@ -1003,7 +1006,7 @@ test('รายการย้อนแย้งต้องนับชุด�
 
 test('G3 — PO และ P/N ที่ซิงค์มาต้องไม่กลายเป็น attribute หรือแท็กบนรายการย้อนแย้ง', async ({ page }) => {
   /* ⚠️ สองช่องนี้ลง innerHTML คนละที่ และพังคนละแบบ — ต้องยิงทั้งคู่
-     · poNo  -> ลง **attribute** (data-anom-row / data-anom-po) -> หลุดเป็น onmouseover ได้
+     · poNo  -> ลง **attribute** (data-anom-po และ data-anom-row ผ่าน id) -> หลุดเป็น onmouseover ได้
      · pn    -> ลง **เนื้อข้อความ** -> หลุดเป็นแท็ก <img onerror> ได้
      เทสรอบแรกของใบนี้ยิง pn แล้วไปตรวจ attribute ซึ่งเกิดจากเนื้อข้อความไม่ได้เลย
      จึงเขียวเองโดยไม่ได้ตรวจอะไร (ถอด escapeHtml ของ pn ออกแล้วยังเขียว — พิสูจน์แล้ว) */
@@ -1096,4 +1099,84 @@ test('G2 — กดเลข PO แล้วโฟกัสต้องไปอ
 
   expect(await page.evaluate(() => document.activeElement && document.activeElement.id))
     .toBe('recFilterSearch');
+});
+
+test('ลำดับแถวต้องเรียงเอง เกินมากสุดขึ้นก่อน ไม่ใช่ตามลำดับใน state.orders', async ({ page }) => {
+  /* ⚠️ ของเดิมเรียงตามลำดับใน state.orders · เครื่องที่นำเข้าไฟล์เองกับเครื่องที่ซิงค์มา
+     ได้คนละลำดับ คนสองคนเปิดเทียบกันจะไล่บรรทัดตรงกันไม่ได้ (ผู้ตรวจ #127 รันได้ ZZZ ก่อน AAA)
+     fixture จงใจใส่ใบที่เกินน้อยไว้ "ก่อน" ในอาร์เรย์ ถ้าไม่เรียงจะได้ลำดับกลับกัน */
+  await openDash(page, [
+    order('PO-A1', 9000, 'TUE-U'), order('PO-B1', 9000, 'TUE-U'), order('PO-C1', 9000, 'TUE-U')
+  ], [
+    ...anomRecs('PO-A1', { winding: 100, assembly: 150 }),   // เกิน 50
+    ...anomRecs('PO-B1', { winding: 100, assembly: 900 }),   // เกิน 800
+    ...anomRecs('PO-C1', { winding: 100, assembly: 400 })    // เกิน 300
+  ]);
+  await openAnomList(page);
+
+  const ids = await page.locator('.wanr').evaluateAll(els => els.map(e => e.dataset.anomRow));
+  expect(ids, 'เกินมากสุดต้องอยู่บนสุด').toEqual(
+    ['PO-B1', 'PO-C1', 'PO-A1'].map(x => x + '|' + PN));
+});
+
+test('เครื่องที่ซิงค์มาได้ P/N เป็นตัวเลข รายการต้องไม่พังทั้งก้อน', async ({ page }) => {
+  /* ⚠️ กับดักเดิมของ repo นี้ — ตัวเลขไม่มีเมธอด localeCompare พอเอาไปเรียงแล้ว throw
+     **ทั้งรายการหายทั้งก้อน** ไม่ใช่แค่แถวเดียว (บั๊กแบบเดียวกับตารางราย P/N ใน CLAUDE.md)
+     ⚠️ ต้องมี **สองใบขึ้นไป** ไม่งั้น comparator ไม่ถูกเรียกเลย แล้วเทสเขียวเองทั้งที่โค้ดพัง
+        (บทเรียนจาก #119 ที่ CLAUDE.md เขียนไว้ตรง ๆ) */
+  const num = (po, pn) => ({
+    /* week เป็นสตริงตามของจริง — ตอนนำเข้าได้มาจากชื่อชีต ("WK 34") จึงไม่เคยเป็นตัวเลข
+       ⚠️ ใส่ week เป็นตัวเลขแล้ว renderEntryTable()/renderDayTable() จะ throw ตั้งแต่โหลดหน้า
+          (`(a.week||'').localeCompare` · มีมาก่อนใบนี้ ยกเป็นงานแยกแล้ว) ซึ่งคนละเรื่องกับที่ข้อนี้ตรวจ */
+    id: po + '|' + pn, week: 'WK 34', poNo: po, pn, subName: 'TUE-U', orderQty: 9000,
+    orderDate: '2026-08-03', status: 'active',
+    importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false
+  });
+  const r = (id, proc, qty, d) => ({
+    id: id + proc, date: d, orderId: id, process: proc, qty, note: '', deviceName: 't',
+    createdAt: '', updatedAt: '', voided: false, _dirty: false
+  });
+  const errs = [];
+  page.on('pageerror', e => errs.push(String(e)));
+
+  /* poNo เป็นสตริงตามของจริง (รหัส PO มีตัวอักษรเสมอ) · P/N เป็นตัวเลข ซึ่งเป็นเคสที่
+     CLAUDE.md บันทึกไว้ว่าเกิดจริงบนเครื่องที่ซิงค์มา
+     ⚠️ ใส่ poNo เป็นตัวเลขด้วยแล้ว renderEntryTable()/renderDayTable() จะ throw ตั้งแต่โหลดหน้า
+        (`(a.poNo||'').localeCompare` · เป็นบั๊กที่มีมาก่อนใบนี้ ยกเป็นงานแยกแล้ว) */
+  /* ⚠️ **สองใบต้องเกินเท่ากัน และ PO เดียวกัน** ไม่งั้นตัวเรียงไม่เคยไปถึงการเทียบ P/N เลย
+        แล้วเทสเขียวเองทั้งที่ถอด String() ออก (ลองแล้ว M12 ไม่แดง จึงเปลี่ยนฉากเป็นแบบนี้)
+        ฉากนี้ยังตรงกับของจริงด้วย — PO เดียวกันคนละ P/N มีได้สองใบ (ผู้ตรวจ #127 รอบ 2) */
+  await openDash(page, [num('TM2609H001', 9000000002), num('TM2609H001', 9000000003)], [
+    r('TM2609H001|9000000002', 'winding', 100, isoAgo(9)),
+    r('TM2609H001|9000000002', 'assembly', 500, isoAgo(8)),
+    r('TM2609H001|9000000003', 'winding', 100, isoAgo(9)),
+    r('TM2609H001|9000000003', 'assembly', 500, isoAgo(8))
+  ]);
+  await openAnomList(page);
+
+  expect(errs, 'ตัวเลขต้องไม่ทำให้สคริปต์ตาย').toEqual([]);
+  await expect(page.locator('.wanr')).toHaveCount(2);
+  // เกินเท่ากัน · PO เดียวกัน -> ตัดสินด้วย P/N ซึ่งเป็นตัวเลข = เส้นทางที่ String() กันไว้
+  await expect(page.locator('.wanr').first()).toContainText('9000000002');
+  await expect(page.locator('.wanr').last()).toContainText('9000000003');
+});
+
+test('หัวคอลัมน์ขวาสุดต้องบอกว่าเป็น "รายการ" ไม่ใช่ "ยอด" ซึ่งอ่านเป็นยอดสะสมได้', async ({ page }) => {
+  /* ⚠️ เลขในช่องนั้นคือยอดของ record ล่าสุด ไม่ใช่ยอดสะสม · คอลัมน์ข้าง ๆ เขียน "(สะสม)" กำกับไว้
+     คนจึงอ่านช่องนี้เป็นสะสมได้ง่าย แล้วสรุปว่าเลขสองช่องขัดกัน ทั้งที่คนละความหมาย
+     บนหน้าที่มีไว้ไล่เลขผิด การอ่านผิดคู่คือเรื่องใหญ่ (ผู้ตรวจ #127 รอบ 2) */
+  await openDash(page, [order('PO-H2', 9000, 'TUE-U')], [
+    rec('w', 'PO-H2|' + PN, 'winding', 100, isoAgo(9)),
+    rec('a1', 'PO-H2|' + PN, 'assembly', 400, isoAgo(8)),
+    rec('a2', 'PO-H2|' + PN, 'assembly', 50, isoAgo(7))
+  ]);
+  await openAnomList(page);
+
+  const head = await page.locator('.wanh').innerText();
+  expect(head).toContain('รายการล่าสุด');
+  expect(head, 'คำว่า "ยอดล่าสุด" อ่านเป็นยอดสะสมได้').not.toContain('ยอดล่าสุด');
+
+  const txt = await rowText(page, 'PO-H2');
+  expect(txt, 'ช่องซ้ายเป็นยอดสะสม').toContain('Assembly 450');
+  expect(txt, 'ช่องขวาเป็นรายการล่าสุด ไม่ใช่สะสม').toContain(fmtDateTH(isoAgo(7)));
 });
