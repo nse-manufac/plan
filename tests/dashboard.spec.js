@@ -894,9 +894,11 @@ async function openAnomList(page) {
   await expect(page.locator('.wanl')).toBeVisible();
 }
 
-/** ข้อความในแถว — แปลงเว้นวรรคไม่ตัดบรรทัดเป็นเว้นวรรคธรรมดาก่อนเทียบ
- *  แอปใช้ \u00a0 มัดเลขไว้กับคำของมัน (ดูเทส "ไม่ตัดบรรทัดกลางหน่วย" ข้างล่าง)
- *  ไม่แปลงแล้วเทสจะแดงเพราะเรื่องการจัดหน้า ไม่ใช่เพราะเลขผิด ซึ่งคนละเรื่องกับที่ข้อนี้ตรวจ */
+/** ข้อความในแถว — แปลงเว้นวรรคทุกแบบเป็นเว้นวรรคธรรมดาก่อนเทียบ
+ *  ⚠️ ตอนนี้แอปมัดหน่วยด้วย `<u>` + CSS `nowrap` **ไม่ได้ใช้ \u00a0 แล้ว** การแปลงจึงไม่ทำอะไร
+ *     เก็บไว้เป็นตาข่ายเผื่อใครสลับกลับไปใช้ \u00a0 อีก — เทสจะได้ไม่แดงเพราะเรื่องการจัดหน้า
+ *     (คอมเมนต์เดิมเขียนว่า "แอปใช้ \u00a0" ซึ่งเลิกจริงไปแล้ว — ผู้ตรวจ #127 จับ
+ *      คอมเมนต์ที่ผิดพาคนถัดไปไปแก้ผิดจุด) */
 const rowText = async (page, po) =>
   (await page.locator(`[data-anom-row="${po}"]`).innerText()).replace(/\u00A0/g, ' ');
 
@@ -1054,4 +1056,44 @@ test('จอแคบต้องไม่ตัดบรรทัดกลา�
   // และต้องไม่ดันหน้าให้เลื่อนแนวนอน
   expect(await page.evaluate(() =>
     document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
+});
+
+test('จอแคบจนตารางล้น ต้องเลื่อนไปอ่านได้ ห้ามตัดคอลัมน์หายเงียบ ๆ', async ({ page }) => {
+  /* ⚠️ ของเดิม .wanl{overflow:hidden} ตัดคอลัมน์ขวาสุด ("ยอดล่าสุดของขั้นนั้น") หายทั้งคอลัมน์
+     โดยไม่มีแถบเลื่อนและไม่มีอะไรฟ้อง (ผู้ตรวจ #127 วัดได้ที่ 800 CSS px)
+     ทางที่เจอจริงไม่ใช่จอเล็ก แต่คือ **ซูมเบราว์เซอร์ 125% บนจอ 1024** ซึ่งเครื่องหน้างานตั้งกันจริง
+     ⚠️ เทสเดิมของใบนี้วัด scrollWidth ของ "ทั้งหน้า" ซึ่งเขียวเสมอ เพราะ overflow:hidden
+        กันไม่ให้หน้าล้นอยู่แล้ว — มันซ่อนของหาย ไม่ได้ทำให้หน้าเลื่อน ต้องวัดที่กล่องเอง */
+  await page.setViewportSize({ width: 760, height: 900 });
+  await openDash(page, [order('PO-N', 9000, 'TUE-U')],
+    anomRecs('PO-N', { winding: 100, assembly: 500 }));
+  await openAnomList(page);
+
+  const box = page.locator('.wanl');
+  const m = await box.evaluate(el => ({
+    over: el.scrollWidth > el.clientWidth,
+    x: getComputedStyle(el).overflowX
+  }));
+  expect(m.over, 'ฉากนี้ต้องแคบจนล้นจริง ไม่งั้นเทสไม่ได้ตรวจอะไร').toBe(true);
+  expect(['auto', 'scroll'], 'ล้นแล้วต้องเลื่อนไปอ่านได้ ไม่ใช่ถูกตัดทิ้ง').toContain(m.x);
+
+  // และเลื่อนแล้วต้องถึงคอลัมน์สุดท้ายจริง
+  await box.evaluate(el => { el.scrollLeft = el.scrollWidth; });
+  expect(await box.evaluate(el => el.scrollLeft)).toBeGreaterThan(0);
+});
+
+test('G2 — กดเลข PO แล้วโฟกัสต้องไปอยู่ที่ช่องค้นหา ไม่ตกไป BODY', async ({ page }) => {
+  /* ⚠️ ปุ่มที่เพิ่งกดถูกซ่อนไปพร้อมแท็บแดชบอร์ด โฟกัสจึงตกไป BODY
+     คนไล่ด้วยแป้นพิมพ์ต้อง Tab จากต้นหน้า entry ใหม่ทุกครั้ง (ผู้ตรวจ #127 รันพิสูจน์)
+     ช่องค้นหาคือที่ที่เขากำลังจะทำงานต่อพอดี — กฎเดียวกับ #dayProcBtns · pendingFocusOrderId */
+  await openDash(page, [order('PO-F', 9000, 'TUE-U')],
+    anomRecs('PO-F', { winding: 100, assembly: 500 }));
+  await openAnomList(page);
+
+  // กดด้วยแป้นพิมพ์ ซึ่งเป็นเส้นทางที่ปัญหานี้เกิด
+  await page.locator('[data-anom-po="PO-F"]').focus();
+  await page.keyboard.press('Enter');
+
+  expect(await page.evaluate(() => document.activeElement && document.activeElement.id))
+    .toBe('recFilterSearch');
 });

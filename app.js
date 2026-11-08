@@ -352,7 +352,6 @@ function processHeadHtml(id){
   const d = PROCESS_BY_ID[id];
   return (d && d.headHtml) || escapeHtml(d ? d.short : id);
 }
-/** ยอดสะสมของขั้นถัดไปมากกว่าขั้นก่อนหน้า = คีย์ข้ามขั้นหรือคีย์ผิด */
 /** คู่ขั้นที่ยอดสะสมย้อนแย้งของใบเดียว — ขั้นถัดไปมากกว่าขั้นก่อนหน้า ซึ่งเป็นไปไม่ได้
  *  ⚠️ **เกณฑ์ของความย้อนแย้งอยู่ที่นี่ที่เดียว** hasOrderAnomaly() เรียกตัวนี้ ไม่ได้เขียนเงื่อนไขเอง
  *     เขียนสองชุดเมื่อไหร่ แถบเตือนจะนับได้เลขหนึ่ง แล้วรายการที่กางออกมาได้อีกเลขหนึ่ง
@@ -367,6 +366,7 @@ function orderAnomalyPairs(c){
   });
   return out;
 }
+/** ใบนี้มียอดสะสมย้อนแย้งมั้ย = คีย์ข้ามขั้นหรือคีย์ผิด */
 function hasOrderAnomaly(c){
   return orderAnomalyPairs(c).length > 0;
 }
@@ -3007,13 +3007,20 @@ function anomalyListHtml(list){
  *  ⚠️ ไม่ตั้งช่องขั้นเป็นขั้นที่เพี้ยน — ต้องเห็นทั้งขั้นนั้นและขั้นก่อนหน้าถึงจะรู้ว่าใบไหนคีย์ผิด
  *  ไม่แตะช่อง "แสดงรายการที่ลบแล้ว" เพราะเป็นค่าที่คนตั้งไว้เอง */
 function openRecordsForPo(po){
-  document.querySelector('.tab-btn[data-tab="entry"]').click();
+  /* ⚠️ ตั้งตัวกรอง **ก่อน** กดแท็บ — ตัวจับคลิกแท็บเรียก renderRecordEditor() ให้อยู่แล้ว
+     กดก่อนแล้วค่อยตั้ง จะวาดด้วยตัวกรองเก่าหนึ่งรอบแล้ววาดใหม่อีกรอบ = เดินสมุดสองเที่ยว
+     ที่ 712 ใบ / ~14,000 รายการ นั่นไม่ฟรี (ผู้ตรวจ #127 ทัก) */
+  const search = document.getElementById('recFilterSearch');
   document.getElementById('recFilterDate').value = '';
   document.getElementById('recFilterProcess').value = '';
   document.getElementById('recFilterSource').value = '';
-  document.getElementById('recFilterSearch').value = po;
-  renderRecordEditor();
+  search.value = po;
+  document.querySelector('.tab-btn[data-tab="entry"]').click();
   document.getElementById('recordEditorTable').scrollIntoView({ behavior:'smooth', block:'center' });
+  /* ⚠️ ปุ่มที่เพิ่งกดถูกซ่อนไปพร้อมแท็บแดชบอร์ด โฟกัสจึงตกไป BODY (G2 · ผู้ตรวจ #127 รันพิสูจน์)
+     คนไล่ด้วยแป้นพิมพ์ต้อง Tab จากต้นหน้าใหม่ · ส่งไปที่ช่องค้นหาซึ่งเป็นที่ที่เขากำลังจะทำงานต่อ
+     กฎเดียวกับปุ่มกางรายการ · #dayProcBtns · pendingFocusOrderId */
+  search.focus();
 }
 
 function renderWipCards(){
