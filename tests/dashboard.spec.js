@@ -880,3 +880,178 @@ test('คำอธิบายบนแดชบอร์ดต้องไม�
   expect(desc, 'ไม่งั้นคนอ่านจะนึกว่าบัญชีรายขั้นเป็นเลขของช่วงวันที่เลือก')
     .toMatch(/บัญชีของค้าง[^·]*ยอดสะสม/);
 });
+
+/* ───────── รายการใบที่ข้อมูลย้อนแย้ง (เจ้าของขอ 8 พ.ย. 2026) ─────────
+ * แถบเตือนบอกแค่ "22 PO" ซึ่งตามต่อไม่ได้ — ของจริงบนเครื่องเจ้าของมี 22 ใบ
+ * และไม่มีทางรู้ว่าใบไหน · รายการใต้แถบคือส่วนที่ทำให้ตามต่อได้ */
+
+/** ใบที่ยอดขั้นหลังมากกว่าขั้นหน้า = ย้อนแย้ง */
+const anomRecs = (po, pairs) => Object.entries(pairs).map(([proc, qty], i) =>
+  rec(po + '-' + proc, po + '|' + PN, proc, qty, isoAgo(10 + i)));
+
+async function openAnomList(page) {
+  await page.click('#wanomToggle');
+  await expect(page.locator('.wanl')).toBeVisible();
+}
+
+/** ข้อความในแถว — แปลงเว้นวรรคไม่ตัดบรรทัดเป็นเว้นวรรคธรรมดาก่อนเทียบ
+ *  แอปใช้ \u00a0 มัดเลขไว้กับคำของมัน (ดูเทส "ไม่ตัดบรรทัดกลางหน่วย" ข้างล่าง)
+ *  ไม่แปลงแล้วเทสจะแดงเพราะเรื่องการจัดหน้า ไม่ใช่เพราะเลขผิด ซึ่งคนละเรื่องกับที่ข้อนี้ตรวจ */
+const rowText = async (page, po) =>
+  (await page.locator(`[data-anom-row="${po}"]`).innerText()).replace(/\u00A0/g, ' ');
+
+test('รายการย้อนแย้งต้องบอกคู่ขั้นที่เพี้ยนและส่วนต่าง ไม่ใช่แค่จำนวนใบ', async ({ page }) => {
+  await openDash(page,
+    [order('PO-BAD', 5000, 'TUE-U'), order('PO-OK', 5000, 'TUE-U')],
+    [...anomRecs('PO-BAD', { winding: 1500, assembly: 2000 }),
+     ...anomRecs('PO-OK',  { winding: 2000, assembly: 1500 })]);
+
+  await expect(page.locator('.wanom')).toContainText('ข้อมูลย้อนแย้ง 1 PO');
+  await openAnomList(page);
+
+  // มีแถวเดียว และเป็นใบที่เพี้ยนจริง ไม่ใช่ใบที่ยอดถูกลำดับ
+  await expect(page.locator('.wanr')).toHaveCount(1);
+  const txt = await rowText(page, 'PO-BAD');
+  expect(txt).toContain('Assembly 2,000');
+  expect(txt).toContain('Winding 1,500');
+  /* ⚠️ ส่วนต่างต้องเป็น cur − bef · สลับทางได้ −500 ซึ่งอ่านว่า "ขาด" แทนที่จะเป็น "เกิน"
+     แล้วคนจะไปไล่หายอดที่หายไป ทั้งที่ของจริงคือมีคนคีย์เกิน */
+  expect(txt, 'ต้องบอกส่วนต่างเป็นบวก ไม่ใช่เลขติดลบ').toContain('เกิน 500');
+  // ข้อมูลประจำใบที่ใช้ตามต่อ
+  expect(txt).toContain('TUE-U');
+  expect(txt).toContain('WK 34');
+  expect(txt).toContain('5,000');
+});
+
+test('ใบที่เพี้ยนหลายคู่ ต้องขึ้นครบทุกคู่ ไม่ใช่คู่แรกคู่เดียว', async ({ page }) => {
+  await openDash(page, [order('PO-M', 9000, 'TUE-U')],
+    anomRecs('PO-M', { winding: 100, assembly: 500, support: 900 }));
+  await openAnomList(page);
+
+  const txt = await rowText(page, 'PO-M');
+  /* ⚠️ เขียน .find() แทนการเก็บทุกคู่ แล้วใบที่พังหลายจุดจะโชว์จุดเดียว
+     คนแก้จุดนั้นเสร็จแล้วคิดว่าจบ รอบหน้าป้ายขึ้นอีก โดยไม่รู้ว่ายังมีอีกคู่ */
+  expect(txt, 'คู่ Assembly > Winding').toContain('Assembly 500');
+  expect(txt, 'คู่ Support > Assembly').toContain('Support 900');
+  expect(txt).toContain('เกิน 400');
+});
+
+test('ยอดล่าสุดของขั้นที่เพี้ยน ต้องข้ามรายการที่ยกเลิกไปแล้ว', async ({ page }) => {
+  const recs = [
+    rec('w', 'PO-V|' + PN, 'winding', 100, isoAgo(9)),
+    rec('a-เก่า', 'PO-V|' + PN, 'assembly', 500, isoAgo(8)),
+    // รายการล่าสุด แต่ถูกยกเลิกแล้ว จึงไม่ได้อยู่ในยอดสะสมที่ทำให้ย้อนแย้ง
+    Object.assign(rec('a-ยกเลิก', 'PO-V|' + PN, 'assembly', 9999, isoAgo(1)), { voided: true })
+  ];
+  recs[1].deviceName = 'เครื่องไลน์ A';
+  await openDash(page, [order('PO-V', 9000, 'TUE-U')], recs);
+  await openAnomList(page);
+
+  const txt = await rowText(page, 'PO-V');
+  /* ⚠️ ไม่ข้ามรายการที่ยกเลิก แล้วช่องนี้จะชี้ไปที่รายการที่ไม่ได้ทำให้เกิดปัญหา
+     คนเปิดไปดูแล้วเห็นว่ามันถูกลบไปแล้ว จึงสรุปว่าแถบเตือนเพี้ยน */
+  expect(txt, 'ต้องเป็นวันของรายการที่ยังอยู่').toContain(fmtDateTH(isoAgo(8)));
+  expect(txt).not.toContain(fmtDateTH(isoAgo(1)));
+  expect(txt).toContain('เครื่องไลน์ A');
+});
+
+test('กดเลข PO ต้องเด้งไปหน้าแก้ไขรายการ และล้างตัวกรองที่ค้างอยู่ให้ด้วย', async ({ page }) => {
+  await openDash(page, [order('PO-J', 9000, 'TUE-U')],
+    anomRecs('PO-J', { winding: 100, assembly: 500 }));
+
+  /* ตัวกรองที่ค้างจากการใช้ครั้งก่อน — ฉากจริงคือคนเพิ่งไปดูยอดของวันหนึ่งมา
+     ⚠️ ไม่ล้าง แล้วตารางจะว่าง คนอ่านว่า "ใบนี้ไม่มีรายการ" ทั้งที่ถูกกรองทิ้ง
+        ซึ่งแย่กว่าไม่มีปุ่มนี้เลย เพราะมันตอบผิดแทนที่จะไม่ตอบ */
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.fill('#recFilterDate', isoAgo(99));
+  await page.selectOption('#recFilterProcess', 'inspection');
+  await page.click('.tab-btn[data-tab="dashboard"]');
+
+  await openAnomList(page);
+  await page.click('[data-anom-po="PO-J"]');
+
+  await expect(page.locator('.tab-btn[data-tab="entry"]')).toHaveClass(/active/);
+  expect(await page.inputValue('#recFilterDate')).toBe('');
+  expect(await page.inputValue('#recFilterProcess')).toBe('');
+  expect(await page.inputValue('#recFilterSearch')).toBe('PO-J');
+  // ต้องเห็นรายการของใบนั้นจริง ไม่ใช่ตารางว่าง
+  await expect(page.locator('#recordEditorTable tbody tr')).toHaveCount(2);
+});
+
+test('รายการย้อนแย้งต้องนับชุดใบเดียวกับตัวกรองของหน้า (กฎจาก #119)', async ({ page }) => {
+  await openDash(page,
+    [order('PO-U9', 5000, 'TUE-U'), order('PO-H9', 5000, 'TUE-H')],
+    [...anomRecs('PO-U9', { winding: 100, assembly: 500 }),
+     ...anomRecs('PO-H9', { winding: 100, assembly: 500 })]);
+
+  await openAnomList(page);
+  await expect(page.locator('.wanr')).toHaveCount(2);
+
+  await pickSub(page, 'TUE-U');
+  /* ⚠️ รายการต้องหุบตามตัวกรอง ไม่ใช่คิดจาก activeOrders() ทั้งก้อน
+     ไม่งั้นแถบบอก 1 PO แต่กางออกมาได้ 2 แถว = คนเลิกเชื่อทั้งแถบ */
+  await expect(page.locator('.wanom')).toContainText('ข้อมูลย้อนแย้ง 1 PO');
+  await expect(page.locator('.wanr'), 'เลขบนแถบกับจำนวนแถวต้องตรงกันเสมอ').toHaveCount(1);
+  await expect(page.locator('[data-anom-row="PO-U9"]')).toBeVisible();
+
+  /* ⚠️ และต้องไม่หุบเองตอนเปลี่ยนตัวกรอง — แถบถูกวาดใหม่ทั้งก้อนทุกครั้ง
+     ถ้าเก็บสถานะเปิด/ปิดไว้ในฟังก์ชัน รายการจะหายทุกครั้งที่คนขยับตัวกรอง */
+  await expect(page.locator('.wanl')).toBeVisible();
+});
+
+test('G3 — PO และ P/N ที่ซิงค์มาต้องไม่กลายเป็น attribute หรือแท็กบนรายการย้อนแย้ง', async ({ page }) => {
+  /* ⚠️ สองช่องนี้ลง innerHTML คนละที่ และพังคนละแบบ — ต้องยิงทั้งคู่
+     · poNo  -> ลง **attribute** (data-anom-row / data-anom-po) -> หลุดเป็น onmouseover ได้
+     · pn    -> ลง **เนื้อข้อความ** -> หลุดเป็นแท็ก <img onerror> ได้
+     เทสรอบแรกของใบนี้ยิง pn แล้วไปตรวจ attribute ซึ่งเกิดจากเนื้อข้อความไม่ได้เลย
+     จึงเขียวเองโดยไม่ได้ตรวจอะไร (ถอด escapeHtml ของ pn ออกแล้วยังเขียว — พิสูจน์แล้ว) */
+  const evilPo = 'P" onmouseover="window.__anomAttr=1';
+  const evilPn = '<img src=x onerror="window.__anomTag=1">';
+  const o = order(evilPo, 5000, 'TUE-U');
+  o.pn = evilPn;
+  await openDash(page, [o], [
+    rec('w', o.id, 'winding', 100, isoAgo(9)),
+    rec('a', o.id, 'assembly', 500, isoAgo(8))
+  ]);
+  await openAnomList(page);
+
+  const row = page.locator('.wanr').first();
+  expect(await row.getAttribute('onmouseover'), 'poNo หลุดเป็น attribute').toBeNull();
+  expect(await row.locator('img').count(), 'pn หลุดเป็นแท็ก').toBe(0);
+  await row.hover();
+  await page.waitForTimeout(50);
+  expect(await page.evaluate(() => window.__anomAttr)).toBeUndefined();
+  expect(await page.evaluate(() => window.__anomTag)).toBeUndefined();
+  // และต้องยังอ่านค่าจริงได้ ไม่ใช่ถูกกลืนหาย
+  await expect(row).toContainText(evilPn);
+});
+
+test('จอแคบต้องไม่ตัดบรรทัดกลางหน่วย — เลขต้องติดกับคำของมัน', async ({ page }) => {
+  /* ⚠️ ที่ 1024 px คอลัมน์แคบลงจนข้อความตัดบรรทัด · ตอนแรกเขียนเป็นเว้นวรรคธรรมดา
+     แล้ว "เกิน" กับ "252" ไปคนละบรรทัด และชื่อเครื่องขาดจากวันที่ (รันเห็นเองก่อนเปิดใบ)
+     เลขที่ลอยอยู่คนละบรรทัดกับคู่ของมัน อ่านผิดคู่ได้ ซึ่งบนหน้าที่มีไว้ไล่ของผิดคือเรื่องใหญ่
+     แก้ด้วยการห่อแต่ละหน่วยด้วย <u> ที่ nowrap แล้วปล่อยให้ย้ายทั้งก้อนแทนที่จะแตกกลางคำ */
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await openDash(page, [order('PO-W', 9000, 'TUE-U')],
+    anomRecs('PO-W', { winding: 100, assembly: 500, support: 900 }));
+  await openAnomList(page);
+
+  const units = page.locator('.wanr u');
+  expect(await units.count(), 'ทุกหน่วยต้องถูกห่อไว้').toBeGreaterThanOrEqual(3);
+  for (const u of await units.all()) {
+    expect(await u.evaluate(el => getComputedStyle(el).whiteSpace),
+      'หน่วยที่แตกกลางคำได้ = เลขไปอยู่คนละบรรทัดกับคำของมัน').toBe('nowrap');
+  }
+  /* ขั้นที่เพี้ยนต้องหนา **ทุกคู่** ไม่ใช่เฉพาะคู่แรก
+     ⚠️ ฉากนี้ต้องมีสองคู่เท่านั้น — คู่เดียวจะเขียวเองถ้ามีคนกลับไปเขียน CSS เป็น u:first-child
+        เพราะตัวที่ควรหนาก็เป็นลูกคนแรกพอดี (ลองแล้ว: เปลี่ยนกลับแล้วฉากคู่เดียวยังเขียว) */
+  const hi = page.locator('.wanr u.hi');
+  expect(await hi.count(), 'สองคู่ = ต้องมีสองตัว').toBe(2);
+  for (const el of await hi.all()) {
+    expect(await el.evaluate(x => Number(getComputedStyle(x).fontWeight))).toBeGreaterThan(500);
+  }
+
+  // และต้องไม่ดันหน้าให้เลื่อนแนวนอน
+  expect(await page.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
+});
