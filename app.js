@@ -352,9 +352,23 @@ function processHeadHtml(id){
   const d = PROCESS_BY_ID[id];
   return (d && d.headHtml) || escapeHtml(d ? d.short : id);
 }
-/** ยอดสะสมของขั้นถัดไปมากกว่าขั้นก่อนหน้า = คีย์ข้ามขั้นหรือคีย์ผิด */
+/** คู่ขั้นที่ยอดสะสมย้อนแย้งของใบเดียว — ขั้นถัดไปมากกว่าขั้นก่อนหน้า ซึ่งเป็นไปไม่ได้
+ *  ⚠️ **เกณฑ์ของความย้อนแย้งอยู่ที่นี่ที่เดียว** hasOrderAnomaly() เรียกตัวนี้ ไม่ได้เขียนเงื่อนไขเอง
+ *     เขียนสองชุดเมื่อไหร่ แถบเตือนจะนับได้เลขหนึ่ง แล้วรายการที่กางออกมาได้อีกเลขหนึ่ง
+ *     ซึ่งทำให้คนเลิกเชื่อทั้งแถบ (แถบบอก 22 PO แล้วกางได้ 21 แถว)
+ *  ใช้ MAIN_PROCESSES ไม่ใช่ PROCESSES — ขั้นนับแยกไม่ได้ไหลมาจากขั้นไหน (A3 · A5) */
+function orderAnomalyPairs(c){
+  const out = [];
+  MAIN_PROCESSES.forEach((p, i)=>{
+    if(!i) return;
+    const prev = MAIN_PROCESSES[i-1], cur = c[p]||0, bef = c[prev]||0;
+    if(cur > bef) out.push({ prev, p, cur, bef, over: cur - bef });
+  });
+  return out;
+}
+/** ใบนี้มียอดสะสมย้อนแย้งมั้ย = คีย์ข้ามขั้นหรือคีย์ผิด */
 function hasOrderAnomaly(c){
-  return MAIN_PROCESSES.some((p, i)=> i > 0 && (c[p]||0) > (c[MAIN_PROCESSES[i-1]]||0));
+  return orderAnomalyPairs(c).length > 0;
 }
 
 // ฟิลด์ที่เก็บ "วันปฏิทินล้วน" (YYYY-MM-DD) — ต้อง normalize ทุกครั้งที่รับค่าจากภายนอก
@@ -2930,18 +2944,106 @@ function dashSubName(){
   return el ? el.value : '';
 }
 
+/* เปิด/ปิดรายการใบย้อนแย้งใต้แถบเตือน — ของเครื่องนี้ ไม่เก็บลง state
+ * กฎเดียวกับช่วงวันของแดชบอร์ด: เก็บลง state = เพิ่มฟิลด์ที่ต้องซิงค์ (E1-E4) ซึ่งไม่ได้ขอ
+ * แต่ต้องอยู่นอกฟังก์ชัน เพราะ renderWipCards() ถูกเรียกใหม่ทุกครั้งที่เปลี่ยนตัวกรอง
+ * ถ้าเก็บไว้ในฟังก์ชัน รายการจะหุบเองทุกครั้งที่คนขยับตัวกรอง */
+let anomOpen = false;
+
+/** วันล่าสุดที่มีคนคีย์ยอดของ (ใบ, ขั้น) ที่ขอมา — เดินผ่านสมุดรอบเดียว
+ *  รับกุญแจที่ต้องการมาก่อน จึงไม่ต้องทำดัชนีทั้งสมุดให้ใบที่ไม่ได้ถาม
+ *  ⚠️ ข้ามรายการที่ยกเลิกแล้ว — ยอดนั้นไม่ได้อยู่ในยอดสะสมที่ทำให้ย้อนแย้ง จะชี้ให้คนไปดูผิดรายการ
+ *  เทียบวันเป็นสตริงตรง ๆ ได้ เพราะ record.date เป็น YYYY-MM-DD ที่ normalize แล้ว */
+function lastKeyedOf(keys){
+  const m = {};
+  if(!keys.size) return m;
+  state.records.forEach(r=>{
+    if(r.voided) return;
+    const k = r.orderId + '|' + r.process;
+    if(!keys.has(k)) return;
+    const cur = m[k];
+    if(!cur || (r.date||'') > cur.date) m[k] = { date: r.date||'', qty: Number(r.qty)||0, by: r.deviceName||'' };
+  });
+  return m;
+}
+
+/** รายการใบย้อนแย้งใต้แถบเตือน — บอกว่า "ใบไหน ขั้นไหนเพี้ยน เกินเท่าไหร่ ใครคีย์ล่าสุด"
+ *  แถบเตือนบอกแค่จำนวน ซึ่งตามต่อไม่ได้ · นี่คือส่วนที่ทำให้ตามต่อได้ (เจ้าของขอ 8 พ.ย. 2026)
+ *  ⚠️ ทุกค่าที่ลง innerHTML ต้องผ่าน escapeHtml() — P/N กับชื่อขั้นซิงค์ข้ามเครื่องได้ (G3)
+ *     ยกเว้นเลขที่ผ่าน numFmt() แล้ว ซึ่งเป็นตัวเลขล้วน */
+function anomalyListHtml(list){
+  const short = id => (PROCESS_BY_ID[id] || {}).short || id;
+  const keys = new Set();
+  list.forEach(x=> x.bad.forEach(b=> keys.add(x.o.id + '|' + b.p)));
+  const last = lastKeyedOf(keys);
+  /* เรียงเองเสมอ — ลำดับใน state.orders ต่างกันระหว่างเครื่องที่นำเข้าเองกับที่ซิงค์มา
+     ⚠️ ครอบ String() ก่อน localeCompare — ตัวเลขไม่มีเมธอดนี้ รายการจะพังทั้งก้อน
+     เหตุผลเต็มอยู่ใน CLAUDE.md */
+  const worst = x => Math.max.apply(null, x.bad.map(b=> b.over));
+  list = list.slice().sort((a, b)=> worst(b) - worst(a)
+    || String(a.o.poNo).localeCompare(String(b.o.poNo))
+    || String(a.o.pn).localeCompare(String(b.o.pn)));
+  const pair = b => `<u class="hi">${escapeHtml(short(b.p))}\u00A0${numFmt(b.cur)}</u> &gt; `
+    + `<u>${escapeHtml(short(b.prev))}\u00A0${numFmt(b.bef)}</u> · `
+    + `<b>เกิน\u00A0${numFmt(b.over)}</b>`;
+  const when = (o, b) => {
+    const L = last[o.id + '|' + b.p];
+    if(!L) return '—';
+    return `<u>${escapeHtml(fmtDateTH(L.date))}\u00A0·\u00A0${numFmt(L.qty)}</u>`
+      + (L.by ? ` · <u>${escapeHtml(L.by)}</u>` : '');
+  };
+  return `<div class="wanl"><div class="wanh"><span>PO No.</span><span>P/N</span><span>Sub-Name</span>`
+    + `<span class="r">สัปดาห์</span><span class="r">ยอดสั่ง</span>`
+    + `<span>ขั้นที่เพี้ยน (สะสม)</span>`
+    + `<span>รายการล่าสุดของขั้นนั้น</span></div>`
+    + list.map(({ o, bad })=>`<div class="wanr" data-anom-row="${escapeHtml(String(o.id))}" data-anom-pn="${escapeHtml(String(o.pn))}">`
+      + `<span><button type="button" class="lnk" data-anom-po="${escapeHtml(String(o.poNo))}"`
+      + ` title="เปิดหน้าแก้ไข/ลบรายการ แล้วกรองเฉพาะใบนี้">${escapeHtml(String(o.poNo))}</button></span>`
+      + `<span>${escapeHtml(String(o.pn))}</span><span>${escapeHtml(o.subName || '—')}</span>`
+      + `<span class="r">${escapeHtml(String(o.week || '—'))}</span>`
+      + `<span class="r">${numFmt(Number(o.orderQty) || 0)}</span>`
+      + `<span>${bad.map(pair).join('<br>')}</span>`
+      + `<span>${bad.map(b=> when(o, b)).join('<br>')}</span></div>`).join('')
+    + `</div>`;
+}
+
+/** กดเลข PO บนรายการย้อนแย้ง -> ไปหน้าแก้ไขรายการ กรองเหลือเฉพาะใบนั้น
+ *  ⚠️ **ต้องล้างช่องวันที่ ขั้น และแหล่งที่มาด้วย** ไม่ใช่แค่ใส่ช่องค้นหา
+ *     ถ้ามีตัวกรองค้างอยู่จากครั้งก่อน ตารางจะว่าง แล้วคนอ่านว่า "ใบนี้ไม่มีรายการ"
+ *     ทั้งที่มันถูกกรองทิ้ง ซึ่งแย่กว่าไม่มีปุ่มนี้เลย
+ *  ⚠️ ไม่ตั้งช่องขั้นเป็นขั้นที่เพี้ยน — ต้องเห็นทั้งขั้นนั้นและขั้นก่อนหน้าถึงจะรู้ว่าใบไหนคีย์ผิด
+ *  ไม่แตะช่อง "แสดงรายการที่ลบแล้ว" เพราะเป็นค่าที่คนตั้งไว้เอง */
+function openRecordsForPo(po){
+  /* ⚠️ ตั้งตัวกรอง **ก่อน** กดแท็บ — ตัวจับคลิกแท็บเรียก renderRecordEditor() ให้อยู่แล้ว
+     กดก่อนแล้วค่อยตั้ง จะวาดด้วยตัวกรองเก่าหนึ่งรอบแล้ววาดใหม่อีกรอบ = เดินสมุดสองเที่ยว
+     ที่ 712 ใบ / ~14,000 รายการ นั่นไม่ฟรี (ผู้ตรวจ #127 ทัก) */
+  const search = document.getElementById('recFilterSearch');
+  document.getElementById('recFilterDate').value = '';
+  document.getElementById('recFilterProcess').value = '';
+  document.getElementById('recFilterSource').value = '';
+  search.value = po;
+  document.querySelector('.tab-btn[data-tab="entry"]').click();
+  document.getElementById('recordEditorTable').scrollIntoView({ behavior:'smooth', block:'center' });
+  /* ⚠️ ปุ่มที่เพิ่งกดถูกซ่อนไปพร้อมแท็บแดชบอร์ด โฟกัสจึงตกไป BODY (G2 · ผู้ตรวจ #127 รันพิสูจน์)
+     คนไล่ด้วยแป้นพิมพ์ต้อง Tab จากต้นหน้าใหม่ · ส่งไปที่ช่องค้นหาซึ่งเป็นที่ที่เขากำลังจะทำงานต่อ
+     กฎเดียวกับปุ่มกางรายการ · #dayProcBtns · pendingFocusOrderId */
+  search.focus();
+}
+
 function renderWipCards(){
   const rows = dashFilteredRows();
   const subF = dashSubName();
   const note = document.getElementById('wipScopeNote');
   // ⚠️ ข้อความนี้คือสิ่งเดียวที่บอกว่าหัวเลขกับบัญชีของค้างนับใบไหน — ต้องตรงกับชุดที่นับจริง จึงบอกจำนวนใบด้วย
   if(note) note.textContent = `นับเฉพาะใบที่ผ่านตัวกรองบนหน้านี้ · ${numFmt(rows.length)} ใบ` + (subF ? ' · ' + subF : '');
-  let totalQty=0, anomalyCount=0;
+  let totalQty=0;
+  const anom = [];   // ใบย้อนแย้ง + คู่ขั้นที่เพี้ยน — ชุดเดียวกับหัวเลขและบัญชี (กฎ #119)
   const sum = emptyCum();
   rows.forEach(({o, c})=>{
     const q = Number(o.orderQty) || 0;   // ⚠️ เหมือนในตาราง — `0 + '100'` ได้ `'0100'` ไม่ใช่ 100
     totalQty += q;
-    if(hasOrderAnomaly(c)) anomalyCount++;
+    const bad = orderAnomalyPairs(c);
+    if(bad.length) anom.push({ o, bad });
     PROCESSES.forEach(p=>{ sum[p] += Math.min(c[p]||0, q); });
   });
   const shipped = sum.shipping, left = Math.max(0, totalQty - shipped);
@@ -2968,8 +3070,10 @@ function renderWipCards(){
     + head('ยอดแผนรวม', numFmt(totalQty), `ชิ้น · <b>${numFmt(rows.length)}</b> PO`)
     + head('ส่งไปแล้ว', numFmt(shipped), `ชิ้น · <b>${totalQty? Math.round(shipped/totalQty*100):0}%</b>`)
     + head('ยังไม่ได้ส่ง', numFmt(left), 'ชิ้น', true) + `</div>`;
-  if(anomalyCount>0){
-    html += `<div class="wanom">⚠<span><b>ข้อมูลย้อนแย้ง ${numFmt(anomalyCount)} PO</b> — สะสมขั้นถัดไปมากกว่าขั้นก่อนหน้า ซึ่งเป็นไปไม่ได้ ตัวเลขค้างรายขั้นของ PO เหล่านี้จึงยังเชื่อไม่ได้</span></div>`;
+  if(anom.length){
+    html += `<div class="wanom">⚠<span><b>ข้อมูลย้อนแย้ง ${numFmt(anom.length)} PO</b> — สะสมขั้นถัดไปมากกว่าขั้นก่อนหน้า ซึ่งเป็นไปไม่ได้ ตัวเลขค้างรายขั้นของ PO เหล่านี้จึงยังเชื่อไม่ได้</span>`
+      + `<button type="button" class="wanom-t" id="wanomToggle" aria-expanded="${anomOpen}">${anomOpen ? 'ซ่อนรายการ ▴' : 'ดูรายการ ▾'}</button></div>`
+      + (anomOpen ? anomalyListHtml(anom) : '');
   }
   html += `<div class="wlt"><b>ของที่ยังไม่ได้ส่ง — ค้างอยู่ขั้นไหน</b>`
     + `<span>หน่วยเป็นชิ้น · เปอร์เซ็นต์คิดจาก ${numFmt(left)} ชิ้นที่ยังไม่ได้ส่ง</span></div>`
@@ -2979,7 +3083,26 @@ function renderWipCards(){
       + `<div class="q">${numFmt(s.qty)}</div><div class="q">${numFmt(s.n)}</div>`
       + `<div class="b"><span style="width:${pctOf(s.qty).toFixed(1)}%;background:${escapeHtml(s.color)}"></span></div>`
       + `<div class="q">${pctOf(s.qty).toFixed(1)}%</div></div>`).join('');
-  document.getElementById('wipCards').innerHTML = html;
+  /* ⚠️ ปุ่มกางถูกวาดใหม่ทั้งปุ่มทุกครั้งที่เปลี่ยนตัวกรอง — ไม่คืนโฟกัสแล้วคนที่ไล่ด้วยแป้นพิมพ์
+     ตกไป BODY แล้วต้องเริ่มจากต้นหน้าใหม่ (กฎเดียวกับ #dayProcBtns และ pendingFocusOrderId) */
+  const act = document.activeElement;
+  const wasToggle = !!(act && act.id === 'wanomToggle');
+  const wasPo = act && act.dataset ? act.dataset.anomPo : null;
+  const box = document.getElementById('wipCards');
+  box.innerHTML = html;
+  const tg = document.getElementById('wanomToggle');
+  if(tg) tg.addEventListener('click', ()=>{ anomOpen = !anomOpen; renderWipCards(); });
+  box.querySelectorAll('[data-anom-po]').forEach(el=>{
+    el.addEventListener('click', ()=> openRecordsForPo(el.dataset.anomPo));
+  });
+  /* ⚠️ ปุ่มในแถวก็ต้องคืนโฟกัส ไม่ใช่แค่ปุ่มกาง — ซิงค์อัตโนมัติวาดหน้าใหม่ทุก 20 วิ
+     คนที่ Tab มาค้างบนปุ่มเลข PO จะตกไป BODY เองโดยไม่ได้กดอะไร (ผู้ตรวจ #127 รอบ 5)
+     CSS.escape เพราะรหัส PO ซิงค์ข้ามเครื่องได้ และไม่ได้กรองอักขระ (G3) */
+  if(wasToggle){ if(tg) tg.focus(); }
+  else if(wasPo){
+    const back = box.querySelector(`[data-anom-po="${CSS.escape(wasPo)}"]`);
+    if(back) back.focus();
+  }
 }
 
 /** ยอดที่ค้างอยู่หน้าขั้น stage ของใบสั่งซื้อใบเดียว — **หักทีละใบ**

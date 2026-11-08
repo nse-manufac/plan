@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-08.2">
+<meta name="app-version" content="2026-11-08.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -130,6 +130,17 @@
   .wlr .b span{display:block;height:100%;border-radius:2px;}
   .wanom{display:flex;gap:8px;margin-top:14px;font-size:13px;color:var(--text-dim);line-height:1.5;}
   .wanom b{color:var(--red);font-weight:700;}
+  .wanom-t{background:none;border:1px solid var(--border);border-radius:6px;padding:2px 10px;font:inherit;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap;align-self:flex-start;}
+  .wanom-t:hover{background:var(--gray-light);}
+  .wanl{margin-top:10px;border:1px solid var(--border);border-radius:8px;overflow-x:auto;}
+  .wanh,.wanr{display:grid;grid-template-columns:104px minmax(82px,1fr) 64px 50px 70px minmax(162px,1.5fr) minmax(116px,.9fr);gap:0 12px;padding:8px 12px;align-items:start;}
+  .wanh{background:var(--gray-light);font-size:11px;color:var(--text-dim);}
+  .wanr{border-top:1px solid var(--border);font-size:12.5px;line-height:1.65;}
+  .wanh .r,.wanr .r{text-align:right;font-variant-numeric:tabular-nums;}
+  .wanr .lnk{background:none;border:0;padding:0;font:inherit;color:var(--primary);text-decoration:underline;cursor:pointer;text-align:left;}
+  .wanr u{text-decoration:none;white-space:nowrap;}
+  .wanr u.hi{font-weight:600;}
+  .wanr b{color:var(--red);font-weight:700;}
   .progress{width:90px;height:8px;background:var(--gray-light);border-radius:5px;overflow:hidden;display:inline-block;vertical-align:middle;}
   .progress .seg-on{height:100%;background:var(--primary);float:left;}
   .progress .seg-late{height:100%;background:#f59e0b;float:left;}
@@ -241,6 +252,9 @@
     /* หน้ากระดาษผ่ากลางแถวได้ แล้วเลขกับแถบของขั้นเดียวกันไปคนละหน้า
        หัวตารางก็ต้องไม่หลุดไปนอนท้ายหน้าเดี่ยว ๆ โดยไม่มีแถวไหนตาม */
     .wlr{break-inside:avoid;}
+    .wanr{break-inside:avoid;}
+    .wanl{overflow:visible;}
+    .wanom-t{display:none;}
     .wlh{break-after:avoid;}
     /* บนจอตารางอยู่ในกรอบสูง 70vh แล้วเลื่อนดู ถ้าไม่ปลดล็อกจะพิมพ์ได้แค่แถวที่มองเห็น */
     .table-wrap{overflow:visible;max-height:none;}
@@ -928,6 +942,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-08.2"></script>
+<script src="app.js?v=2026-11-08.3"></script>
 </body>
 </html>
