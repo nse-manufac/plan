@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-07.4">
+<meta name="app-version" content="2026-11-07.6">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -105,15 +105,31 @@
   tr.dn-group td{background:transparent;}
   tr.row-voided{opacity:.5;}
   tr.row-voided td{background:var(--gray-light);}
-  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:18px;}
-  .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);}
-  .card .label{font-size:12px;color:var(--text-dim);font-weight:600;margin-bottom:6px;}
-  .card .value{font-size:24px;font-weight:800;}
-  .card .unit{font-size:12px;color:var(--text-dim);font-weight:500;margin-left:4px;}
-  .card.accent-blue{border-top:4px solid var(--primary);}
-  .card.accent-amber{border-top:4px solid var(--amber);}
-  .card.accent-green{border-top:4px solid var(--green);}
-  .card.accent-red{border-top:4px solid var(--red);}
+  /* หัวตัวเลขรวม + บัญชีของค้างรายขั้น (แทนการ์ด 7 ใบ)
+     แถบสัดส่วนของทุกขั้นเริ่มที่เส้นเดียวกัน จึงเทียบด้วยตาได้ว่าขั้นไหนกองหนักกว่า
+     ซึ่งแถบที่อยู่ในกรอบการ์ดใครกรอบมันทำไม่ได้ */
+  #wipCards{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:18px;box-shadow:var(--shadow);}
+  .wh{display:flex;flex-wrap:wrap;gap:10px 44px;align-items:flex-end;padding-bottom:14px;border-bottom:1px solid var(--border);}
+  .wh .k{font-size:15px;font-weight:600;color:var(--text-dim);}
+  .wh .v{font-size:30px;font-weight:800;line-height:1.2;font-variant-numeric:tabular-nums;}
+  .wh .v small{font-size:15px;font-weight:500;color:var(--text-dim);margin-left:8px;}
+  .wh .v small b{font-size:17px;font-weight:700;color:var(--text);}
+  .wh .sub .v{font-size:22px;color:var(--text-dim);}
+  .wlt{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:16px 0 10px;}
+  .wlt b{font-size:19px;font-weight:600;}
+  .wlt span{font-size:12px;color:var(--text-dim);}
+  .wlh,.wlr{display:grid;grid-template-columns:13px 20px minmax(130px,1fr) 112px 84px minmax(80px,.62fr) 76px;align-items:center;gap:0 14px;}
+  .wlh{padding-bottom:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-dim);}
+  .wlr{padding:12px 0;border-bottom:1px solid var(--border);}
+  .wlh .r,.wlr .q{text-align:right;font-variant-numeric:tabular-nums;}
+  .wlr .t{width:13px;height:13px;border-radius:3px;}
+  .wlr .n{font-size:12.5px;color:var(--text-dim);}
+  .wlr .nm{font-size:17px;font-weight:600;}
+  .wlr .q{font-size:21px;font-weight:700;}
+  .wlr .b{height:8px;border-radius:2px;background:var(--gray-light);overflow:hidden;}
+  .wlr .b span{display:block;height:100%;border-radius:2px;}
+  .wanom{display:flex;gap:8px;margin-top:14px;font-size:13px;color:var(--text-dim);line-height:1.5;}
+  .wanom b{color:var(--red);font-weight:700;}
   .progress{width:90px;height:8px;background:var(--gray-light);border-radius:5px;overflow:hidden;display:inline-block;vertical-align:middle;}
   .progress .seg-on{height:100%;background:var(--primary);float:left;}
   .progress .seg-late{height:100%;background:#f59e0b;float:left;}
@@ -221,7 +237,11 @@
     header.topbar, nav.tabs, .filters, .toast, .no-print{display:none !important;}
     .print-only{display:block;}
     main{max-width:none;padding:0;}
-    .panel{border:none;box-shadow:none;padding:0;margin-bottom:12px;}
+    .panel, #wipCards{border:none;box-shadow:none;padding:0;margin-bottom:12px;}
+    /* หน้ากระดาษผ่ากลางแถวได้ แล้วเลขกับแถบของขั้นเดียวกันไปคนละหน้า
+       หัวตารางก็ต้องไม่หลุดไปนอนท้ายหน้าเดี่ยว ๆ โดยไม่มีแถวไหนตาม */
+    .wlr{break-inside:avoid;}
+    .wlh{break-after:avoid;}
     /* บนจอตารางอยู่ในกรอบสูง 70vh แล้วเลื่อนดู ถ้าไม่ปลดล็อกจะพิมพ์ได้แค่แถวที่มองเห็น */
     .table-wrap{overflow:visible;max-height:none;}
     table{font-size:10.5px;}
@@ -633,7 +653,7 @@
     <div class="small muted" id="printMeta"></div>
   </div>
   <div class="small muted" id="wipScopeNote" style="margin-bottom:8px;"></div>
-  <div class="cards" id="wipCards"></div>
+  <div id="wipCards"></div>
 
   <div class="panel">
     <h2>ยอดผลิตรายวัน (Throughput)</h2>
@@ -671,7 +691,10 @@
     <div class="desc">หนึ่งแถว = หนึ่ง P/N ต่อหนึ่งหน่วย (รวมทุกใบของ P/N นั้น) ·
       <b>เลขตัวใหญ่ในช่องของแต่ละขั้น = ยอดที่คีย์ในช่วงวันที่เลือก</b> ·
       บรรทัดล่างกับแถบ = <b>ยอดสะสมทั้งหมดเทียบยอดสั่งรวม ไม่ขึ้นกับช่วงวัน</b> ·
-      ช่วงวันไม่ตัดแถวทิ้งและไม่แตะการ์ดสรุป · &quot;—&quot; = ช่วงนั้นไม่มียอดของขั้นนี้
+      ช่วงวันไม่ตัดแถวทิ้งเอง — ยกเว้นช่องติ๊ก &quot;ซ่อนงานที่ส่งของครบแล้ว&quot; ข้างล่าง
+      ซึ่งคืนใบที่มียอดในช่วงให้ · <b>ชุดใบที่นับจึงขยับตามช่วงวัน</b>
+      (ดูได้ที่จำนวนใบกับยอดแผนรวมข้างบน) · <b>ส่วนบัญชีของค้างเป็นยอดสะสม ไม่ใช่ยอดของช่วงวัน</b> ·
+      &quot;—&quot; = ช่วงนั้นไม่มียอดของขั้นนี้
       ในใบที่ผ่านตัวกรองอยู่ (แถวรวมท้ายตารางบอกว่านับกี่ใบ)</div>
     <div class="row filters">
       <div class="field">
@@ -765,7 +788,7 @@
       <div class="field"><label>ชื่อสั้น</label><input type="text" id="newProcShort" maxlength="20" placeholder="หัวตาราง · ว่างไว้ใช้ชื่อขั้น"></div>
       <div class="field"><label>ตำแหน่ง</label><select id="newProcAfter"></select></div>
       <div class="field"><label>ชนิดของขั้น</label>
-        <label style="font-weight:500;" title="ขั้นที่ยอดไม่เกี่ยวกับสายหลัก เช่นงานซ่อม งานนอกแผน — คีย์ยอดเก็บไว้ดูย้อนหลังได้ แต่ไม่ถูกนับเป็นขั้นก่อนหน้าของใคร ไม่มีการ์ด WIP และไม่ถูกตัดสินล่าช้า">
+        <label style="font-weight:500;" title="ขั้นที่ยอดไม่เกี่ยวกับสายหลัก เช่นงานซ่อม งานนอกแผน — คีย์ยอดเก็บไว้ดูย้อนหลังได้ แต่ไม่ถูกนับเป็นขั้นก่อนหน้าของใคร ไม่มีแถวในบัญชีของค้าง และไม่ถูกตัดสินล่าช้า">
           <input type="checkbox" id="newProcStandalone"> นับแยก ไม่อยู่ในสายการผลิต</label></div>
       <div class="field"><label>&nbsp;</label><button class="btn success" id="btnProcessAdd">เพิ่มขั้น</button></div>
     </div>
@@ -905,6 +928,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-07.4"></script>
+<script src="app.js?v=2026-11-07.6"></script>
 </body>
 </html>

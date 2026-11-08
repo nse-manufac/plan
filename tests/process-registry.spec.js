@@ -98,7 +98,7 @@ test('การ์ด WIP — ค้างหน้าขั้นที่เ�
   // Winding 800 · Coating 500 · Assembly 300 → ค้างหน้า Coating 300 · ค้างหน้า Assembly 200
   await open(page);
   await tab(page, 'dashboard');
-  const card = label => page.locator('#wipCards .card', { hasText: label }).locator('.value');
+  const card = label => page.locator('#wipCards .wlr', { hasText: label }).locator('.q').first();
   expect(await card('WIP ค้างหน้า Coating').innerText()).toContain('300');
   expect(await card('WIP ค้างหน้า Assembly').innerText(), 'ต้องหักจาก Coating ไม่ใช่ Winding').toContain('200');
 });
@@ -213,9 +213,12 @@ test('ห้าขั้นเดิม — ปุ่ม ตัวกรอง �
   // แดชบอร์ดเหลือห้าคอลัมน์หน้าขั้น (Item No. · P/N · Sub-Name · ใบ · ยอดสั่งรวม)
   expect(heads.slice(0, 5)).toEqual(['Item No.', 'P/N', 'Sub-Name', 'ใบ', 'ยอดสั่งรวม']);
   expect(heads.slice(5)).toEqual(['Winding', 'Assembly', 'Support', 'Inspection', 'ส่งของ (Shipping)']);
-  const cards = await page.locator('#wipCards .card .label').allInnerTexts();
-  expect(cards).toEqual(['ยอดแผนรวม (Order Qty)', 'ยังไม่เริ่มผลิต', 'WIP ค้างหน้า Assembly', 'WIP ค้างหน้า Support',
-    'WIP ค้างหน้า Inspection', 'ยอด FG คงคลัง', 'ส่งของแล้ว (Shipped)']);
+  expect(await page.locator('#wipCards .wh .k').allInnerTexts(), 'หัวตัวเลขรวมสามตัว')
+    .toEqual(['ยอดแผนรวม', 'ส่งไปแล้ว', 'ยังไม่ได้ส่ง']);
+  const cards = await page.locator('#wipCards .wlr .nm').allInnerTexts();
+  expect(cards, 'แถวของค้าง ขั้นละแถว เรียงตามสายการผลิต')
+    .toEqual(['ยังไม่เริ่มผลิต', 'WIP ค้างหน้า Assembly', 'WIP ค้างหน้า Support',
+      'WIP ค้างหน้า Inspection', 'ยอด FG คงคลัง']);
 });
 
 test('ชื่อขั้นต้นน้ำต้องไม่ถูกเขียนตายตัวนอกรายการขั้น', async () => {

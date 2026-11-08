@@ -144,7 +144,7 @@ test('ยอดสะสมต้องครอบ min(สะสม, ยอด�
     [rec('r1', 'ZZ-1|PN-A', 'winding', 150), rec('r2', 'ZZ-2|PN-A', 'winding', 50)]);
   const g = await dashGroups(page);
   expect(g[0].winding).toContain('150/200');
-  expect(await page.locator('#wipCards').innerText(), 'ต้องตรงกับการ์ด WIP').toContain('150');
+  expect(await page.locator('#wipCards').innerText(), 'ต้องตรงกับบัญชีของค้างรายขั้น').toContain('150');
 });
 
 test('P/N เดียวกันแต่คนละหน่วย ต้องเป็นคนละแถว ยอดห้ามปนกัน', async ({ page }) => {
@@ -455,16 +455,20 @@ test('หัวกระดาษต้องบอกช่วงวันด�
 // ⚠️ ต้องเทียบ "การ์ดกับตาราง" ไม่ใช่ "การ์ดกับเลขที่เขียนไว้ในเทส" — เลขตายตัวจะเขียว
 //    ทั้งที่สองที่บนจอขัดกัน ถ้าวันหนึ่งมีคนเปลี่ยนนิยามของฝั่งตารางไปอีกทาง
 
-/** ป้าย → ค่าบนการ์ดทุกใบ (ตัดหน่วยที่อยู่ใน <span> ท้ายค่าออก) */
-const cardVals = page => page.locator('#wipCards .card').evaluateAll(els => {
+/** ป้าย → ค่า ทั้งหัวตัวเลขรวม (.wh) และแถวของค้างรายขั้น (.wlr)
+ *  หน่วยอยู่ใน <small> ท้ายค่า จึงหยิบเฉพาะ childNodes[0] เหมือนเดิม */
+const cardVals = page => page.evaluate(() => {
   const out = {};
-  els.forEach(el => {
-    out[el.querySelector('.label').textContent.trim()] =
-      el.querySelector('.value').childNodes[0].textContent.trim();
+  document.querySelectorAll('#wipCards .wh > div').forEach(el => {
+    out[el.querySelector('.k').textContent.trim()] =
+      el.querySelector('.v').childNodes[0].textContent.trim();
+  });
+  document.querySelectorAll('#wipCards .wlr').forEach(el => {
+    out[el.querySelector('.nm').textContent.trim()] = el.querySelector('.q').textContent.trim();
   });
   return out;
 });
-const PLAN_CARD = 'ยอดแผนรวม (Order Qty)';
+const PLAN_CARD = 'ยอดแผนรวม';
 
 test('การ์ดต้องไม่นับใบที่ตารางซ่อนไว้เพราะส่งของครบแล้ว', async ({ page }) => {
   /* ⚠️ ยอดส่งต้องลงวันเก่า ไม่ใช่วันนี้ — ตั้งแต่ 7 พ.ย. 2026 ใบที่มียอดในช่วงวันที่เลือก
@@ -709,9 +713,34 @@ test('การ์ดของขั้นสุดท้ายชื่อ "ย
   // นิยามย้ายไปอยู่ใน title แล้ว (เจ้าของสั่งเอาวงเล็บออกจากป้าย 7 พ.ย. 2026) — ต้องยังอ่านได้
   expect(cards, 'ป้ายบนการ์ดต้องสั้น ไม่มีวงเล็บนิยามแล้ว').not.toContain('เสร็จ Inspection แต่ยังไม่ส่ง');
 
-  const title = await page.locator('#wipCards .card')
+  const title = await page.locator('#wipCards .wlr .nm')
     .filter({ hasText: 'ยอด FG คงคลัง' }).getAttribute('title');
   expect(title, 'ต้องบอกว่าทำไมอาจไม่ตรงกับหน้ายอดคงคลัง FG').toContain('FG คงเหลือ');
+});
+
+test('จำนวน PO บนแถวของค้าง ต้องตรงกับจำนวน "ใบ" ที่ตัวกรอง "ค้างอยู่ที่ขั้น" กรองออกมา', async ({ page }) => {
+  /* เลขสองที่นี้มาจากสูตรเดียวกัน (wipQtyAtStage) โดยตั้งใจ — คนที่อ่านเลขบนแถว
+     แล้วอยากรู้ว่าเป็นใบไหน ต้องกดกรองแล้วได้จำนวนเท่ากันเสมอ ไม่งั้นเลขนั้นตามต่อไม่ได้
+     ⚠️ **หน่วยที่ต้องเท่ากันคือ "ใบ" ไม่ใช่ "แถว"** — ตารางรวมเป็นราย P/N มาตั้งแต่ 5 พ.ย. 2026
+     สองใบของ P/N เดียวกันจึงเหลือแถวเดียว · fixture ข้อนี้จึงจงใจให้ ZZ-1 กับ ZZ-2 ใช้ P/N เดียวกัน
+     เพื่อให้ "จำนวนแถว" กับ "จำนวนใบ" ไม่เท่ากัน ถ้าใช้ P/N คนละตัวเทสจะเขียวเองโดยไม่ได้ตรวจอะไร
+     ⚠️ คอลัมน์ชิ้นหักที่ยอดรวม ส่วนการนับ PO หักทีละใบ — คนละเกณฑ์โดยตั้งใจ จึงต้องมีเทสคุมข้อนี้ไว้ */
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 100), orderPn('ZZ-2', 'PN-A', 100), orderPn('ZZ-3', 'PN-B', 100)], [
+    rec('a1', 'ZZ-1|PN-A', 'winding', 100), rec('a2', 'ZZ-1|PN-A', 'assembly', 40),
+    rec('b1', 'ZZ-2|PN-A', 'winding', 100), rec('b2', 'ZZ-2|PN-A', 'assembly', 30)
+  ]);
+  const poCell = label => page.locator('#wipCards .wlr', { hasText: label }).locator('.q').nth(1);
+  expect(await poCell('ยังไม่เริ่มผลิต').innerText(), 'ZZ-3 ใบเดียวที่ยังไม่เริ่ม').toBe('1');
+  expect(await poCell('WIP ค้างหน้า Assembly').innerText(), 'ZZ-1 กับ ZZ-2 ค้างหน้า Assembly ทั้งคู่').toBe('2');
+
+  await page.selectOption('#dashWipFilter', 'assembly');
+  await page.waitForTimeout(200);
+  const g = await dashGroups(page);
+  expect(g.length, 'สองใบของ P/N เดียวกัน ตารางรวมเหลือแถวเดียว — แถวจึงไม่ใช่หน่วยที่เทียบกับ PO').toBe(1);
+  expect(g.reduce((s, r) => s + Number(r.n.replace(/,/g, '')), 0),
+    'คอลัมน์ "ใบ" รวมกันต้องเท่าเลข PO บนแถว ไม่งั้นเลขนั้นตามต่อไม่ได้').toBe(2);
+  expect(await page.locator('#wipScopeNote').innerText(),
+    'ข้อความใต้การ์ดก็ต้องบอกจำนวนเดียวกัน').toContain('2 ใบ');
 });
 
 test('ช่วงวันกลับข้าง (จาก > ถึง) ต้องฟ้อง ไม่ใช่โชว์ขีดทั้งแถวเฉย ๆ', async ({ page }) => {
@@ -759,4 +788,95 @@ test('ยอดสั่งที่เป็นข้อความ การ�
   /* การ์ดนี้บวกยอดหลายใบมาตั้งแต่ต้น `0 + '100'` ได้ `'0100'` ไม่ใช่ 100
      ผิดเงียบมาตลอดเพราะยังไม่มีคอลัมน์ไหนให้เอามาเทียบ */
   expect((await cardVals(page))[PLAN_CARD], 'การ์ดต้องได้เลขเดียวกับตาราง').toBe(rows[0].qty);
+});
+
+/* G3 — สีของขั้นมาจากรายการที่ซิงค์มา และแผงจัดการขั้นไม่กรองอักขระ
+ * ค่าที่ลง innerHTML ต้องผ่าน escapeHtml() ทุกที่ รวมที่อยู่ใน attribute ของ style
+ * ไม่งั้น `#111" onmouseover="…` ปิด attribute แล้วแทรก attribute ใหม่ได้ (ผู้ตรวจ #123 รันพิสูจน์)
+ * ⚠️ ต้องใช้ขั้นที่ "ไม่ใช่ห้าขั้นตั้งต้น" — สีของห้าขั้นนั้นมาจากโค้ดเสมอ ที่ซิงค์มาทับไม่ได้
+ * 🚨 **ข้อนี้คุมแค่การแตก attribute ไม่ได้คุม CSS** — `escapeHtml()` ไม่กัน `;` หรือ `url(...)`
+ *    สีที่ซิงค์มาจึงยังสั่งให้เบราว์เซอร์ยิงคำขอออกนอกเครือข่ายได้ = ข้อมูลหลุดออกโรงงาน (ผู้ตรวจ #123 รอบ 5 รันพิสูจน์)
+ *    ทางแก้คือกรองรูปแบบ `#rrggbb` ที่ต้นทาง — เป็นใบแยก ดู CLAUDE.md */
+test('G3 — สีของขั้นที่ซิงค์มาต้องไม่กลายเป็น attribute บนบัญชีของค้าง', async ({ page }) => {
+  const EVIL = '#111" onmouseover="window.__pwned=1';
+  const procs = [
+    { id: 'winding', label: 'Winding/Trimming', short: 'Winding', hidden: false },
+    { id: 'assembly', label: 'Assembly', short: 'Assembly', hidden: false },
+    { id: 'evilstage', label: 'ขั้นทดสอบ', short: 'ทดสอบ', color: EVIL, hidden: false },
+    { id: 'support', label: 'Support', short: 'Support', hidden: false },
+    { id: 'inspection', label: 'Inspection', short: 'Inspection', hidden: false },
+    { id: 'shipping', label: 'ส่งของ (Shipping)', short: 'Shipping', hidden: false }
+  ];
+  await page.addInitScript(([k, o, r, p]) => localStorage.setItem(k, JSON.stringify({
+    version: 1, deviceName: 't',
+    deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
+    chartPref: { mode: '14', from: '', to: '' }, processes: p,
+    orders: o, records: r, deliveryNotes: [], deltaWip: [], importHistory: []
+  })), [K_STATE, ORDERS, RECORDS, procs]);
+  await page.goto(APP);
+  await waitReady(page);
+  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.waitForTimeout(250);
+
+  // ขั้นที่ซิงค์มาต้องมีแถวของตัวเองจริง ไม่งั้นเทสนี้เขียวเองโดยไม่ได้ตรวจอะไร
+  await expect(page.locator('#wipCards .wlr', { hasText: 'ค้างหน้า ทดสอบ' })).toHaveCount(1);
+
+  const swatch = page.locator('#wipCards .wlr i.t').nth(2);
+  expect(await swatch.getAttribute('onmouseover'), 'สีที่ซิงค์มาแตก attribute ออกมาได้').toBeNull();
+  await swatch.hover();
+  await page.waitForTimeout(120);
+  expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
+
+  const bar = page.locator('#wipCards .wlr .b span').nth(2);
+  expect(await bar.getAttribute('onmouseover'), 'แถบสัดส่วนก็แตก attribute ออกมาได้').toBeNull();
+});
+
+/* แถบสัดส่วนคือเหตุผลหลักที่ใบนี้เปลี่ยนการ์ดเป็นบัญชี — ทุกแถบเริ่มที่เส้นเดียวกันจึงเทียบด้วยตาได้
+ * ⚠️ ตัวหารต้องเป็น "ยังไม่ได้ส่ง" (left) ไม่ใช่ยอดแผนรวม · บรรทัดกำกับบนจอเขียนเลขตัวหารไว้ตรง ๆ
+ *    เปลี่ยนตัวหารแล้วจอจะขัดกับคำกำกับของตัวเองแบบเงียบ ๆ (ผู้ตรวจ #123 รอบ 7 รันพิสูจน์ว่า
+ *    ก่อนมีข้อนี้ ทั้งชุดยังเขียวทั้งที่เปอร์เซ็นต์ผิดทุกแถว) */
+test('แถบสัดส่วนต้องคิดจาก "ยังไม่ได้ส่ง" ไม่ใช่ยอดแผนรวม และเลขต้องตรงกับความกว้างแถบ', async ({ page }) => {
+  // ยอดแผนรวม 300 · ส่งแล้ว 50 · ยังไม่ได้ส่ง 250 — สามเลขนี้ต่างกันหมด ตัวหารผิดจึงเห็นทันที
+  await openDash(page, [orderPn('ZZ-1', 'PN-A', 200), orderPn('ZZ-2', 'PN-B', 100)], [
+    rec('r1', 'ZZ-1|PN-A', 'winding', 200), rec('r2', 'ZZ-1|PN-A', 'assembly', 200),
+    rec('r3', 'ZZ-1|PN-A', 'support', 200), rec('r4', 'ZZ-1|PN-A', 'inspection', 200),
+    rec('r5', 'ZZ-1|PN-A', 'shipping', 50)
+  ]);
+  const row = label => page.locator('#wipCards .wlr', { hasText: label });
+  const pct = label => row(label).locator('.q').nth(2).innerText();
+
+  // 100/250 = 40.0% · ถ้าหารด้วย 300 จะได้ 33.3%
+  expect(await pct('ยังไม่เริ่มผลิต'), 'ZZ-2 ทั้งใบ = 100 ชิ้น จาก 250').toBe('40.0%');
+  // 150/250 = 60.0% · ถ้าหารด้วย 300 จะได้ 50.0%
+  expect(await pct('ยอด FG คงคลัง'), 'ZZ-1 ผ่าน Inspection 200 ส่งแล้ว 50').toBe('60.0%');
+
+  // ความกว้างแถบต้องเป็นเลขเดียวกับตัวหนังสือ ไม่ใช่คนละฐาน
+  // ⚠️ เบราว์เซอร์ตัด `.0` ทิ้ง (`40.0%` → `40%`) จึงต้องเทียบเป็นตัวเลข ห้ามเทียบข้อความ
+  const barW = async label => parseFloat(
+    await row(label).locator('.b span').evaluate(el => el.style.width));
+  expect(await barW('ยังไม่เริ่มผลิต'), 'แถบกับเลขต้องมาจากตัวเดียวกัน').toBeCloseTo(40, 1);
+  expect(await barW('ยอด FG คงคลัง')).toBeCloseTo(60, 1);
+
+  // บรรทัดกำกับต้องบอกตัวหารตัวจริง ไม่งั้นคนอ่านเทียบเองไม่ได้
+  expect(await page.locator('#wipCards .wlt').innerText(), 'ต้องบอกว่าเปอร์เซ็นต์คิดจากเลขไหน')
+    .toContain('250');
+});
+
+/* คำอธิบายใต้หัวข้อเป็นสิ่งเดียวที่บอกคนอ่านว่าเลขบนหน้านี้มาจากฐานเวลาไหน
+ * ⚠️ ไม่มีเทสไหนเคยอ่านมันเลย ประโยค "ช่วงวันไม่แตะการ์ดสรุป" จึงค้างผิดมาตั้งแต่ #122
+ *    (ข้อยกเว้นของ "ซ่อนงานที่ส่งของครบแล้ว" ทำให้ชุดใบขยับตามช่วงวัน) โดยไม่มีอะไรฟ้อง
+ *    และคำว่า "การ์ดสรุป" ก็ชี้ไปที่ของที่ถอดออกไปแล้ว — ผู้ตรวจ #123 รอบ 8-9 จับได้ทั้งสองข้อ */
+test('คำอธิบายบนแดชบอร์ดต้องไม่ชี้ไปที่ของที่ไม่มีแล้ว และต้องบอกว่าบัญชีของค้างเป็นยอดสะสม', async ({ page }) => {
+  await openDash(page, ORDERS, RECORDS);
+  const desc = await page.locator('#view-dashboard .panel .desc').first().innerText();
+
+  expect(desc, 'การ์ดสรุปถูกแทนด้วยบัญชีของค้างแล้ว คนอ่านจะหาการ์ดไม่เจอ').not.toContain('การ์ด');
+  // ชื่อช่องติ๊กที่ประโยคอ้างถึง ต้องมีอยู่บนหน้าจริง ไม่ใช่ชื่อที่เปลี่ยนไปแล้ว
+  expect(desc).toContain('ซ่อนงานที่ส่งของครบแล้ว');
+  await expect(page.locator('label', { hasText: 'ซ่อนงานที่ส่งของครบแล้ว' }).first()).toBeVisible();
+  /* กับดัก "สองเลขคนละฐานเวลา" — ต้องเขียนไว้ว่าบัญชีของค้างไม่ใช่ยอดของช่วงวัน
+     ⚠️ ต้องมัดสองคำนี้เข้าด้วยกัน — คำว่า "ยอดสะสม" เพียงคำเดียวมีอยู่ก่อนแล้วในย่อหน้าเดียวกัน
+     (บรรทัดล่างกับแถบของตาราง) เทสจะเขียวเองทันที — ลองถอดประโยคของบัญชีออกแล้วเทสยังเขียว (พิสูจน์แล้ว) */
+  expect(desc, 'ไม่งั้นคนอ่านจะนึกว่าบัญชีรายขั้นเป็นเลขของช่วงวันที่เลือก')
+    .toMatch(/บัญชีของค้าง[^·]*ยอดสะสม/);
 });
