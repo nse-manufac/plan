@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-09.3">
+<meta name="app-version" content="2026-11-10.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -133,7 +133,7 @@
      กล่องที่สองที่ใช้คลาสเดียวกันทำให้เทสเดิมแดงทันที · หน้าตาเหมือนกันแต่คนละชื่อ
      ⚠️ ซ่อนด้วย display ไม่ใช่ attribute hidden — กฎ display ชนะ [hidden] เสมอ */
   .wtanom{display:none;gap:8px;margin-top:10px;font-size:13px;color:var(--text-dim);line-height:1.5;}
-  .wanom b{color:var(--red);font-weight:700;}
+  .wanom b, .wtanom b{color:var(--red);font-weight:700;}
   .wanom-t{background:none;border:1px solid var(--border);border-radius:6px;padding:2px 10px;font:inherit;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap;align-self:flex-start;}
   .wanom-t:hover{background:var(--gray-light);}
   .wanl{margin-top:10px;border:1px solid var(--border);border-radius:8px;overflow-x:auto;}
@@ -987,6 +987,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-09.3"></script>
+<script src="app.js?v=2026-11-10.1"></script>
 </body>
 </html>
