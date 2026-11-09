@@ -80,7 +80,7 @@ test('A3 — ขั้นนับแยกต้องไม่ทำให้�
 test('A3 — ขั้นนับแยกต้องไม่มีการ์ดของค้างเป็นของตัวเอง', async ({ page }) => {
   await open(page);
   await tab(page, 'dashboard');
-  await expect(page.locator('#wipCards')).not.toContainText('ค้างหน้า ซ่อม');
+  await expect(page.locator('#wipCards')).not.toContainText('WIP ซ่อม');
   // การ์ดของสายหลักยังครบเหมือนเดิม
   await expect(page.locator('#wipCards')).toContainText('WIP Assembly');
 });

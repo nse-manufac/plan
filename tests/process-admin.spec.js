@@ -445,7 +445,7 @@ test('A3 — ติ๊กนับแยกแล้วเพิ่มขั้�
 
   // อยู่นอกสายจริง ไม่ใช่แค่มีฟิลด์ — ไม่มีการ์ด WIP และไม่อยู่ในตัวกรอง "ค้างอยู่ที่ขั้น"
   await tab(page, 'dashboard');
-  await expect(page.locator('#wipCards')).not.toContainText('ค้างหน้า ซ่อม');
+  await expect(page.locator('#wipCards')).not.toContainText('WIP ซ่อม');
   const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
   expect(opts).not.toContain(added.id);
   // ขั้นที่ตามหลังมันต้องข้ามไปเทียบกับ Winding (800) ไม่ใช่ขั้นนับแยก (0)

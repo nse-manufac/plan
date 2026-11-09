@@ -40,15 +40,16 @@ const rec = (id, orderId, process, qty, date) => ({
   voided: false, _dirty: false
 });
 
-async function openDash(page, orders, records = []) {
+async function openDash(page, orders, records = [], processes = null) {
   // ⚠️ ตั้งค่าเริ่มต้นเฉพาะตอนยังว่าง · addInitScript ทำงานทุกครั้งที่โหลดหน้า
   //    ถ้าเขียนทับทุกครั้ง เทสที่ reload เพื่อพิสูจน์ว่า "จำค่าไว้" จะพิสูจน์ไม่ได้เลย
-  await page.addInitScript(([k, o, r]) => localStorage.getItem(k) || localStorage.setItem(k, JSON.stringify({
+  await page.addInitScript(([k, o, r, pl]) => localStorage.getItem(k) || localStorage.setItem(k, JSON.stringify({
     version: 1, deviceName: 't',
     deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
     chartPref: { mode: '14', from: '', to: '' },
+    processes: pl,
     orders: o, records: r, deliveryNotes: [], deltaWip: [], importHistory: []
-  })), [K_STATE, orders, records]);
+  })), [K_STATE, orders, records, processes]);
   await page.goto(APP);
   await waitReady(page);
   await page.click('.tab-btn[data-tab="dashboard"]');
@@ -1310,6 +1311,93 @@ test('จอมือถือ — ต้องไม่ล้นแนวนอ
     .evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().width)));
   expect(widths.length).toBeGreaterThan(3);
   expect(new Set(widths).size, 'ทุกใบต้องกว้างเท่ากัน · ได้ ' + widths.join('/')).toBe(1);
+});
+
+/** รายการขั้นแบบที่ "ซิงค์มาจากเครื่องอื่น" — เปลี่ยนได้แค่ชื่อย่อของ winding
+ *  ⚠️ validProcessList() ไม่ตรวจความยาว `short` เลย (app.js) ยาวแค่ไหนก็เข้ามาได้
+ *     ส่วนช่อง "ชื่อสั้น" บนแผงจัดการขั้นยอมรับถึง 20 ตัว ทั้งสองทางจึงเกิดจริงได้ */
+const procList = short => [
+/** ⚠️ ใส่ที่ assembly ไม่ใช่ winding — การ์ดของขั้นแรกชื่อ
+ *     "ยังไม่เริ่มผลิต" ซึ่งเป็นข้อความคงที่ ชื่อย่อของมันไม่ได้ขึ้นจอ */
+  { id: 'winding', label: 'Winding/Trimming' },
+  { id: 'assembly', label: 'Assembly', short },
+  { id: 'support', label: 'Support' },
+  { id: 'inspection', label: 'Inspection' },
+  { id: 'shipping', label: 'ส่งของ (Shipping)' }
+];
+
+/** วัดที่ **กล่องการ์ด** ไม่ใช่ที่ documentElement
+ *  ⚠️ ชื่อขั้นยาว ทำให้ **ช่อง "ค้างอยู่ที่ขั้น" (#dashWipFilter) กว้างตามตัวเลือกที่ยาวที่สุด**
+ *     แล้วดันทั้งหน้าเลื่อนแนวนอน — เป็นของเก่า ไม่ใช่ของใบนี้ (`.field` กับช่องนั้นไม่ถูกแก้เลย)
+ *     วัดกับ main ด้วยฉากเดียวกันได้ **หน้าล้น 369px** ส่วนสาขานี้ 273px (ดีขึ้น ไม่ใช่ของใหม่)
+ *     วัดที่หน้าเมื่อไหร่ ข้อนี้จะแดงเพราะบั๊กของคนอื่น — ซึ่งแก้ที่นี่ก็ไม่หาย */
+const cardBoxOverflow = page => page.evaluate(() => {
+  const box = document.getElementById('wipCards');
+  const widest = Math.max(...[...box.querySelectorAll('.wcard')]
+    .map(e => e.getBoundingClientRect().width));
+  return { box: box.scrollWidth - box.clientWidth, widest: Math.round(widest), room: box.clientWidth };
+});
+
+for (const [เรียกว่า, short] of [
+  ['อังกฤษ 40 ตัว', 'W'.repeat(40)],
+  ['ไทย 40 ตัว', 'ย'.repeat(40)],
+]) {
+  test(`จอมือถือ — ชื่อขั้นยาว (${เรียกว่า}) ต้องตัดบรรทัด ไม่ใช่ดันการ์ดจนล้นจอ`, async ({ page }) => {
+    /* ⚠️ ผู้ตรวจ #129 รันพิสูจน์: `.wcard` เป็น flex item ที่ min-width:auto จึงหดต่ำกว่า min-content ไม่ได้
+       พอชื่อขั้นเป็น white-space:nowrap ตัว min-content ก็เท่ากับความยาวชื่อทั้งบรรทัด
+       → การ์ดใบนั้นกว้างกว่าจอ แล้ว **ทั้งหน้าเลื่อนแนวนอน** ซึ่งเป็นอาการเดียวกับที่ใบนี้มาแก้
+       เทสจอมือถือข้ออื่นใช้ชื่อตั้งต้นที่สั้นทุกใบ จึงเขียวทั้งที่รูยังอยู่ (พิสูจน์แล้ว: คืน nowrap → ข้อนี้แดง) */
+    await page.setViewportSize({ width: 390, height: 860 });
+    await openDash(page, ORDERS, RECORDS, procList(short));
+
+    const over = await cardBoxOverflow(page);
+    expect(over.box, 'กล่องการ์ดต้องไม่ล้น · ล้น ' + over.box + 'px').toBe(0);
+    expect(over.widest, 'ใบที่กว้างสุดต้องไม่เกินที่ที่มี · การ์ด ' + over.widest
+      + 'px ในกล่อง ' + over.room + 'px').toBeLessThanOrEqual(over.room);
+
+    // ⚠️ ไม่ล้นเพราะซ่อนตัวอักษรหายไม่นับว่าแก้ — ชื่อต้องยังอ่านได้ครบ
+    const names = await page.locator('#wipCards .wcard .top b').allTextContents();
+    expect(names, 'ชื่อขั้นต้องยังอ่านได้ครบ · ได้ ' + names.join(' / ')).toContain('WIP ' + short);
+
+    // และยังต้องกว้างเท่ากันทุกใบเหมือนเดิม — ใบชื่อยาวต้องไม่โป่งกว่าเพื่อน
+    const widths = await page.locator('#wipCards .wcard')
+      .evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().width)));
+    expect(widths.length).toBeGreaterThan(3);
+    expect(new Set(widths).size, 'ทุกใบต้องกว้างเท่ากัน · ได้ ' + widths.join('/')).toBe(1);
+  });
+}
+
+test('ชื่อขั้นยาว — จอ 641–1010px ที่การ์ดยังกว้างเท่าเนื้อใน ก็ต้องไม่ล้นกรอบ', async ({ page }) => {
+  /* ⚠️ ช่วงนี้ **ไม่เข้า media query 640px** การ์ดจึงยังเป็น flex:0 0 auto คือกว้างเท่าเนื้อใน
+     ตัวที่กันคือ max-width:100% ตัวเดียว · ถอดออกแล้ววัดได้ การ์ด 969px ในกล่อง 599px
+     (ล้น 390px ที่ 641 · 271px ที่ 760 · 131px ที่ 900) — เทสจอมือถืออย่างเดียวจับไม่ได้
+     ⚠️ 819px คือจอ 1024 ที่ซูมเบราว์เซอร์ 125% ซึ่งเครื่องหน้างานตั้งกันจริง (กฎเดียวกับ .wanl) */
+  for (const w of [641, 819, 900]) {
+    await page.setViewportSize({ width: w, height: 860 });
+    await openDash(page, ORDERS, RECORDS, procList('W'.repeat(40)));
+    const over = await cardBoxOverflow(page);
+    expect(over.box, 'ที่ ' + w + 'px กล่องการ์ดต้องไม่ล้น · ล้น ' + over.box + 'px').toBe(0);
+    expect(over.widest, 'ที่ ' + w + 'px ใบกว้างสุด ' + over.widest + 'px ในกล่อง ' + over.room + 'px')
+      .toBeLessThanOrEqual(over.room);
+  }
+});
+
+test('ชื่อขั้นยาว — ": N PO" ต้องตกไปบรรทัดของตัวเอง ไม่ใช่ค้างท้ายบรรทัดแรกของชื่อ', async ({ page }) => {
+  /* ⚠️ ไม่ล้นแล้วยังไม่พอ — ถ้า `.top` ไม่ตัดบรรทัด ชื่อจะพันเป็นสองบรรทัดโดยที่ ": 0 PO"
+     ค้างอยู่ท้าย **บรรทัดแรก** ของชื่อ แล้วอ่านได้ว่าเลขนั้นเป็นของครึ่งแรกของชื่อ
+     ("WIP Final Inspection QC : 0 PO" / "Station B") ซึ่งบนหน้าที่มีไว้อ่านตัวเลขคือการตอบผิด
+     ถอด flex-wrap:wrap ออกแล้วข้อนี้แดง (พิสูจน์แล้ว) ส่วนข้อ "ไม่ล้น" ยังเขียว */
+  await page.setViewportSize({ width: 390, height: 860 });
+  await openDash(page, ORDERS, RECORDS, procList('Final Inspection QC Station B'));
+
+  const geo = await page.locator('#wipCards .wcard', { hasText: 'Final Inspection' }).evaluate(card => {
+    const r = s => { const b = card.querySelector(s).getBoundingClientRect();
+      return { left: Math.round(b.left), top: Math.round(b.top) }; };
+    return { name: r('.top b'), po: r('.po') };
+  });
+  expect(geo.po.top, 'PO ต้องอยู่บรรทัดล่างกว่าชื่อ · ชื่อ top ' + geo.name.top + ' / PO top ' + geo.po.top)
+    .toBeGreaterThan(geo.name.top + 4);
+  expect(Math.abs(geo.po.left - geo.name.left), 'และต้องเริ่มที่ขอบซ้ายเดียวกับชื่อ').toBeLessThan(12);
 });
 
 test('ทุกองค์ประกอบในการ์ดต้องเด่นเท่ากัน — ห้ามมีตัวไหนจางหรือเล็กกว่าเพื่อน', async ({ page }) => {

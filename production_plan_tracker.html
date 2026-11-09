@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-08.5">
+<meta name="app-version" content="2026-11-09.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -128,14 +128,22 @@
      ⚠️ ตัวใหญ่โดยเจตนา — คนอ่านตัวจริงคือคุณพ่อของเจ้าของ ซึ่งไม่ถนัดคอม
         ตกสองแถวไม่เป็นไร เจ้าของเลือกตัวใหญ่มากกว่าแถวเดียว */
   .wgrid{display:flex;flex-wrap:wrap;gap:10px;}
-  .wcard{flex:0 0 auto;border:1px solid var(--border);border-radius:12px;
+  /* ⚠️ สามตัวข้างล่างมีไว้กัน **ชื่อขั้นยาวดันการ์ดจนล้นกรอบ** (ผู้ตรวจ #129 รันพิสูจน์)
+     ชื่อย่อของขั้นซิงค์ข้ามเครื่องได้ และ validProcessList() **ไม่ตรวจความยาวของ short เลย**
+     · overflow-wrap:anywhere — แทน nowrap เดิม คำเดียวยาว ๆ ที่ไม่มีเว้นวรรคจึงตัดบรรทัดได้
+     · max-width:100% — กันการ์ดโตเกินกล่องในช่วง 641–~1010px ที่ flex:0 0 auto ยังใช้อยู่
+     · flex-wrap:wrap — ให้ ": N PO" ตกไปบรรทัดของตัวเอง ไม่งั้นมันไปค้างท้าย**บรรทัดแรก**ของชื่อ
+       ซึ่งอ่านได้ว่าเลขนั้นเป็นของครึ่งแรกของชื่อ (ดูภาพเทียบแล้ว เทสคุมไว้)
+     ⚠️ อย่าเติม min-width:0 กลับมา — ทดลองถอดออกแล้วเทสยังเขียวทุกข้อ
+        เพราะ overflow-wrap:anywhere ทำให้ min-content เหลืออักขระเดียวอยู่แล้ว */
+  .wcard{flex:0 0 auto;max-width:100%;border:1px solid var(--border);border-radius:12px;
          padding:13px 17px 14px;background:var(--panel);}
-  .wcard .top{display:flex;align-items:baseline;gap:8px;}
+  .wcard .top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
   .wcard .top i{width:13px;height:13px;border-radius:4px;flex:0 0 13px;align-self:center;}
   /* ⚠️ **ทุกองค์ประกอบเด่นเท่ากัน** (เจ้าของสั่ง 8 พ.ย. 2026)
      ห้ามทำ PO กับ % เป็นสีจางหรือย่อเล็ก — ผิดมาสามรอบแล้ว
      สองตัวบนบรรทัดเดียวกันใช้ขนาดกับน้ำหนักเท่ากัน และสีเดียวกันทั้งการ์ด */
-  .wcard .top b{font-size:20px;font-weight:700;white-space:nowrap;}
+  .wcard .top b{font-size:20px;font-weight:700;overflow-wrap:anywhere;}
   .wcard .po{font-size:20px;font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums;}
   .wcard .mid{display:flex;align-items:baseline;gap:9px;margin-top:3px;}
   .wcard .q{font-size:33px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums;}
@@ -966,6 +974,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-08.5"></script>
+<script src="app.js?v=2026-11-09.1"></script>
 </body>
 </html>
