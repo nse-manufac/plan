@@ -309,20 +309,37 @@ test('แถบฟ้องต้องบอกว่าแถบบนแด�
   expect(t, 'ต้องบอกชื่อช่องที่ต้องปลดติ๊กตรง ๆ').toContain('ซ่อนงานที่ส่งของครบแล้ว');
 });
 
-test('importedAt เป็นเวลา UTC ต้องแปลงเป็นวันตามปฏิทินของเครื่องก่อนเทียบ', async ({ page }) => {
-  /* ⚠️ ไทยเป็น UTC+7 · ใบที่นำเข้าตอน 06:30 เช้าวันนี้ตามเวลาไทย = 23:30 UTC ของเมื่อวาน
-     ตัดสิบตัวแรกตรง ๆ จะได้วันของเมื่อวาน แล้วใบโผล่ในกราฟเร็วกว่าจริงหนึ่งวัน
-     ⚠️ ข้อนี้ยึดเวลาเครื่องที่รันเทส จึงคำนวณวันที่คาดหวังจาก Date เหมือนกัน ไม่ใช่ฝังเลขไว้ */
-  const utc = new Date(`${isoAgo(2)}T23:30:00.000Z`);
-  const p = n => String(n).padStart(2, '0');
-  const localDay = utc.getFullYear() + '-' + p(utc.getMonth() + 1) + '-' + p(utc.getDate());
-  test.skip(localDay === isoAgo(2), 'เครื่องนี้อยู่โซนเวลาที่ไม่เกิดอาการนี้');
+/* ⚠️ **ต้องตรึงโซนเวลาไว้ที่กรุงเทพ ห้ามพึ่งโซนเวลาของเครื่องที่รัน**
+   CI รันใน UTC ซึ่งเป็นโซนที่อาการนี้ไม่เกิดเลย · ฉบับแรกของข้อนี้ใช้ test.skip() เมื่ออยู่ UTC
+   ผลคือ **ข้ามทุกครั้งบน CI** ท่อจึงไม่คุ้มครองอะไร (ผู้ตรวจ #131 รอบ 3 จับได้)
+   ตรึงที่ Asia/Bangkok แล้วมันคุมได้จริงทุกเครื่อง และตรงกับโซนเวลาของหน้างานด้วย */
+test.describe('โซนเวลาหน้างาน', () => {
+  test.use({ timezoneId: 'Asia/Bangkok' });
 
-  await open(page, [
-    order('OLD-1', 300, '2026-08-01T00:00:00.000Z'),
-    order('NEW-1', 700, utc.toISOString())
-  ]);
-  const vals = await wipOf(page, 'winding');
-  expect(vals[11], 'วัน UTC ของ timestamp — ใบใหม่ยังไม่ควรมา').toBe(300);
-  expect(vals[12], 'วันตามปฏิทินเครื่อง — ใบใหม่ต้องมาวันนี้').toBe(1000);
+  test('importedAt เป็นเวลา UTC ต้องแปลงเป็นวันตามปฏิทินของเครื่องก่อนเทียบ', async ({ page }) => {
+    /* ⚠️ ไทยเป็น UTC+7 · ใบที่นำเข้าตอน 06:30 เช้าวันนี้ตามเวลาไทย = 23:30 UTC ของเมื่อวาน
+       ตัดสิบตัวแรกตรง ๆ จะได้วันของเมื่อวาน แล้วใบโผล่ในกราฟเร็วกว่าจริงหนึ่งวัน
+       ⚠️ วันที่ทั้งหมดต้องคิดจากนาฬิกา**ในเบราว์เซอร์** ไม่ใช่ของ node ที่รันเทส
+          สองอันนี้คนละโซนเวลากันแล้ว ตั้งแต่ตรึง timezoneId */
+    const [today, twoAgo, utcIso] = await page.evaluate(() => {
+      const p = n => String(n).padStart(2, '0');
+      const day = d => d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+      const now = new Date();
+      const back = n => { const d = new Date(); d.setDate(d.getDate() - n); return day(d); };
+      // 23:30 UTC ของวันก่อนหน้า = 06:30 เช้าวันนี้ตามเวลาไทย
+      const utc = new Date(back(1) + 'T23:30:00.000Z');
+      return [day(now), back(2), utc.toISOString()];
+    });
+    expect(utcIso.slice(0, 10), 'ฉากนี้ต้องเป็นฉากที่วัน UTC ไม่ตรงกับวันของเครื่อง').not.toBe(today);
+
+    await open(page, [
+      order('OLD-1', 300, '2026-08-01T00:00:00.000Z'),
+      order('NEW-1', 700, utcIso)
+    ]);
+    const vals = await wipOf(page, 'winding');
+    // ช่วง 14 วัน: index 12 = เมื่อวาน (วันตาม UTC) · index 13 = วันนี้ (วันตามปฏิทินไทย)
+    expect(vals[12], 'วัน UTC ของ timestamp — ใบใหม่ยังไม่ควรมา').toBe(300);
+    expect(vals[13], 'วันตามปฏิทินเครื่อง — ใบใหม่ต้องมาวันนี้').toBe(1000);
+    expect(twoAgo).toBeTruthy();
+  });
 });

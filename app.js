@@ -3256,7 +3256,8 @@ function bucketWeekly(labels, data){
  *  ⚠️ สีต้องผ่าน escapeHtml() — สีของขั้นที่ไม่ใช่ห้าขั้นตั้งต้นมาจากรายการที่ซิงค์มา
  *     และ validProcessList() ไม่ตรวจช่อง color เลย · `#111" onmouseover="…` ปิด attribute
  *     แล้วแทรกของใหม่ได้ (ผู้ตรวจรันพิสูจน์บน #131)
- *     ⚠️ ยังไม่ปิดรู CSS (`;background-image:url(...)`) ซึ่งต้องกรองที่ต้นทาง — เป็นใบแยกตาม CLAUDE.md
+ *     ⚠️ ที่นี่ไม่มีรู CSS เพิ่ม — สีลง `fill` ของ SVG ซึ่งไม่โหลด URL ภายนอก (ผู้ตรวจ #131 รอบ 3 รันยืนยัน)
+ *        รู CSS อยู่ที่ที่เขียนสีลง `style` attribute ดู renderWipTrend() และ renderChartLegend()
  *
  *  labels = วัน (ISO) · data = {ขั้น: [ค่าแต่ละวัน]} · procs = ขั้นที่จะวาดจริง
  *  opts.spans = ช่วงวันจริงของแต่ละแท่งตอนรวมรายสัปดาห์ · opts.tipPrefix = คำนำหน้าใน tooltip
@@ -3407,9 +3408,7 @@ function localDayOf(ts){
   const s = String(ts == null ? '' : ts);
   if(!s) return '';
   const d = new Date(s);
-  if(isNaN(d.getTime())) return s.slice(0,10);
-  const p = n => String(n).padStart(2,'0');
-  return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate());
+  return isNaN(d.getTime()) ? s.slice(0,10) : isoLocal(d);
 }
 
 function wipDailySeries(startISO, endISO, subName){
@@ -3519,6 +3518,11 @@ function drawStageBars(wrapEl, procs, values){
  *     ข้อความใต้หัวข้อบอกไว้ว่าเปลี่ยนช่วงได้ที่ไหน ไม่งั้นคนหาปุ่มไม่เจอแล้วคิดว่าเปลี่ยนไม่ได้ */
 function renderWipTrend(){
   const sub = dashSubName();
+  /* ⚠️ สีลง `style` attribute — `escapeHtml()` กันการแตก attribute ได้ แต่ **กันรู CSS ไม่ได้**
+     สีที่ซิงค์มาเป็น `#111;background-image:url(https://…)` ทำให้เบราว์เซอร์ยิงคำขอออกเน็ตจริง
+     (ผู้ตรวจ #131 รอบ 3 รันพิสูจน์) · เป็นรูชนิดเดียวกับที่ CLAUDE.md จดไว้ว่าอยู่ที่ renderChartLegend
+     **ใบ "กรองรูปแบบสี #rrggbb ที่ต้นทาง" ต้องนับที่นี่ด้วย** ไม่ใช่เฉพาะสองที่ของกราฟ
+     ไม่ได้ขยายความเสี่ยงเกินของเดิม — เงื่อนไขเดียวกันทำให้คำอธิบายสีของแดชบอร์ดยิงอยู่แล้ว */
   document.getElementById('wtLegend').innerHTML = PROCESSES.map(x=>
     `<span class="legend-item" style="cursor:default"><i style="background:${escapeHtml(PROCESS_COLORS[x])}"></i>${escapeHtml(PROCESS_LABELS[x])}</span>`
   ).join('');
