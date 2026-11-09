@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-08.4">
+<meta name="app-version" content="2026-11-09.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -300,6 +300,7 @@
   <button class="tab-btn" data-tab="delivery">🚚 ใบส่งสินค้า</button>
   <button class="tab-btn" data-tab="fg">📦 ยอดคงคลัง FG</button>
   <button class="tab-btn" data-tab="dashboard">📊 Dashboard</button>
+  <button class="tab-btn" data-tab="wiptrend">📉 ยอดค้างรายวัน</button>
   <button class="tab-btn" data-tab="data">🗂️ ข้อมูล &amp; แชร์</button>
 </nav>
 <main>
@@ -767,6 +768,41 @@
   </div>
 </section>
 
+<!-- ================= TAB: ยอดค้างรายวัน ================= -->
+<!-- แท็บแยกโดยตั้งใจ (เจ้าของสั่ง 9 พ.ย. 2026) — ของเดิมบนแดชบอร์ดไม่ถูกแตะเลย
+     เลือกได้แล้วค่อยปิดอันที่ไม่เอาทิ้งทั้งแท็บ -->
+<section id="view-wiptrend" class="view">
+  <div class="panel">
+    <h2>ยอดค้างรายวัน</h2>
+    <div class="desc">สามกราฟใช้วันเดียวกัน สีเดียวกัน แท่งแบบเดียวกัน จึงกวาดตาลงมาทีละวันแล้วอ่านคู่กันได้ ·
+      ช่วงวันใช้ตัวเดียวกับกราฟในแท็บ Dashboard — เปลี่ยนที่นั่น</div>
+    <div class="legend"><div class="legend-items" id="wtLegend"></div>
+      <span id="wtCaption" class="small muted" style="margin-left:auto;"></span></div>
+  </div>
+
+  <div class="panel">
+    <h3>จำนวน PO ที่ยังทำขั้นนั้นไม่เสร็จ</h3>
+    <div class="desc">ภาพนิ่งวันนี้ · หน่วยเป็นใบ · ตรงกับจำนวนแถวในหน้าคีย์ยอดรายวันเมื่อติ๊ก “ซ่อนที่เสร็จแล้ว” ·
+      <b>เลขนี้มากขึ้นเรื่อย ๆ ตามลำดับของสาย</b> เพราะใบที่ยังทำขั้นก่อนหน้าไม่เสร็จ ก็ยังทำขั้นหลังไม่เสร็จด้วย ·
+      <b>ห้ามเอามาบวกกัน</b></div>
+    <div class="chart-wrap" id="wtPo"></div>
+  </div>
+
+  <div class="panel">
+    <h3>ยอดค้างรายวัน</h3>
+    <div class="desc">ของที่ค้างอยู่หน้าแต่ละขั้น ณ สิ้นแต่ละวัน · หน่วยเป็นชิ้น ·
+      <b>ขั้นนับแยกไม่มีในกราฟนี้</b> เพราะของค้างคิดจาก “ขั้นก่อนหน้า ลบ ขั้นนี้”
+      ซึ่งขั้นนับแยกไม่มีขั้นก่อนหน้า และไม่ได้ส่งต่อให้ขั้นไหน</div>
+    <div class="chart-wrap" id="wtWip"></div>
+  </div>
+
+  <div class="panel">
+    <h3>ยอดผลิตรายวัน</h3>
+    <div class="desc">ยอดที่คีย์ได้ในแต่ละวัน · หน่วยเป็นชิ้น · กราฟเดียวกับในแท็บ Dashboard เอามาวางไว้ให้อ่านคู่กัน</div>
+    <div class="chart-wrap" id="wtDaily"></div>
+  </div>
+</section>
+
 <!-- ================= TAB: DATA ================= -->
 <section id="view-data" class="view">
   <div class="panel">
@@ -942,6 +978,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-08.4"></script>
+<script src="app.js?v=2026-11-09.2"></script>
 </body>
 </html>
