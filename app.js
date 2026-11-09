@@ -3447,10 +3447,15 @@ function wipDailySeries(startISO, endISO, subName){
    *
    * ⚠️ **ยังรักษาด่าน C1 ไว้ครบ** — ใบที่เพิ่งนำเข้าและยังไม่เคยคีย์อะไรเลย ไม่มี record
    *    จึงยังใช้ importedAt เหมือนเดิม ไม่โผล่ย้อนหลัง */
+  /* ⚠️ ครอบไม่ให้เกินวันนี้ — นาฬิกาของอีกเครื่องล้ำแล้วนำเข้าไฟล์แผน จะได้ importedAt เป็นวันหน้า
+     แล้ว **ใบนั้นหายจากกราฟทั้งแถบรวมวันนี้** ขณะที่หัวเลข "ยังไม่ได้ส่ง" บนแดชบอร์ดยังนับมันอยู่
+     ซึ่งเป็นคู่เลขที่เจ้าของจะเอามาเทียบตอนเลือกว่าจะเก็บหน้าไหน (ผู้ตรวจ #131 รอบ 6 รันวัดได้) */
+  const today = todayISO();
   const born = orders.map((o,i)=>{
     const imp = localDayOf(o.importedAt);
     if(!imp) return '';
-    return (firstRec[i] && firstRec[i] < imp) ? firstRec[i] : imp;
+    const b = (firstRec[i] && firstRec[i] < imp) ? firstRec[i] : imp;
+    return b > today ? today : b;
   });
   // ยอดก่อนวันแรกของช่วง บวกเข้าไปก่อน — กราฟจึงเริ่มจากสภาพจริง ไม่ใช่จากศูนย์
   Object.keys(byDate).forEach(d=>{
