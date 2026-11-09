@@ -240,3 +240,60 @@ test('ยังไม่มีใบสั่งเลย ต้องไม่�
   expect(txt).not.toContain('NaN');
   expect(txt).not.toContain('Infinity');
 });
+
+/* ───────── สิ่งที่ผู้ตรวจ #131 จับได้ ───────── */
+
+test('G3 — สีของขั้นที่ซิงค์มาต้องแตก attribute ของแท่งไม่ได้', async ({ page }) => {
+  /* ⚠️ สีของขั้นที่ไม่ใช่ห้าขั้นตั้งต้นมาจากรายการที่ซิงค์มา และ validProcessList() ไม่ตรวจช่อง color เลย
+     ผู้ตรวจรันพิสูจน์บนใบนี้ว่า `#111" data-pwned="yes` ปิด attribute แล้วแทรกของใหม่ได้จริง
+     ⚠️ ข้อนี้ไม่ได้ปิดรู CSS (`;background-image:url(...)`) ซึ่งต้องกรองที่ต้นทาง — เป็นใบแยกตาม CLAUDE.md */
+  const evil = [
+    { id: 'winding', label: 'Winding/Trimming' },
+    { id: 'evil', label: 'ขั้นร้าย', short: 'ร้าย', color: '#111" data-pwned="yes' },
+    { id: 'assembly', label: 'Assembly' },
+    { id: 'support', label: 'Support' },
+    { id: 'inspection', label: 'Inspection' },
+    { id: 'shipping', label: 'ส่งของ (Shipping)' }
+  ];
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')],
+    [rec('e1', 'AA-1|' + PN, 'evil', 10, isoAgo(3))], evil);
+
+  for (const box of ['wtPo', 'wtWip', 'wtDaily']) {
+    expect(await page.locator(`#${box} [data-pwned]`).count(),
+      box + ' ต้องไม่มี attribute ที่ถูกแทรกเข้ามา').toBe(0);
+  }
+});
+
+test('ย่อหน้าต่างแล้วกราฟของหน้านี้ต้องวาดใหม่ ไม่ใช่ค้างความกว้างเดิม', async ({ page }) => {
+  /* ⚠️ ตัวจับ resize ของเดิมดูแค่ #chartWrap · หน้านี้คิดความกว้างจากกล่องเหมือนกัน
+     ไม่วาดใหม่แล้วหมุนมือถือหรือย่อหน้าต่างจะต้องเลื่อนจอดู ทั้งที่กราฟแดชบอร์ดไม่ต้อง */
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  const wide = await page.locator('#wtWip svg').getAttribute('width');
+
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.waitForTimeout(500);   // ตัวจับ resize หน่วง 150ms
+  const narrow = await page.locator('#wtWip svg').getAttribute('width');
+  expect(Number(narrow), `ย่อแล้วต้องแคบลง · กว้าง ${wide} → ${narrow}`).toBeLessThan(Number(wide));
+});
+
+test('ใบย้อนแย้งต้องมีแถบฟ้องบนหน้านี้ เพราะเลขจะไม่ตรงกับบัญชีของค้างบนแดชบอร์ด', async ({ page }) => {
+  /* ⚠️ สองหน้าใช้สูตรต่างกันจริงเฉพาะใบย้อนแย้ง — หน้านี้ไล่ต่อเนื่องต่อใบ แดชบอร์ดลบที่ยอดรวม
+     แดชบอร์ดมีแถบเหลืองฟ้องอยู่แล้ว ถ้าหน้านี้เงียบ คนที่เอาสองหน้ามาเทียบตอนเลือกว่าจะปิดอันไหน
+     จะสรุปว่า "ยอดไม่ตรง" ทั้งที่ทั้งคู่ถูกในนิยามของตัวเอง (ผู้ตรวจ #131) */
+  // ⚠️ เรียก open() สองครั้งในข้อเดียวไม่ได้ — addInitScript สะสม ตัวแรกจะหว่าน state เดิมคืนทุกครั้งที่โหลดหน้า
+  await open(page, [order('BAD-1', 100, '2026-08-01T00:00:00.000Z')],
+    [rec('a1', 'BAD-1|' + PN, 'assembly', 100, isoAgo(3))]);   // คีย์ assembly ทั้งที่ไม่เคยคีย์ winding
+  // ⚠️ อ่าน display ตรง ๆ ไม่ใช่ toBeVisible() — กล่องว่างที่ยังถูกวาดอยู่ Playwright นับว่า "ซ่อน"
+  //    ข้อนี้จึงเขียวทั้งที่แถบไม่เคยถูกซ่อนจริง (เจอตอน mutation ของใบนี้เอง)
+  expect(await page.locator('#wtAnom').evaluate(el => getComputedStyle(el).display)).not.toBe('none');
+  await expect(page.locator('#wtAnom')).toContainText('1 ใบ');
+});
+
+test('ไม่มีใบย้อนแย้ง แถบนั้นต้องไม่ขึ้น', async ({ page }) => {
+  /* แถบที่ขึ้นตลอดเวลาคือแถบที่ไม่มีใครอ่าน — หลักเดียวกับแถบส่งของไม่ได้ของหน้าคีย์ยอด */
+  await open(page, [order('OK-1', 100, '2026-08-01T00:00:00.000Z')],
+    [rec('w1', 'OK-1|' + PN, 'winding', 50, isoAgo(3))]);
+  expect(await page.locator('#wtAnom').evaluate(el => getComputedStyle(el).display),
+    'แถบที่ขึ้นตลอดเวลาคือแถบที่ไม่มีใครอ่าน').toBe('none');
+});

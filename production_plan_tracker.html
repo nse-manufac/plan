@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-09.2">
+<meta name="app-version" content="2026-11-09.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -129,6 +129,10 @@
   .wlr .b{height:8px;border-radius:2px;background:var(--gray-light);overflow:hidden;}
   .wlr .b span{display:block;height:100%;border-radius:2px;}
   .wanom{display:flex;gap:8px;margin-top:14px;font-size:13px;color:var(--text-dim);line-height:1.5;}
+  /* ⚠️ คลาสของตัวเอง ห้ามใช้ .wanom ซ้ำ — เทสของแดชบอร์ดใช้ locator('.wanom') แบบ strict
+     กล่องที่สองที่ใช้คลาสเดียวกันทำให้เทสเดิมแดงทันที · หน้าตาเหมือนกันแต่คนละชื่อ
+     ⚠️ ซ่อนด้วย display ไม่ใช่ attribute hidden — กฎ display ชนะ [hidden] เสมอ */
+  .wtanom{display:none;gap:8px;margin-top:10px;font-size:13px;color:var(--text-dim);line-height:1.5;}
   .wanom b{color:var(--red);font-weight:700;}
   .wanom-t{background:none;border:1px solid var(--border);border-radius:6px;padding:2px 10px;font:inherit;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap;align-self:flex-start;}
   .wanom-t:hover{background:var(--gray-light);}
@@ -775,14 +779,19 @@
   <div class="panel">
     <h2>ยอดค้างรายวัน</h2>
     <div class="desc">สามกราฟใช้วันเดียวกัน สีเดียวกัน แท่งแบบเดียวกัน จึงกวาดตาลงมาทีละวันแล้วอ่านคู่กันได้ ·
-      ช่วงวันใช้ตัวเดียวกับกราฟในแท็บ Dashboard — เปลี่ยนที่นั่น</div>
+      <b>ช่วงวันและ Sub-Name ใช้ตัวเดียวกับกราฟในแท็บ Dashboard</b> — เปลี่ยนที่นั่น ·
+      ไม่ฟังตัวกรองสัปดาห์ สถานะ และคำค้น เหมือนกราฟของแดชบอร์ด ·
+      คำอธิบายสีข้างล่างกดซ่อนขั้นไม่ได้ หน้านี้แสดงครบทุกขั้นเสมอ แม้จะซ่อนไว้ที่แดชบอร์ด</div>
     <div class="legend"><div class="legend-items" id="wtLegend"></div>
       <span id="wtCaption" class="small muted" style="margin-left:auto;"></span></div>
+    <!-- แถบเดียวกับที่แดชบอร์ดใช้ฟ้องใบย้อนแย้ง — ใช้คลาสเดิม จะได้หน้าตาเหมือนกันทั้งสองหน้า -->
+    <div class="wtanom" id="wtAnom"></div>
   </div>
 
   <div class="panel">
     <h3>จำนวน PO ที่ยังทำขั้นนั้นไม่เสร็จ</h3>
-    <div class="desc">ภาพนิ่งวันนี้ · หน่วยเป็นใบ · ตรงกับจำนวนแถวในหน้าคีย์ยอดรายวันเมื่อติ๊ก “ซ่อนที่เสร็จแล้ว” ·
+    <div class="desc">ภาพนิ่งวันนี้ · หน่วยเป็นใบ · ใช้เกณฑ์เดียวกับช่อง “ซ่อนที่เสร็จ Process นี้แล้ว”
+      ของหน้าคีย์ยอดรายวัน จึงตรงกับจำนวนแถวบนหน้านั้นเมื่อไม่ได้กรองสัปดาห์ หน่วย หรือคำค้นไว้ ·
       <b>เลขนี้มากขึ้นเรื่อย ๆ ตามลำดับของสาย</b> เพราะใบที่ยังทำขั้นก่อนหน้าไม่เสร็จ ก็ยังทำขั้นหลังไม่เสร็จด้วย ·
       <b>ห้ามเอามาบวกกัน</b></div>
     <div class="chart-wrap" id="wtPo"></div>
@@ -978,6 +987,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-09.2"></script>
+<script src="app.js?v=2026-11-09.3"></script>
 </body>
 </html>

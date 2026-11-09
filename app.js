@@ -3253,6 +3253,11 @@ function bucketWeekly(labels, data){
  *  ⚠️ ห้ามก๊อปไปทำชุดที่สอง — สองกราฟที่อยู่หน้าเดียวกันแต่คนละสูตร จะมีวันหน้าตาไม่ตรงกัน
  *     แล้วคนอ่านจะเทียบสองกราฟนั้นด้วยตาไม่ได้ ซึ่งเป็นเหตุผลทั้งหมดที่เอามาวางคู่กัน
  *
+ *  ⚠️ สีต้องผ่าน escapeHtml() — สีของขั้นที่ไม่ใช่ห้าขั้นตั้งต้นมาจากรายการที่ซิงค์มา
+ *     และ validProcessList() ไม่ตรวจช่อง color เลย · `#111" onmouseover="…` ปิด attribute
+ *     แล้วแทรกของใหม่ได้ (ผู้ตรวจรันพิสูจน์บน #131)
+ *     ⚠️ ยังไม่ปิดรู CSS (`;background-image:url(...)`) ซึ่งต้องกรองที่ต้นทาง — เป็นใบแยกตาม CLAUDE.md
+ *
  *  labels = วัน (ISO) · data = {ขั้น: [ค่าแต่ละวัน]} · procs = ขั้นที่จะวาดจริง
  *  opts.spans = ช่วงวันจริงของแต่ละแท่งตอนรวมรายสัปดาห์ · opts.tipPrefix = คำนำหน้าใน tooltip
  */
@@ -3309,7 +3314,7 @@ function drawGroupedBars(wrapEl, labels, data, procs, opts){
       const barH = (val/maxVal)*plotH;
       const x = gx + offsetIdx*(barW+gap) - barW/2;
       const y = padT+plotH-barH;
-      bars += `<rect data-proc="${key}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${color}" rx="1.5"><title>${when} ${escapeHtml((o.tipPrefix||'') + PROCESS_LABELS[key])}: ${numFmt(val)}</title></rect>`;
+      bars += `<rect data-proc="${key}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${escapeHtml(color)}" rx="1.5"><title>${when} ${escapeHtml((o.tipPrefix||'') + PROCESS_LABELS[key])}: ${numFmt(val)}</title></rect>`;
     });
     if(i % labelStep === 0){
       bars += `<text x="${gx.toFixed(1)}" y="${h-8}" font-size="10" text-anchor="middle" fill="#6b7280">${lab.slice(5)}</text>`;
@@ -3488,7 +3493,7 @@ function drawStageBars(wrapEl, procs, values){
     const gx = padL + i*slotW + slotW/2;
     const barH = (v/maxVal)*plotH;
     const y = padT+plotH-barH;
-    out += `<rect data-proc="${p}" x="${(gx-barW/2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${PROCESS_COLORS[p]}" rx="1.5">`
+    out += `<rect data-proc="${p}" x="${(gx-barW/2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${escapeHtml(PROCESS_COLORS[p])}" rx="1.5">`
          + `<title>${escapeHtml(PROCESS_LABELS[p])} ยังไม่เสร็จ: ${numFmt(v)} ใบ</title></rect>`
          + `<text x="${gx.toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="13" font-weight="700" text-anchor="middle" fill="#1f2937">${numFmt(v)}</text>`
          + `<text x="${gx.toFixed(1)}" y="${h-10}" font-size="10" text-anchor="middle" fill="#6b7280">${escapeHtml(PROCESS_LABELS[p])}</text>`;
@@ -3506,6 +3511,26 @@ function renderWipTrend(){
   ).join('');
 
   drawStageBars(document.getElementById('wtPo'), PROCESSES, poNotDoneNow(sub));
+
+  /* ⚠️ ใบที่ยอดสะสมย้อนแย้ง (คีย์ขั้นหลังมากกว่าขั้นหน้า) ทำให้เลขของหน้านี้ไม่ตรงกับ
+     บัญชีของค้างบนแดชบอร์ด — หน้านี้ไล่ต่อเนื่องต่อใบ (ของที่ไหลต่อไม่เกินของที่ไหลเข้า)
+     ส่วนแดชบอร์ดลบที่ยอดรวม · ใบที่ไม่ย้อนแย้งตรงกันทุกใบ
+     แดชบอร์ดมีแถบเหลืองฟ้องอยู่แล้ว ถ้าหน้านี้เงียบ คนที่เอาสองหน้ามาเทียบจะสรุปว่า
+     "ยอดไม่ตรง" ทั้งที่ทั้งคู่ถูกในนิยามของตัวเอง แล้วเลิกเชื่อทั้งสองหน้า (ผู้ตรวจ #131) */
+  const cumAll = buildCumMap(state.records);
+  const anom = activeOrders().filter(o=>
+    (!sub || o.subName === sub) && hasOrderAnomaly(cumAll[o.id] || emptyCum()));
+  const anomEl = document.getElementById('wtAnom');
+  /* ⚠️ ต้องคุมด้วย style.display ไม่ใช่ .hidden — .wanom ตั้ง display:flex ไว้ ซึ่งชนะ [hidden]
+     เขียน .hidden แล้วแถบจะโผล่ตลอดเวลา รวมตอนที่ไม่มีใบย้อนแย้งเลย (ผู้ตรวจ #131 รอบ 2 ของผมเอง) */
+  anomEl.style.display = anom.length ? 'flex' : 'none';
+  if(anom.length){
+    anomEl.innerHTML = `<span class="badge amber">ข้อมูลย้อนแย้ง ${numFmt(anom.length)} ใบ</span> `
+      + `<span>คีย์ขั้นหลังมากกว่าขั้นหน้า `
+      + 'หน้านี้ถือว่า<b>ของที่ไหลต่อไปขั้นถัดไปไม่เกินของที่ไหลเข้ามา</b> '
+      + 'ยอดค้างรวมจึงไม่เกินยอดสั่ง · <b>บัญชีของค้างบนแดชบอร์ดลบที่ยอดรวม จึงได้เลขต่างจากหน้านี้</b> '
+      + 'เฉพาะใบพวกนี้ · ใบที่ไม่ย้อนแย้งตรงกันทุกใบ · ไล่ดูรายใบได้ที่แถบข้อมูลย้อนแย้งบนแดชบอร์ด</span>';
+  }
 
   const cap = document.getElementById('wtCaption');
   const range = getChartRange();
@@ -5871,6 +5896,11 @@ window.addEventListener('resize', ()=>{
   chartResizeTimer = setTimeout(()=>{
     const el = document.getElementById('chartWrap');
     if(el && el.clientWidth > 0) renderChart();
+    /* หน้ายอดค้างรายวันก็คิดความกว้างจากกล่องเหมือนกัน ไม่วาดใหม่แล้วกราฟค้างขนาดเดิม
+       แล้วต้องเลื่อนจอดูหลังหมุนมือถือ ทั้งที่กราฟของแดชบอร์ดไม่ต้อง (ผู้ตรวจ #131) */
+    const wt = document.getElementById('wtWip');
+    if(wt && wt.clientWidth > 0
+       && document.getElementById('view-wiptrend').classList.contains('active')) renderWipTrend();
   }, 150);
 });
 
