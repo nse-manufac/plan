@@ -3421,17 +3421,36 @@ function wipDailySeries(startISO, endISO, subName){
   const pos = {};
   orders.forEach((o,i)=>{ pos[o.id] = i; });
   const qty = orders.map(o=> Number(o.orderQty)||0);
-  const born = orders.map(o=> localDayOf(o.importedAt));
   const cum = orders.map(()=> mains.map(()=>0));
 
   const byDate = {};
+  const firstRec = {};   // ดัชนีใบ -> วันของ record แรกสุดของใบนั้น
   state.records.forEach(r=>{
     if(r.voided) return;
     const i = pos[r.orderId];
     if(i == null) return;
+    /* ⚠️ จำวันแรกสุด **ก่อน** คัดขั้น — record ของขั้นนับแยกก็เป็นหลักฐานว่าใบนี้มีอยู่แล้ว */
+    if(firstRec[i] == null || r.date < firstRec[i]) firstRec[i] = r.date;
     const sIdx = mains.indexOf(r.process);
     if(sIdx < 0) return;
     (byDate[r.date] || (byDate[r.date] = [])).push([i, sIdx, Number(r.qty)||0]);
+  });
+
+  /* วันที่ถือว่าใบนี้ "มีอยู่แล้ว" = วันที่นำเข้า **หรือวันของ record แรกสุด แล้วแต่อันไหนก่อน**
+   *
+   * ⚠️ เอา importedAt อย่างเดียวไม่ได้ · เครื่องที่สองนำเข้าไฟล์แผนเองก่อนเคยซิงค์ใบนั้นลงมา
+   *    จะได้ importedAt เป็นวันนี้ แล้ว push ทับทุกเครื่อง (mergeRowsInto ตัดสินด้วย updatedAt
+   *    ซึ่งของเครื่องที่นำเข้าทีหลังใหม่กว่าเสมอ) · ผลคือ **ใบนั้นมียอดที่คีย์ไว้เมื่อห้าวันก่อน
+   *    แต่กราฟยอดค้างขึ้นศูนย์ทั้งแถบ** ส่วนกราฟยอดผลิตข้างล่างขึ้นยอดของวันนั้น
+   *    อ่านคู่กันได้ว่า "วันนั้นผลิต 300 แต่ของค้างไม่ขยับ" ซึ่งเป็นการขัดกันเองของสองกราฟ
+   *    ที่หน้านี้วางคู่กันมาเพื่อให้อ่านด้วยกัน (ผู้ตรวจ #131 รอบ 5 รันวัดได้)
+   *
+   * ⚠️ **ยังรักษาด่าน C1 ไว้ครบ** — ใบที่เพิ่งนำเข้าและยังไม่เคยคีย์อะไรเลย ไม่มี record
+   *    จึงยังใช้ importedAt เหมือนเดิม ไม่โผล่ย้อนหลัง */
+  const born = orders.map((o,i)=>{
+    const imp = localDayOf(o.importedAt);
+    if(!imp) return '';
+    return (firstRec[i] && firstRec[i] < imp) ? firstRec[i] : imp;
   });
   // ยอดก่อนวันแรกของช่วง บวกเข้าไปก่อน — กราฟจึงเริ่มจากสภาพจริง ไม่ใช่จากศูนย์
   Object.keys(byDate).forEach(d=>{
