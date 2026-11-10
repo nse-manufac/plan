@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-08.6">
+<meta name="app-version" content="2026-11-10.6">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -129,7 +129,11 @@
   .wlr .b{height:8px;border-radius:2px;background:var(--gray-light);overflow:hidden;}
   .wlr .b span{display:block;height:100%;border-radius:2px;}
   .wanom{display:flex;gap:8px;margin-top:14px;font-size:13px;color:var(--text-dim);line-height:1.5;}
-  .wanom b{color:var(--red);font-weight:700;}
+  /* ⚠️ คลาสของตัวเอง ห้ามใช้ .wanom ซ้ำ — เทสของแดชบอร์ดใช้ locator('.wanom') แบบ strict
+     กล่องที่สองที่ใช้คลาสเดียวกันทำให้เทสเดิมแดงทันที · หน้าตาเหมือนกันแต่คนละชื่อ
+     ⚠️ ซ่อนด้วย display ไม่ใช่ attribute hidden — กฎ display ชนะ [hidden] เสมอ */
+  .wtanom{display:none;gap:8px;margin-top:10px;font-size:13px;color:var(--text-dim);line-height:1.5;}
+  .wanom b, .wtanom b{color:var(--red);font-weight:700;}
   .wanom-t{background:none;border:1px solid var(--border);border-radius:6px;padding:2px 10px;font:inherit;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap;align-self:flex-start;}
   .wanom-t:hover{background:var(--gray-light);}
   .wanl{margin-top:10px;border:1px solid var(--border);border-radius:8px;overflow-x:auto;}
@@ -304,6 +308,7 @@
   <button class="tab-btn" data-tab="delivery">🚚 ใบส่งสินค้า</button>
   <button class="tab-btn" data-tab="fg">📦 ยอดคงคลัง FG</button>
   <button class="tab-btn" data-tab="dashboard">📊 Dashboard</button>
+  <button class="tab-btn" data-tab="wiptrend">📉 ยอดค้างรายวัน</button>
   <button class="tab-btn" data-tab="data">🗂️ ข้อมูล &amp; แชร์</button>
 </nav>
 <main>
@@ -771,6 +776,48 @@
   </div>
 </section>
 
+<!-- ================= TAB: ยอดค้างรายวัน ================= -->
+<!-- แท็บแยกโดยตั้งใจ (เจ้าของสั่ง 9 พ.ย. 2026) — ของเดิมบนแดชบอร์ดไม่ถูกแตะเลย
+     เลือกได้แล้วค่อยปิดอันที่ไม่เอาทิ้งทั้งแท็บ -->
+<section id="view-wiptrend" class="view">
+  <div class="panel">
+    <h2>ยอดค้างรายวัน</h2>
+    <div class="desc"><b>กราฟแรกเป็นภาพนิ่งของวันนี้</b> แกนนอนเป็นขั้น ไม่ใช่วัน · <b>สองกราฟล่างเป็นเส้นเวลา</b> ใช้วันเดียวกัน สีเดียวกัน แท่งแบบเดียวกัน จึงกวาดตาลงมาทีละวันแล้วอ่านคู่กันได้ ·
+      <b>ช่วงวันและ Sub-Name ใช้ตัวเดียวกับกราฟในแท็บ Dashboard</b> — เปลี่ยนที่นั่น ·
+      ไม่ฟังตัวกรองสัปดาห์ สถานะ และคำค้น เหมือนกราฟของแดชบอร์ด ·
+      คำอธิบายสีข้างล่างกดซ่อนขั้นไม่ได้ หน้านี้แสดงครบทุกขั้นเสมอ แม้จะซ่อนไว้ที่แดชบอร์ด</div>
+    <div class="legend"><div class="legend-items" id="wtLegend"></div>
+      <span id="wtCaption" class="small muted" style="margin-left:auto;"></span></div>
+    <!-- แถบฟ้องใบย้อนแย้งของหน้านี้ · คลาส .wtanom ของตัวเอง ห้ามใช้ .wanom ซ้ำ
+         เทสของแดชบอร์ดใช้ locator('.wanom') แบบ strict กล่องที่สองทำให้เทสเดิมแดง
+         สองแถบจึงหน้าตาไม่เหมือนกันเป๊ะ (อันเก่าขึ้น ⚠ อันใหม่ขึ้น badge) และนั่นไม่เป็นไร -->
+    <div class="wtanom" id="wtAnom"></div>
+  </div>
+
+  <div class="panel">
+    <h3>จำนวน PO ที่ยังทำขั้นนั้นไม่เสร็จ</h3>
+    <div class="desc">ภาพนิ่งวันนี้ · หน่วยเป็นใบ · ใช้เกณฑ์เดียวกับช่อง “ซ่อนที่เสร็จ Process นี้แล้ว”
+      ของหน้าคีย์ยอดรายวัน จึงตรงกับจำนวนแถวบนหน้านั้นเมื่อไม่ได้กรองสัปดาห์ หน่วย หรือคำค้นไว้ ·
+      <b>เลขนี้มากขึ้นเรื่อย ๆ ตามลำดับของสาย</b> เพราะใบที่ยังทำขั้นก่อนหน้าไม่เสร็จ ก็ยังทำขั้นหลังไม่เสร็จด้วย ·
+      <b>ห้ามเอามาบวกกัน</b></div>
+    <div class="chart-wrap" id="wtPo"></div>
+  </div>
+
+  <div class="panel">
+    <h3>ยอดค้างรายวัน</h3>
+    <div class="desc">ของที่ค้างอยู่หน้าแต่ละขั้น ณ สิ้นแต่ละวัน · หน่วยเป็นชิ้น ·
+      <b>ขั้นนับแยกไม่มีในกราฟนี้</b> เพราะของค้างคิดจาก “ขั้นก่อนหน้า ลบ ขั้นนี้”
+      ซึ่งขั้นนับแยกไม่มีขั้นก่อนหน้า และไม่ได้ส่งต่อให้ขั้นไหน</div>
+    <div class="chart-wrap" id="wtWip"></div>
+  </div>
+
+  <div class="panel">
+    <h3>ยอดผลิตรายวัน</h3>
+    <div class="desc">ยอดที่คีย์ได้ในแต่ละวัน · หน่วยเป็นชิ้น · กราฟเดียวกับในแท็บ Dashboard เอามาวางไว้ให้อ่านคู่กัน</div>
+    <div class="chart-wrap" id="wtDaily"></div>
+  </div>
+</section>
+
 <!-- ================= TAB: DATA ================= -->
 <section id="view-data" class="view">
   <div class="panel">
@@ -946,6 +993,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-08.6"></script>
+<script src="app.js?v=2026-11-10.6"></script>
 </body>
 </html>
