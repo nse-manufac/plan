@@ -54,13 +54,16 @@ function seedPin(gs, pin = PIN) {
 const serverList = gs => gs.api.doPullSettings().processes;
 const serverIds = gs => (serverList(gs) || []).map(p => p.id);
 
-/** ส่งทุกคำขอของหน้าเว็บเข้า doPost ของสคริปต์จริง · net.down = true จำลองเน็ตหลุด */
+/** ส่งทุกคำขอของหน้าเว็บเข้า doPost ของสคริปต์จริง · net.down = true จำลองเน็ตหลุด
+ *  net.slowMs = n หน่วงทุกคำขอ n มิลลิวินาที — จำลอง Apps Script ที่ตอบช้าระดับวินาที
+ *  ซึ่งเป็นเงื่อนไขที่ทำให้การกดสองครั้งติดกันชนกันได้ (ดูเทสคิวบันทึกรายการขั้น) */
 async function serve(page, gs) {
-  const net = { calls: [], down: false };
+  const net = { calls: [], down: false, slowMs: 0 };
   await page.route('**/exec', async route => {
     const raw = route.request().postData() || '{}';
     net.calls.push(JSON.parse(raw));
     if (net.down) return route.abort();
+    if (net.slowMs) await new Promise(r => setTimeout(r, net.slowMs));
     const out = gs.api.doPost({ postData: { contents: raw }, parameter: {} });
     await route.fulfill({ contentType: 'application/json', body: out.body });
   });
@@ -617,6 +620,45 @@ test('เปลี่ยนสีของขั้นที่เพิ่ม�
   expect(await page.locator('.legend-item', { hasText: 'Trimming ทดสอบ' }).locator('i')
     .evaluate(el => getComputedStyle(el).backgroundColor),
     'คำอธิบายสีของกราฟต้องเปลี่ยนตาม').toBe('rgb(138, 90, 43)');
+});
+
+test('เปลี่ยนสีสองขั้นเร็วกว่าหนึ่งรอบ push — ต้องได้ทั้งสองสี ไม่ใช่อันเดียว', async ({ page }) => {
+  /* ⚠️ ทุกทางที่แก้รายการขั้นสร้างรายการใหม่จาก PROCESS_LIST ซึ่งถูกเขียนทับหลัง pushSettings ตอบ
+     ยิงใบที่สองก่อนใบแรกตอบ ใบที่สองจะสร้างจากรายการที่ยังไม่มีสีของใบแรก แล้วทับกลับ
+     — สีของขั้นแรกหายเงียบ ๆ ทั้งที่ toast ขึ้นว่าสำเร็จ (ผู้ตรวจ #130 รันพิสูจน์)
+     queueProcessSave() เรียงทีละใบ และสร้างรายการ **ตอนถึงคิว** ไม่ใช่ตอนกด
+
+     ⚠️ ต้องตรวจทั้งฝั่งชีตและฝั่งจอ — ใบที่สองอาจถึงชีตถูกแต่เครื่องที่กด adopt ของเก่าทับ
+     ⚠️ ต้องมีขั้นที่แก้สีได้ **สองขั้น** ขั้นเดียวจะกลายเป็นการแก้สีซ้ำที่เดิม
+        ซึ่งใบหลังทับใบแรกแล้วได้ผลถูกพอดี เทสจะเขียวเองทั้งที่ไม่มีคิว (ลองแล้ว) */
+  const gs = loadGs();
+  seedPin(gs);
+  const net = await open(page, gs);
+  answerDialogs(page);
+  await unlock(page);
+  await addStep(page, 'Trimming ทดสอบ', 'Trimming', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(6);
+  await addStep(page, 'Core Grinding ทดสอบ', 'Core', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(7);
+
+  const ids = serverIds(gs).filter(id => !DEFAULT_IDS.includes(id));
+  expect(ids.length, 'ต้องมีขั้นที่แก้สีได้สองขั้น ไม่งั้นฉากนี้ไม่เกิด').toBe(2);
+  for (const id of ids) await expect(colorInput(page, id)).toHaveCount(1);
+
+  // push ช้ากว่าระยะที่คนกดสองครั้งได้ — ของจริง Apps Script ตอบระดับวินาที
+  net.slowMs = 700;
+  await setColor(page, ids[0], '#8a5a2b');
+  await page.waitForTimeout(80);
+  await setColor(page, ids[1], '#2b5a8a');
+
+  const onSheet = () => Object.fromEntries(serverList(gs).map(p => [p.id, String(p.color || '').toLowerCase()]));
+  await expect.poll(() => [onSheet()[ids[0]], onSheet()[ids[1]]].join(' '), { timeout: 15000 })
+    .toBe('#8a5a2b #2b5a8a');
+  net.slowMs = 0;
+
+  // ฝั่งจอต้องตรงกับชีต ไม่ใช่ค้างของเก่าที่ adopt ทับ
+  expect((await colorInput(page, ids[0]).inputValue()).toLowerCase()).toBe('#8a5a2b');
+  expect((await colorInput(page, ids[1]).inputValue()).toLowerCase()).toBe('#2b5a8a');
 });
 
 test('ห้าขั้นตั้งต้นเปลี่ยนสีไม่ได้ — โชว์สีให้ดูเฉย ๆ', async ({ page }) => {

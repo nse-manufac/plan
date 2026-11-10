@@ -5644,6 +5644,30 @@ async function saveProcessList(list, doneMsg){
   return true;
 }
 
+/* คิวของการบันทึกรายการขั้น — เรียงทีละใบ และ **สร้างรายการใหม่ตอนถึงคิว ไม่ใช่ตอนกด**
+ *
+ * ⚠️ ทุกทางที่แก้รายการขั้นสร้างรายการใหม่จาก PROCESS_LIST ซึ่งถูกเขียนทับใน adoptProcessList()
+ *    **หลัง** pushSettings ตอบกลับ · กดสองครั้งเร็วกว่าหนึ่งรอบ push ใบหลังจะสร้างจากรายการ
+ *    ที่ยังไม่มีของใบแรก แล้วทับกลับ — **ของใบแรกหายเงียบ ๆ ทั้งที่ toast ขึ้นว่าสำเร็จ**
+ *    (ผู้ตรวจ #130 รันพิสูจน์ที่ push ช้า 1.2 วิ ซึ่งเป็นระดับปกติของ Apps Script)
+ *    ทางเปลี่ยนชื่อกับซ่อนมี prompt/confirm คั่น จึงเอื้อมถึงยาก แต่ **ทางสีไม่มีอะไรคั่นเลย**
+ *    และช่องสีที่เพิ่งเปิดให้แก้มีไว้ให้เจ้าของจัดชุดสีใหม่ = แก้หลายขั้นติดกันพอดี
+ *
+ * ⚠️ build() ต้องอ่าน PROCESS_LIST **ตอนถูกเรียก** ห้ามปิดทับรายการที่สร้างไว้ก่อนเข้าคิว
+ *    ไม่งั้นคิวไม่ช่วยอะไรเลย · คืน null = เลิกทำใบนั้น (เงื่อนไขเพิ่งตกเพราะใบก่อนหน้าเปลี่ยนรายการไปแล้ว)
+ *
+ * ⚠️ .catch ไว้ที่สาย ไม่ใช่ที่ใบที่คืนให้ผู้เรียก — ใบถัดไปต้องยังได้คิวแม้ใบก่อนหน้าพัง
+ *    และผู้เรียกต้องยังเห็นผลของใบตัวเอง (ตัวจับปุ่มเพิ่มขั้นล้างช่องกรอกจากค่านี้) */
+let processSaveChain = Promise.resolve();
+function queueProcessSave(build, doneMsg){
+  const run = processSaveChain.then(()=>{
+    const list = build();
+    return list ? saveProcessList(list, doneMsg) : false;
+  });
+  processSaveChain = run.catch(()=>{});
+  return run;
+}
+
 function renderProcessAdmin(){
   const table = document.getElementById('processTable');
   if(!table) return;
@@ -5751,19 +5775,25 @@ document.getElementById('btnProcessAdd').addEventListener('click', ()=>{
   if(PROCESS_LIST.some(p=>p.label === label || p.short === short)){ toast('มีขั้นชื่อนี้อยู่แล้ว'); return; }
   const after = document.getElementById('newProcAfter').value;
   const standalone = document.getElementById('newProcStandalone').checked;
-  const list = PROCESS_LIST.slice();
-  const at = after === '__first__' ? 0 : list.findIndex(p=>p.id === after) + 1;
-  if(after !== '__first__' && at <= 0){ toast('เลือกตำแหน่งของขั้นก่อน'); return; }
+  // ตรวจตำแหน่งก่อนถามยืนยัน เพื่อไม่ให้ถามแล้วค่อยบอกว่าทำไม่ได้ — แต่ดัชนีที่ใช้จริงคิดใหม่ตอนถึงคิว
+  if(after !== '__first__' && !PROCESS_BY_ID[after]){ toast('เลือกตำแหน่งของขั้นก่อน'); return; }
   const where = after === '__first__' ? 'เป็นขั้นแรก' : 'ต่อจาก ' + PROCESS_LABELS[after];
   // ⚠️ ชนิดของขั้นเปลี่ยนทีหลังไม่ได้ (มีแต่เปลี่ยนชื่อกับซ่อน) จึงต้องบอกให้ชัดตั้งแต่ตอนกด
   const kind = standalone
     ? ' · เป็นขั้นนับแยก ยอดไม่เกี่ยวกับสายหลัก ไม่มีแถวในบัญชีของค้าง และไม่ถูกตัดสินล่าช้า'
     : ' · อยู่ในสายการผลิต';
   if(!confirm(`เพิ่มขั้น "${label}" ${where}?${kind}\n— ทุกเครื่องจะเห็นขั้นนี้หลังซิงค์ · ลบทีหลังไม่ได้ ซ่อนได้อย่างเดียว · ชนิดของขั้นเปลี่ยนทีหลังไม่ได้`)) return;
-  list.splice(at, 0, {id: 'p' + Date.now().toString(36), label, short, icon: standalone ? '🧰' : '🔹',
-    color: PROCESS_PALETTE.find(c=>!list.some(p=>p.color === c)) || PROCESS_PALETTE[0],
-    hidden: false, standalone, addedBy: state.deviceName || '', addedAt: new Date().toISOString()});
-  saveProcessList(list, `เพิ่มขั้น ${label} แล้ว`).then(ok=>{
+  /* ⚠️ สร้างรายการในนี้ ไม่ใช่ข้างนอก — การเลือกสีต้องเห็นขั้นที่ใบก่อนหน้าในคิวเพิ่งเพิ่มเข้าไป
+     ไม่งั้นเพิ่มสองขั้นติดกันจะได้สีเดียวกันทั้งคู่ ซึ่งเป็นอาการเดียวกับที่คิวนี้มาแก้ */
+  queueProcessSave(()=>{
+    const list = PROCESS_LIST.slice();
+    const at = after === '__first__' ? 0 : list.findIndex(p=>p.id === after) + 1;
+    if(after !== '__first__' && at <= 0){ toast('ขั้นที่เลือกไว้หายไประหว่างบันทึก — ไม่ได้เพิ่ม'); return null; }
+    list.splice(at, 0, {id: 'p' + Date.now().toString(36), label, short, icon: standalone ? '🧰' : '🔹',
+      color: PROCESS_PALETTE.find(c=>!list.some(p=>p.color === c)) || PROCESS_PALETTE[0],
+      hidden: false, standalone, addedBy: state.deviceName || '', addedAt: new Date().toISOString()});
+    return list;
+  }, `เพิ่มขั้น ${label} แล้ว`).then(ok=>{
     if(ok){ document.getElementById('newProcLabel').value = ''; document.getElementById('newProcShort').value = '';
       document.getElementById('newProcStandalone').checked = false; }
   });
@@ -5791,7 +5821,7 @@ document.getElementById('processTable').addEventListener('change', e=>{
   if(!/^#[0-9a-f]{6}$/.test(color)){ toast('สีไม่ถูกรูปแบบ — ไม่ได้บันทึก'); renderProcessAdmin(); return; }
   if(color === String(p.color || '').toLowerCase()) return;
   const by = state.deviceName || '', now = new Date().toISOString();
-  saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {color, updatedBy: by, updatedAt: now}) : x),
+  queueProcessSave(()=> PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {color, updatedBy: by, updatedAt: now}) : x),
     `เปลี่ยนสีของ ${p.label} แล้ว`);
 });
 
@@ -5809,7 +5839,7 @@ document.getElementById('processTable').addEventListener('click', e=>{
     const label = l.trim(), short = s.trim() || label;
     if(label.length > 40 || short.length > 20){ toast('ชื่อขั้นยาวไม่เกิน 40 ตัว · ชื่อสั้นไม่เกิน 20 ตัว'); return; }
     if(PROCESS_LIST.some(x=>x.id !== id && (x.label === label || x.short === short))){ toast('มีขั้นชื่อนี้อยู่แล้ว'); return; }
-    saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {label, short, updatedBy: by, updatedAt: now}) : x),
+    queueProcessSave(()=> PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {label, short, updatedBy: by, updatedAt: now}) : x),
       `เปลี่ยนชื่อเป็น ${label} แล้ว`);
     return;
   }
@@ -5830,7 +5860,7 @@ document.getElementById('processTable').addEventListener('click', e=>{
     : `ซ่อนขั้น "${p.label}"? ${list} จะหายไปจากทุกเครื่อง`
       + (n ? ` · ยอดที่คีย์ไว้ ${numFmt(n)} รายการยังอยู่ แต่จะไม่ถูกนับจนกว่าจะเลิกซ่อน` : '');
   if(!confirm(msg)) return;
-  saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {hidden: !p.hidden, updatedBy: by, updatedAt: now}) : x),
+  queueProcessSave(()=> PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {hidden: !p.hidden, updatedBy: by, updatedAt: now}) : x),
     p.hidden ? `เลิกซ่อน ${p.label} แล้ว` : `ซ่อน ${p.label} แล้ว`);
 });
 
