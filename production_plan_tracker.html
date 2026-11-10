@@ -132,7 +132,13 @@
   /* ⚠️ คลาสของตัวเอง ห้ามใช้ .wanom ซ้ำ — เทสของแดชบอร์ดใช้ locator('.wanom') แบบ strict
      กล่องที่สองที่ใช้คลาสเดียวกันทำให้เทสเดิมแดงทันที · หน้าตาเหมือนกันแต่คนละชื่อ
      ⚠️ ซ่อนด้วย display ไม่ใช่ attribute hidden — กฎ display ชนะ [hidden] เสมอ */
-  .wtanom{display:none;gap:8px;margin-top:10px;font-size:13px;color:var(--text-dim);line-height:1.5;}
+  /* ⚠️ ต้อง wrap และให้รายการกินเต็มบรรทัดของตัวเอง — แถบนี้เป็น flex แนวนอน
+     รายการที่ต่อเข้าไปข้างในจึงกลายเป็น flex item ที่เหลือพื้นที่แค่เศษจากข้อความข้าง ๆ
+     ผู้ตรวจ #132 วัดได้: กริดต้องการ 732px แต่ได้ 345px ที่จอ 1024 และ 247px ที่ 800px
+     (= จอ 1024 ซูม 125% ซึ่งเครื่องหน้างานตั้งจริง) เหลือเห็น 2 จาก 7 คอลัมน์
+     แดชบอร์ดวาง .wanl เป็นพี่น้องถัดจากแถบ จึงไม่เจอปัญหานี้ */
+  .wtanom{display:none;gap:8px;margin-top:10px;font-size:13px;color:var(--text-dim);line-height:1.5;flex-wrap:wrap;}
+  .wtanom > .wanl{flex:1 0 100%;}
   .wanom b, .wtanom b{color:var(--red);font-weight:700;}
   .wanom-t{background:none;border:1px solid var(--border);border-radius:6px;padding:2px 10px;font:inherit;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap;align-self:flex-start;}
   .wanom-t:hover{background:var(--gray-light);}
@@ -861,7 +867,9 @@
       หน้านี้แสดงครบทุกขั้นเสมอ แม้จะซ่อนขั้นไว้ที่แดชบอร์ด</div>
     <div class="wtsub">
       <label for="wtSubFilter">Sub-Name</label>
-      <select id="wtSubFilter"><option value="">ทุกหน่วย</option></select>
+      <!-- ป้ายต้องเป็น "ทั้งหมด" ให้ตรงกับที่ fillSelect() เขียนทับทันทีที่มีใบสั่ง
+           ไม่งั้นบรรทัดนี้เป็นโค้ดตายที่อ่านแล้วเข้าใจผิดว่าจอขึ้นคำนี้ -->
+      <select id="wtSubFilter"><option value="">ทั้งหมด</option></select>
       <span class="small muted" id="wtSubNote"></span>
     </div>
     <!-- แถบฟ้องใบย้อนแย้งของหน้านี้ · คลาส .wtanom ของตัวเอง ห้ามใช้ .wanom ซ้ำ
@@ -883,8 +891,10 @@
       <section>
         <h3>ใบที่ยังไม่เสร็จ แบ่งตามกำหนดส่ง</h3>
         <div class="desc"><b>ไม่ได้แบ่งตามขั้น</b> จึงไม่มีเลขตัวไหนให้เอาไปเทียบกับกราฟซ้ายมือ ·
-          ใบละช่องเดียว บวกกันได้เท่ายอดใบที่ยังไม่เสร็จทั้งหมด ·
-          เลขกลางวง<b>มากกว่าหรือเท่ากับทุกแท่งทางซ้ายเสมอ</b> เพราะทุกแท่งเป็นส่วนหนึ่งของใบชุดนี้ ·
+          ใบละช่องเดียว บวกกันได้เท่าเลขกลางวง ·
+          ⚠️ <b>ไม่ใช่ชุดใบเดียวกับแท่งทางซ้าย</b> — ที่นี่นับเฉพาะใบที่ยัง<b>ส่งของไม่ครบ</b>
+          ส่วนแท่งทางซ้ายนับราย<b>ขั้น</b> จึงรวมใบที่ส่งครบแล้วแต่ยังคีย์ขั้นก่อนหน้าไม่ครบไว้ด้วย ·
+          <b>สองฝั่งเอามาเทียบกันตรง ๆ ไม่ได้ แต่ละฝั่งตอบคนละคำถาม</b> ·
           ใช้เกณฑ์ล่าช้าเดียวกับที่ทั้งระบบใช้อยู่ (A4 · A5)</div>
         <div class="wtdonut">
           <div id="wtDue"></div>

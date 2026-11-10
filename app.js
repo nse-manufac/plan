@@ -3612,6 +3612,8 @@ function wtSyncInputs(key){
 function wtRenderDiff(){
   const el = document.getElementById('wtDiff');
   const a = wtRange.wip, b = wtRange.daily;
+  // ฝั่งไหนช่วงใช้ไม่ได้ ก็ไม่มีอะไรให้เทียบ — ข้อความของฝั่งนั้นบอกอยู่แล้วว่าผิดตรงไหน
+  if(a.invalid || b.invalid){ el.hidden = true; return; }
   const same = a.startISO === b.startISO && a.endISO === b.endISO;
   el.hidden = same;
   if(!same) el.innerHTML = '<span>⚠️</span><div><b>ช่วงวันของสองกราฟล่างไม่เท่ากัน</b> — '
@@ -3724,7 +3726,7 @@ function wtRenderDue(sub){
  *
  * 🔒 เจ้าของเก็บมุมมองนี้ไว้คู่กับ "รวมทุกขั้น" (11 พ.ย. 2569) — **ยังไม่ตัดสิน รอคนอ่านตัวจริงดูก่อน**
  *    ห้ามลบเองถ้าไม่ได้สั่ง · แท่งเป็นแนวนอนเพราะตัวเลขหลักล้านยัดบนหัวแท่งแนวตั้งไม่ลง */
-function wtCards(key, labels, data, procs, spans, weekly){
+function wtCards(key, labels, data, procs, weekly){
   const rows = (sid)=>labels.map((lab, i)=>{
     const v = data[sid][i], max = Math.max(1, ...data[sid]);
     const pct = (v / max) * 100;
@@ -3783,8 +3785,12 @@ function wtTipHide(){ const el = document.getElementById('wtTip'); if(el) el.hid
 function wtTipHtml(t){
   const d = t.dataset;
   if(d.wtTip === 'one')
+    /* ⚠️ สีต้องผ่าน escapeHtml() ตรงนี้ด้วย — ค่าที่อ่านกลับจาก dataset เป็นค่าดิบ
+       ที่ escape ไว้ตอนเขียน attribute ถูกเบราว์เซอร์ถอดกลับให้แล้ว · สีของขั้นที่ซิงค์มา
+       ไม่ถูกตรวจรูปแบบที่ไหนเลย (validProcessList ไม่ดูช่อง color) จึงแตก attribute ได้จริง
+       ผู้ตรวจ #132 รันพิสูจน์ว่าสคริปต์ทำงาน — แรงกว่ารู CSS ที่ CLAUDE.md จดไว้ (G3) */
     return `<div class="th"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;`
-      + `background:${d.wtColor}"></span> ${escapeHtml(d.wtName)}</div>`
+      + `background:${escapeHtml(d.wtColor)}"></span> ${escapeHtml(d.wtName)}</div>`
       + `<div><span class="big">${numFmt(+d.wtV)}</span><span class="unit">${escapeHtml(d.wtUnit || '')}</span></div>`
       + (d.wtSub ? `<div class="th" style="margin:4px 0 0">${escapeHtml(d.wtSub)}</div>` : '');
   const c = wtCur[d.wtKey];
@@ -3813,6 +3819,9 @@ function wtDrawSection(key){
     body.innerHTML = `<div class="empty-hint">${escapeHtml(r.error)}</div>`;
     document.getElementById(ids.cap).textContent = '';
     wtCur[key] = null;
+    /* ⚠️ ต้องทำเครื่องหมายว่าช่วงนี้ใช้ไม่ได้ ไม่ใช่ปล่อย wtRange ค้างของเก่าไว้
+       ไม่งั้นแถบเทียบช่วงจะอ้างวันที่ที่ไม่ตรงกับช่องบนจอ = จอโกหก (ผู้ตรวจ #132) */
+    wtRange[key] = Object.assign({}, wtRange[key], {invalid: true});
     return;
   }
   wtRange[key] = {startISO: r.startISO, endISO: r.endISO};
@@ -3831,7 +3840,7 @@ function wtDrawSection(key){
   document.getElementById(ids.cap).textContent =
     `${fmtDateTH(r.startISO)} – ${fmtDateTH(r.endISO)} (${raw.labels.length} วัน)`
     + (weekly ? ` · รวมรายสัปดาห์ จ–อา · ${b.labels.length} สัปดาห์` : '');
-  if(wtMode[key] === 'cards'){ wtCards(key, b.labels, b.data, procs, wtCur[key].spans, weekly); return; }
+  if(wtMode[key] === 'cards'){ wtCards(key, b.labels, b.data, procs, weekly); return; }
   drawGroupedBars(body, b.labels, b.data, procs, {
     spans: weekly ? b.spans : null, minPerSlot: weekly ? 46 : 14,
     tipPrefix: key === 'wip' ? 'ค้างหน้า ' : '', hitKey: key, wrap: true
@@ -3862,6 +3871,11 @@ function renderWipTrend(){
   /* ⚠️ ต้องคุมด้วย style.display ไม่ใช่ .hidden — .wtanom ตั้ง display:flex ไว้ ซึ่งชนะ [hidden] */
   anomEl.style.display = anom.length ? 'flex' : 'none';
   if(anom.length){
+    /* ⚠️ จำว่าโฟกัสค้างอยู่ปุ่มไหนก่อนวาดทับ — ซิงค์อัตโนมัติเรียก renderWipTrend() ทุก 20 วิ
+       คนที่ Tab มาค้างไว้จะตกไป BODY เองโดยไม่ได้กดอะไร (G2 · กฎเดียวกับ renderWipCards) */
+    const act = document.activeElement;
+    const wasToggle = !!(act && act.id === 'wtAnomToggle');
+    const wasPo = act && act.dataset ? act.dataset.anomPo : null;
     anomEl.innerHTML = `<span class="badge amber">ข้อมูลย้อนแย้ง ${numFmt(anom.length)} ใบ</span> `
       + '<span>คีย์ขั้นหลังมากกว่าขั้นหน้า '
       + 'หน้านี้ถือว่า<b>ของที่ไหลต่อไปขั้นถัดไปไม่เกินของที่ไหลเข้ามา</b> '
@@ -3871,8 +3885,20 @@ function renderWipTrend(){
       + `${wtAnomOpen ? 'ซ่อนรายการ ▴' : 'ดูรายการ ▾'}</button>`
       + (wtAnomOpen ? anomalyListHtml(anom) : '');
     const tg = document.getElementById('wtAnomToggle');
-    if(tg) tg.addEventListener('click', ()=>{ wtAnomOpen = !wtAnomOpen; renderWipTrend();
-      const b = document.getElementById('wtAnomToggle'); if(b) b.focus(); });
+    if(tg) tg.addEventListener('click', ()=>{ wtAnomOpen = !wtAnomOpen; renderWipTrend(); });
+    /* 🚨 ปุ่มเลข PO ต้องพาไปหน้าแก้ไขรายการจริง — `anomalyListHtml()` วาดปุ่มที่มี title
+       สัญญาว่าจะพาไป แต่ตัวจับคลิกของแดชบอร์ดผูกกับ #wipCards เท่านั้น กล่องนี้จึงต้องผูกเอง
+       ไม่ผูก = ปุ่มหน้าตาเป็นลิงก์ที่กดแล้วเงียบ ซึ่งลบล้างข้อ "ตามต่อได้" ที่เป็นเหตุผลของแถบนี้
+       (ผู้ตรวจ #132 รันพิสูจน์ว่ากดแล้วแท็บไม่เปลี่ยนและช่องค้นหายังว่าง) */
+    anomEl.querySelectorAll('[data-anom-po]').forEach(el=>{
+      el.addEventListener('click', ()=> openRecordsForPo(el.dataset.anomPo));
+    });
+    // CSS.escape เพราะรหัส PO ซิงค์ข้ามเครื่องได้ และไม่ได้กรองอักขระ (G3)
+    if(wasToggle){ if(tg) tg.focus(); }
+    else if(wasPo){
+      const back = anomEl.querySelector(`[data-anom-po="${CSS.escape(wasPo)}"]`);
+      if(back) back.focus();
+    }
   }
 
   wtDrawSection('wip');
@@ -3916,6 +3942,15 @@ document.getElementById('view-wiptrend').addEventListener('click', e=>{
   const lg = e.target.closest('[data-wt-lg]');
   if(lg){
     const key = lg.dataset.wtLg, p = lg.dataset.proc;
+    /* ⚠️ ห้ามปิดจนไม่เหลือสักขั้น (กฎเดียวกับคำอธิบายสีของแดชบอร์ด)
+       ด่านตกกลับใน wtProcs() กันกราฟเปล่าไว้ก็จริง แต่ทำให้จอขัดกับตัวเอง —
+       ทุกปุ่มขีดฆ่าและ aria-pressed=false ขณะที่กราฟยังวาดครบทุกขั้น (ผู้ตรวจ #132 รันเจอ)
+       ต้องเช็กก่อนเพิ่มลง Set เพราะ Set นี้อยู่ถาวร ไม่ใช่ของใหม่ทุกครั้งแบบของแดชบอร์ด */
+    const all = key === 'wip' ? MAIN_PROCESSES : PROCESSES;
+    if(!wtHidden[key].has(p) && wtHidden[key].size + 1 >= all.length){
+      toast('ต้องเหลือไว้อย่างน้อยหนึ่งขั้น');
+      return;
+    }
     if(wtHidden[key].has(p)) wtHidden[key].delete(p); else wtHidden[key].add(p);
     wtDrawSection(key);
     /* ⚠️ คืนโฟกัสให้ปุ่มเดิม — คำอธิบายสีถูกวาดใหม่ทั้งแถบ ไม่คืนแล้วคนที่ไล่ด้วยแป้นพิมพ์

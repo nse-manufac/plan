@@ -535,9 +535,101 @@ test('โดนัทต้องแบ่งตามกำหนดส่ง �
   }
   expect(right, 'ต้องแบ่งตามกำหนดส่ง').toContain('เลยกำหนดส่งแล้ว');
 
-  // เลขกลางวงต้อง >= ทุกแท่งทางซ้าย เพราะทุกแท่งเป็นส่วนหนึ่งของใบชุดนี้
-  const centre = Number((await page.locator('#wtDue svg text').first().textContent()).replace(/,/g, ''));
-  const bars = await page.$$eval('#wtPo rect[data-proc] title',
-    els => els.map(e => Number(e.textContent.replace(/[^\d]/g, ''))));
-  expect(Math.max(...bars), 'เลขกลางวงต้องไม่น้อยกว่าแท่งไหนเลย').toBeLessThanOrEqual(centre);
+  /* 🚨 ห้ามกลับไปยืนยันว่า "เลขกลางวง >= ทุกแท่งทางซ้าย" — **ไม่จริง**
+     โดนัทนับใบที่ยังส่งของไม่ครบ ส่วนแท่งนับรายขั้นของทุกใบรวมใบที่ส่งครบแล้ว
+     ผู้ตรวจ #132 รันสองฉากที่กลางวงเป็น 0 ขณะที่แท่งเป็น 1 · เทสเดิมเขียวเพราะ fixture สะอาด
+     จึงให้ความมั่นใจเกินจริง ซึ่งอันตรายกว่าไม่มีเทส · ที่ต้องคุมคือ **ข้อความบนจอต้องไม่ชวนให้เทียบ** */
+  const desc = await page.locator('#view-wiptrend .wtpair section').nth(1).locator('.desc').innerText();
+  expect(desc, 'ต้องบอกว่าไม่ใช่ชุดใบเดียวกับแท่งทางซ้าย').toContain('ไม่ใช่ชุดใบเดียวกับแท่งทางซ้าย');
+  expect(desc, 'ต้องไม่สัญญาว่าเอามาเทียบกันได้').not.toContain('มากกว่าหรือเท่ากับทุกแท่ง');
+});
+
+/* ───────── ของที่ผู้ตรวจ #132 จับได้ — ทุกข้อพิสูจน์แล้วว่าแดงถ้าถอดการแก้ออก ───────── */
+
+test('กดเลข PO ในรายการย้อนแย้ง ต้องพาไปหน้าแก้ไขรายการของใบนั้นจริง', async ({ page }) => {
+  /* 🚨 `anomalyListHtml()` วาดปุ่มที่มี title สัญญาว่าจะพาไป แต่ตัวจับคลิกของแดชบอร์ด
+     ผูกกับ #wipCards เท่านั้น · กล่องของหน้านี้ต้องผูกเอง
+     ไม่ผูก = ปุ่มหน้าตาเป็นลิงก์ที่กดแล้วเงียบ ซึ่งลบล้างข้อ "ตามต่อได้" ที่เป็นเหตุผลของแถบนี้ */
+  await open(page, [order('BAD-1', 1000, '2026-08-01T00:00:00.000Z')],
+    [rec('a1', 'BAD-1|' + PN, 'assembly', 100, isoAgo(3))]);
+  await page.click('#wtAnomToggle');
+  await page.waitForTimeout(200);
+  await page.click('#wtAnom [data-anom-po]');
+  await page.waitForTimeout(300);
+
+  // หน้าแก้ไขรายการอยู่ในแท็บเดียวกับหน้าคีย์ยอด (#view-entry)
+  expect(await page.locator('#view-entry').getAttribute('class'),
+    'ต้องสลับไปแท็บที่มีหน้าแก้ไขรายการ').toContain('active');
+  expect(await page.inputValue('#recFilterSearch'),
+    'ต้องใส่เลข PO ลงช่องค้นหาให้ด้วย').toBe('BAD-1');
+});
+
+test('G3 — สีขั้นที่ซิงค์มาต้องแตก attribute ในป้ายตอนเอาเมาส์ชี้ไม่ได้', async ({ page }) => {
+  /* ⚠️ ค่าที่อ่านกลับจาก dataset เป็นค่าดิบ — ที่ escape ไว้ตอนเขียน attribute
+     ถูกเบราว์เซอร์ถอดกลับให้แล้ว ต้อง escape ซ้ำตอนเอาลง innerHTML
+     ผู้ตรวจ #132 รันพิสูจน์ว่าสคริปต์ทำงานจริง */
+  const evil = [
+    { id: 'winding', label: 'Winding/Trimming' },
+    { id: 'evil', label: 'ขั้นร้าย', short: 'ร้าย', color: '#111"><b data-pwned="yes"></b><i x="' },
+    { id: 'assembly', label: 'Assembly' },
+    { id: 'support', label: 'Support' },
+    { id: 'inspection', label: 'Inspection' },
+    { id: 'shipping', label: 'ส่งของ (Shipping)' }
+  ];
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')],
+    [rec('e1', 'AA-1|' + PN, 'evil', 10, isoAgo(3))], evil);
+
+  /* ⚠️ ต้องชี้ **แท่งของขั้นที่ใส่สีร้ายไว้** ไม่ใช่แท่งแรก — แท่งแรกคือ Winding ซึ่งสีปกติ
+     ชี้ผิดแท่งแล้ว payload ไม่เคยถูกวาด เทสจะเขียวทั้งที่ถอดการแก้ออก (เจอเองตอนลองถอด) */
+  const hit = page.locator('#wtPo rect.wthit[data-wt-name="ขั้นร้าย"]');
+  await hit.hover();
+  await page.waitForTimeout(150);
+  await hit.hover();
+  await page.waitForTimeout(150);
+  expect(await page.locator('#wtTip [data-pwned]').count(),
+    'ป้ายต้องไม่มี element ที่ถูกแทรกเข้ามา').toBe(0);
+});
+
+test('ปิดขั้นจนไม่เหลือสักขั้นไม่ได้ — ไม่งั้นปุ่มขีดฆ่าหมดแต่กราฟยังวาดครบ', async ({ page }) => {
+  /* ด่านตกกลับใน wtProcs() กันกราฟเปล่าไว้ก็จริง แต่ทำให้จอขัดกับตัวเอง
+     ทุกปุ่ม aria-pressed=false ขณะที่กราฟยังวาดครบทุกขั้น (ผู้ตรวจ #132 รันเจอ) */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  const btns = page.locator('#wtWipLegend .legend-item');
+  const n = await btns.count();
+  for (let i = 0; i < n; i++) { await btns.nth(i).click(); await page.waitForTimeout(80); }
+
+  const onCount = await page.locator('#wtWipLegend .legend-item[aria-pressed="true"]').count();
+  expect(onCount, 'ต้องเหลือเปิดอยู่อย่างน้อยหนึ่งขั้น').toBeGreaterThanOrEqual(1);
+  const drawn = await procsIn(page, 'wtWip');
+  expect(drawn.length, 'จำนวนขั้นที่วาดต้องตรงกับจำนวนปุ่มที่ยังเปิดอยู่').toBe(onCount);
+});
+
+test('รายการย้อนแย้งต้องได้เต็มความกว้างของแถบ ไม่ใช่เศษที่เหลือจากข้อความข้าง ๆ', async ({ page }) => {
+  /* แถบเป็น flex แนวนอน · รายการที่ต่อเข้าไปข้างในจะกลายเป็น flex item ที่ถูกบีบ
+     ผู้ตรวจ #132 วัดได้ 247px ที่จอ 800 (= จอ 1024 ซูม 125% ซึ่งหน้างานตั้งจริง) เหลือเห็น 2 จาก 7 คอลัมน์ */
+  await page.setViewportSize({ width: 800, height: 900 });
+  await open(page, [order('BAD-1', 1000, '2026-08-01T00:00:00.000Z')],
+    [rec('a1', 'BAD-1|' + PN, 'assembly', 100, isoAgo(3))]);
+  await page.click('#wtAnomToggle');
+  await page.waitForTimeout(250);
+  const [outer, inner] = await page.evaluate(() => {
+    const a = document.getElementById('wtAnom'), l = a.querySelector('.wanl');
+    return [a.clientWidth, l ? l.clientWidth : 0];
+  });
+  expect(inner, 'ต้องได้เกือบเต็มความกว้างของแถบ').toBeGreaterThan(outer * 0.9);
+});
+
+test('ช่วงวันที่ใช้ไม่ได้ ต้องไม่ให้แถบเทียบช่วงอ้างวันที่เก่าที่ไม่ตรงกับช่องบนจอ', async ({ page }) => {
+  /* จอที่อ้างวันที่ซึ่งไม่ตรงกับช่องข้าง ๆ คือจอโกหก — แย่กว่าไม่บอกอะไรเลย */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  await page.click('.wtrng[data-rng="daily"] button[data-days="30"]');
+  await page.waitForTimeout(250);
+  await expect(page.locator('#wtDiff'), 'ตั้งไม่เท่ากันต้องฟ้องก่อน').toBeVisible();
+
+  // ทำให้ช่วงของกราฟยอดค้างใช้ไม่ได้
+  await page.fill('#wtWipFrom', isoAgo(2));
+  await page.fill('#wtWipTo', isoAgo(20));
+  await page.waitForTimeout(250);
+  await expect(page.locator('#wtWip'), 'ฝั่งที่ผิดต้องบอกเหตุผลของตัวเอง').toContainText('กลับข้าง');
+  await expect(page.locator('#wtDiff'), 'แถบเทียบช่วงต้องเงียบ ไม่ใช่อ้างช่วงเก่า').toBeHidden();
 });
