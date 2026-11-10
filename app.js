@@ -3562,7 +3562,14 @@ function bucketWeeklyLast(labels, data, procs){
  *  มีเลขกำกับบนหัวแท่ง เพราะกราฟนี้มีแค่หกเจ็ดแท่ง จึงมีที่ว่างพอ และคนอ่านอายุ 60+ */
 function drawStageBars(wrapEl, procs, values){
   const avail = Math.max(320, Math.floor(wrapEl.clientWidth) || 0);
-  const w = Math.max(avail, procs.length*110);
+  /* ⚠️ ช่องขั้นต่ำต่อขั้นต้องพอให้ **ทุกขั้นอยู่ในกรอบที่จอ 1024** ซึ่งเป็นจอของเครื่องหน้างาน
+     ใบนี้ย่อกราฟเหลือครึ่งจอตามที่เจ้าของสั่ง กล่องจึงเหลือ ~462px · ของเดิม 110px/ขั้น
+     ทำให้ 7 ขั้นกินไปถึง 770px แล้ว Inspection กับ ส่งของ **อยู่นอกกรอบตั้งแต่เปิดมา**
+     มีแถบเลื่อนให้ก็จริง แต่กราฟนี้เป็นภาพนิ่งที่มีไว้ "กวาดตาครั้งเดียว" ของคนอ่านอายุ 60+
+     และแท่งส่งของคือแท่งที่ตอบว่ายังส่งไม่ครบกี่ใบ (ผู้ตรวจ #132 รอบ 8 วัดได้ 770 ใน 462)
+     56px/ขั้น → 7 ขั้นกิน 392px พอดีกับกล่องตั้งแต่จุดตัดสองคอลัมน์ (900px) ขึ้นไป
+     ⚠️ ฟังก์ชันนี้ถูกเรียกที่ #wtPo ที่เดียว การลดเลขนี้จึงไม่กระทบกราฟของแดชบอร์ด */
+  const w = Math.max(avail, procs.length*56);
   const h = 220, padL=44, padB=30, padT=20;
   const maxVal = Math.max(1, ...procs.map(p=>values[p]||0));
   const plotH = h-padT-padB;
@@ -3589,7 +3596,10 @@ function drawStageBars(wrapEl, procs, values){
     out += `<rect data-proc="${p}" x="${(gx-barW/2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${escapeHtml(PROCESS_COLORS[p])}" rx="1.5">`
          + `<title>${escapeHtml(PROCESS_LABELS[p])} ยังไม่เสร็จ: ${numFmt(v)} ใบ</title></rect>`
          + `<text x="${gx.toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="13" font-weight="700" text-anchor="middle" fill="#1f2937">${numFmt(v)}</text>`
-         + `<text x="${gx.toFixed(1)}" y="${h-10}" font-size="10" text-anchor="middle" fill="#6b7280">${escapeHtml(PROCESS_LABELS[p])}</text>`;
+         /* ⚠️ ใช้ชื่อสั้น ไม่ใช่ชื่อเต็ม — ช่องกว้าง ~56px ชื่อเต็มอย่าง "Winding/Trimming"
+            จะทับช่องข้าง ๆ · ชื่อเต็มยังอ่านได้ที่คำอธิบายสีเหนือกราฟ และในป้ายตอนเอาเมาส์ชี้
+            จึงไม่มีข้อมูลหาย (ของเดิมเป็นชื่อเต็มตอนกราฟยังกินเต็มจอ) */
+         + `<text x="${gx.toFixed(1)}" y="${h-10}" font-size="10" text-anchor="middle" fill="#6b7280">${escapeHtml((PROCESS_BY_ID[p] || {}).short || PROCESS_LABELS[p])}</text>`;
   });
   wrapEl.innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${out}${hits}</svg>`;
 }

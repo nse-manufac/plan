@@ -619,6 +619,43 @@ test('รายการย้อนแย้งต้องได้เต็�
   expect(inner, 'ต้องได้เกือบเต็มความกว้างของแถบ').toBeGreaterThan(outer * 0.9);
 });
 
+test('กราฟ PO ต้องเห็นครบทุกขั้นในกรอบที่จอ 1024 แม้มีเจ็ดขั้น', async ({ page }) => {
+  /* ⚠️ ใบนี้ย่อกราฟเหลือครึ่งจอตามที่เจ้าของสั่ง กล่องจึงเหลือ ~455px
+     ของเดิมกินช่องละ 110px → 7 ขั้นกิน 770px แล้ว Inspection กับ ส่งของ **อยู่นอกกรอบตั้งแต่เปิดมา**
+     มีแถบเลื่อนให้ก็จริง แต่กราฟนี้เป็นภาพนิ่งที่มีไว้กวาดตาครั้งเดียวของคนอ่านอายุ 60+
+     และแท่งส่งของคือแท่งที่ตอบว่ายังส่งไม่ครบกี่ใบ (ผู้ตรวจ #132 รอบ 8 วัดได้ 770 ใน 462)
+     ⚠️ ต้องตรวจป้ายทับกันด้วย — ลดความกว้างอย่างเดียวแล้วชื่อเต็มจะทับช่องข้าง ๆ แทน
+        (เจอเองตอนวัด จึงเปลี่ยนแกนไปใช้ชื่อสั้น · ชื่อเต็มยังอยู่ที่คำอธิบายสีและป้ายตอนชี้)
+     ⚠️ ของจริงมี 7 ขั้น ([[production-has-7-stages]]) ฉาก 5 ขั้นไม่พอจับ */
+  await page.setViewportSize({ width: 1024, height: 900 });
+  const seven = [
+    { id: 'core_grinding', label: 'CORE GRINDING', short: 'Core', hidden: false, icon: '🔹', color: '#8e24aa' },
+    { id: 'winding', label: 'Winding/Trimming', short: 'Winding', hidden: false },
+    { id: 'trimming', label: 'Trimming', short: 'Trim', hidden: false, icon: '🔹', color: '#008300' },
+    { id: 'assembly', label: 'Assembly', short: 'Assembly', hidden: false },
+    { id: 'support', label: 'Support', short: 'Support', hidden: false },
+    { id: 'inspection', label: 'Inspection', short: 'Inspection', hidden: false },
+    { id: 'shipping', label: 'ส่งของ (Shipping)', short: 'Shipping', hidden: false }
+  ];
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], [], seven);
+
+  const m = await page.evaluate(() => {
+    const box = document.getElementById('wtPo'), svg = box.querySelector('svg');
+    const br = box.getBoundingClientRect();
+    const t = [...svg.querySelectorAll('text')].map(e => ({ s: e.textContent, y: +e.getAttribute('y'), r: e.getBoundingClientRect() }));
+    const maxY = Math.max(...t.map(x => x.y));
+    const axis = t.filter(x => x.y === maxY).sort((a, b) => a.r.left - b.r.left);
+    let overlap = 0;
+    for (let i = 1; i < axis.length; i++) if (axis[i].r.left < axis[i - 1].r.right - 0.5) overlap++;
+    return { n: axis.length, overlap, scroll: box.scrollWidth - box.clientWidth,
+      inside: axis.every(x => x.r.left >= br.left - 1 && x.r.right <= br.right + 1) };
+  });
+  expect(m.n, 'ต้องมีป้ายครบเจ็ดขั้น').toBe(7);
+  expect(m.scroll, 'ต้องไม่ต้องเลื่อนเพื่อดูให้ครบ').toBe(0);
+  expect(m.inside, 'ทุกป้ายต้องอยู่ในกรอบ').toBe(true);
+  expect(m.overlap, 'ป้ายต้องไม่ทับกัน').toBe(0);
+});
+
 test('รายการขั้นเปลี่ยนกลางทาง — คำอธิบายสีต้องไม่ขัดกับกราฟ', async ({ page }) => {
   /* 🚨 คำอธิบายสีวาดจาก wtHidden ส่วนกราฟวาดจากชุดที่ wtProcs() คืน · สองอย่างต้องตรงกันเสมอ
      ขั้นที่ถูกซ่อนจากแผงจัดการขั้นทีหลัง (มาทางซิงค์) จะค้างใน Set แล้วนับรวมในด่าน
