@@ -3689,6 +3689,20 @@ function wtDueData(sub){
   return {n, lates};
 }
 
+/** ปัดเปอร์เซ็นต์ให้ผลรวมเป็น 100 เสมอ — แจกเศษที่เหลือให้ช่องที่เศษมากสุดก่อน
+ *  คืนอาร์เรย์เรียงตามลำดับที่รับมา · total = 0 คืน 0 ทุกช่อง */
+function wtPctShares(values, total){
+  if(!total) return values.map(()=>0);
+  const raw = values.map(v=>v / total * 100);
+  const out = raw.map(x=>Math.floor(x));
+  let left = 100 - out.reduce((a, b)=>a + b, 0);
+  // เรียงตามเศษจากมากไปน้อย · เศษเท่ากันตัดสินด้วยลำดับเดิม เพื่อให้ผลเหมือนกันทุกเครื่อง
+  const order = raw.map((x, i)=>[x - Math.floor(x), i])
+    .sort((a, b)=> b[0] - a[0] || a[1] - b[1]);
+  for(let k = 0; k < order.length && left > 0; k++, left--) out[order[k][1]]++;
+  return out;
+}
+
 function wtRenderDue(sub){
   const {n, lates} = wtDueData(sub);
   const slices = [
@@ -3698,6 +3712,11 @@ function wtRenderDue(sub){
     {id: 'unknown', name: 'วันที่สั่งผิดหรือไม่มี — ตัดสินไม่ได้', color: '#9ca3af', v: n.unknown}
   ].filter(s=>s.v > 0 || s.id !== 'unknown');
   const total = slices.reduce((a, s)=>a + s.v, 0);
+  /* ⚠️ ปัดเปอร์เซ็นต์ทีละแถวแล้วรวมได้ 99 หรือ 101 (เช่น 3 ใบแบ่ง 3 ช่อง ได้ 33+33+33)
+     หน้าที่มีเลข "รวมแล้วเท่ากับเลขกลางวงพอดี" เขียนกำกับอยู่ จะกลายเป็นจอที่ขัดกับตัวเอง
+     จึงปัดแบบเหลือเศษมากสุดได้ก่อน (largest remainder) ให้ผลรวมเป็น 100 เสมอ
+     จำนวน "ใบ" ไม่ได้ถูกแตะ — ยังเป็นเลขจริงทุกแถว (ผู้ตรวจ #132 รอบ 3) */
+  const pct = wtPctShares(slices.map(s=>s.v), total);
   const size = 190, r = 72, cx = size / 2, cy = size / 2, sw = 30, C = 2 * Math.PI * r;
   let acc = 0, out = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--gray-light)" stroke-width="${sw}"/>`;
   slices.forEach(s=>{
@@ -3718,7 +3737,7 @@ function wtRenderDue(sub){
   document.getElementById('wtDueList').innerHTML = slices.map(s=>
     `<div class="wtdr"><i style="background:${s.color}"></i><span class="nm">${escapeHtml(s.name)}</span>`
     + `<span class="qt">${numFmt(s.v)}</span>`
-    + `<span class="pc">${total ? Math.round(s.v / total * 100) : 0}%</span></div>`).join('')
+    + `<span class="pc">${pct[slices.indexOf(s)]}%</span></div>`).join('')
     + `<div class="wtnote">รวม ${numFmt(total)} ใบ — เท่ากับเลขกลางวงพอดี`
     + (sub ? ` · เฉพาะ ${escapeHtml(sub)}` : '') + '</div>';
 
