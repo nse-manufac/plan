@@ -619,6 +619,47 @@ test('รายการย้อนแย้งต้องได้เต็�
   expect(inner, 'ต้องได้เกือบเต็มความกว้างของแถบ').toBeGreaterThan(outer * 0.9);
 });
 
+test('รายการขั้นเปลี่ยนกลางทาง — คำอธิบายสีต้องไม่ขัดกับกราฟ', async ({ page }) => {
+  /* 🚨 คำอธิบายสีวาดจาก wtHidden ส่วนกราฟวาดจากชุดที่ wtProcs() คืน · สองอย่างต้องตรงกันเสมอ
+     ขั้นที่ถูกซ่อนจากแผงจัดการขั้นทีหลัง (มาทางซิงค์) จะค้างใน Set แล้วนับรวมในด่าน
+     "ต้องเหลืออย่างน้อยหนึ่งขั้น" ทั้งที่ไม่มีขั้นนั้นอยู่จริง · และถ้าทุกขั้นที่เหลือถูกซ่อนหมด
+     กราฟจะตกกลับไปวาดครบ ขณะที่ปุ่มขีดฆ่าทั้งแถว (ผู้ตรวจ #132 รอบ 6 รันเจอ)
+     ⚠️ ฉากนี้ยัด wtHidden ตรง ๆ เพราะทางจริงต้องให้เครื่องอื่นซ่อนขั้นแล้วซิงค์มา
+        ซึ่งจำลองในเทสหน้าเดียวไม่ได้ · สิ่งที่คุมคือ "จอต้องไม่ขัดกับตัวเอง" ไม่ใช่ทางที่มันเกิด */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  await page.evaluate(() => {
+    MAIN_PROCESSES.forEach(p => wtHidden.wip.add(p));
+    wtHidden.wip.add('ขั้นที่ไม่มีอยู่แล้ว');
+    wtDrawSection('wip');
+  });
+  await page.waitForTimeout(200);
+
+  const on = await page.locator('#wtWipLegend .legend-item[aria-pressed="true"]').count();
+  const drawn = await procsIn(page, 'wtWip');
+  expect(drawn.length, 'กราฟต้องวาดอย่างน้อยหนึ่งขั้น').toBeGreaterThan(0);
+  expect(on, 'ปุ่มที่ "เปิด" ต้องเท่ากับจำนวนขั้นที่วาดจริง').toBe(drawn.length);
+  expect(await page.evaluate(() => wtHidden.wip.has('ขั้นที่ไม่มีอยู่แล้ว')),
+    'id ที่ไม่มีในรายการขั้นแล้วต้องถูกล้างออก').toBe(false);
+});
+
+test('การ์ดแยกรายขั้นต้องเลื่อนลงสุดให้ — คำกำกับเขียนว่าแถวล่างสุดคือล่าสุด', async ({ page }) => {
+  /* ⚠️ การ์ดสูงได้ไม่เกิน 360px ช่วง 15–21 วันจึงล้น แล้วเปิดมาเห็นวันเก่าสุด
+     ซึ่งขัดกับคำกำกับใต้การ์ด และต้องเลื่อนแยกทีละใบ (ผู้ตรวจ #132 รอบ 6 วัดได้ scrollTop 0)
+     ปุ่มสำเร็จรูปไม่โดน (7/14 วันสั้นพอ · 30/90 วันกลายเป็นรายสัปดาห์) ช่องกรอกเองถึงจะโดน */
+  const recs = [];
+  for (let d = 20; d >= 0; d--) recs.push(rec('w' + d, 'AA-1|' + PN, 'winding', 10, isoAgo(d)));
+  await open(page, [order('AA-1', 100000, '2026-01-01T00:00:00.000Z')], recs);
+  await page.fill('#wtWipFrom', isoAgo(20));
+  await page.fill('#wtWipTo', isoAgo(0));
+  await page.click('.wtseg button[data-view="wip"][data-mode="cards"]');
+  await page.waitForTimeout(300);
+
+  const box = await page.locator('#wtWip .wtcard .rows').first()
+    .evaluate(el => ({ st: el.scrollTop, sh: el.scrollHeight, ch: el.clientHeight }));
+  expect(box.sh, 'ฉากนี้ต้องล้นจริง ไม่งั้นข้อนี้ไม่ได้ตรวจอะไร').toBeGreaterThan(box.ch);
+  expect(box.st, 'ต้องเลื่อนลงสุดให้แล้ว').toBeGreaterThan(box.sh - box.ch - 2);
+});
+
 test('กล่องใบที่ล่าช้าต้องเรียงจากล่าช้ามากไปน้อยจริง — ใบที่หนักสุดห้ามถูกเบียดออก', async ({ page }) => {
   /* 🚨 เลขบนแถวทำสองหน้าที่: แสดงผล **และ** เป็นกุญแจเรียง จึงต้องเทียบข้ามแถวได้
      ถ้านับจากกำหนดของ "ขั้นที่ทำให้ late" (ปลายน้ำสุด) แต่ละแถวจะนับจากฐานคนละอัน —
