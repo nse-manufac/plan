@@ -2073,6 +2073,29 @@ function lateStageOf(order, cum, dl, refISO){
   return null;
 }
 
+/** ขั้นที่ทำให้ใบนี้ "ล่าช้ามานานที่สุด" — ขั้นที่กำหนดของมันเลยมาแล้ว**นานสุด** และยังไม่ถึงยอดสั่ง
+ *
+ *  🚨 **คนละตัวกับ `lateStageOf()` โดยตั้งใจ และห้ามเอามาแทนกัน**
+ *  · `lateStageOf()` = ขั้น **ปลายน้ำสุด** ที่เลยกำหนด — ใช้กับ **ป้ายสถานะ** (A5 รายงานปลายน้ำก่อน)
+ *  · `lateSinceOf()` = ขั้นที่ **เลยกำหนดมานานสุด** — ใช้กับ **จำนวนวันและการเรียงลำดับ**
+ *
+ *  เหตุผล: เลขของ `lateStageOf()` **เทียบข้ามใบไม่ได้** เพราะแต่ละใบนับจากกำหนดของขั้นคนละขั้น
+ *  ใบที่เลยกำหนดส่งแล้วเพิ่งเริ่มนับใหม่จาก 1 ส่วนใบที่เพิ่งเลยขั้นต้นน้ำโตได้ถึง 6–7 วันเสมอ
+ *  เอาไปเรียงแล้ว **กล่องเรียงกลับทางกับความจริง** และใบที่หนักสุดถูกเบียดออกจากห้าแถวแรก
+ *  (ผู้ตรวจ #132 รอบ 5 รันพิสูจน์ · เป็นผลข้างเคียงของตัวแก้ในรอบ 4 เอง)
+ *
+ *  ⚠️ เลือกด้วย **วันกำหนดที่น้อยที่สุด** ไม่ใช่ "ขั้นแรกในสาย" — วันกำหนดตั้งเองได้ จึงไม่รับประกัน
+ *     ว่าเรียงจากน้อยไปมากตามลำดับสาย (A4) · เสมอกันให้ขั้นต้นน้ำชนะ
+ *  ⚠️ ไล่ MAIN_PROCESSES ไม่ใช่ PROCESSES ด้วยเหตุผลเดียวกับ lateStageOf() (A3 · A5) */
+function lateSinceOf(order, cum, dl, refISO){
+  let best = null;
+  MAIN_PROCESSES.forEach(p=>{
+    if(!dl[p] || refISO <= dl[p] || (cum[p] || 0) >= order.orderQty) return;
+    if(!best || dl[p] < dl[best]) best = p;
+  });
+  return best;
+}
+
 function computeStatus(order, cum, dl, refISO){
   const done = cum.shipping >= order.orderQty;
   if(done) return {code:'done', label:'ส่งของครบแล้ว', color:'green'};
@@ -3669,7 +3692,7 @@ function wtProcs(key, all){
   return vis.length ? vis : all.slice();
 }
 
-/* ---------- ภาพนิ่งวันนี้: ใบที่ยังไม่เสร็จ แบ่งตามกำหนดส่ง ----------
+/* ---------- ภาพนิ่งวันนี้: ใบที่ยังไม่เสร็จ แบ่งตามสถานะเวลา ----------
  *
  * ⚠️ **ห้ามแบ่งตามขั้น** — กราฟแท่งข้าง ๆ ก็เป็นเลขรายขั้น แต่คนละเกณฑ์
  *    (แท่ง = ใบเดียวนับได้หลายขั้น · อันนี้ = ใบละช่องเดียว) ขั้นเดียวกันจะได้สองเลข
@@ -3701,7 +3724,10 @@ function wtDueData(sub){
          "ใบที่ล่าช้านานที่สุด" (ผู้ตรวจ #132 รอบ 4 รันพิสูจน์)
          ⚠️ ครอบที่ 0 ไม่พอ — มันกลบความต่างระหว่าง "เลยมาวันนี้" กับ "ยังไม่ถึงกำหนดส่งอีก 16 วัน"
          lateP ไม่เป็น null แน่นอนเมื่อ st.code === 'late' และ dl[lateP] ผ่านมาแล้วเสมอ จึงไม่ติดลบ */
-      const lateP = lateStageOf(o, c, dl, ref);
+      /* 🚨 ใช้ lateSinceOf() ไม่ใช่ lateStageOf() — เลขนี้ทำสองหน้าที่: แสดงบนแถว **และ**
+         เป็นกุญแจเรียงของกล่อง จึงต้องเทียบข้ามแถวได้ ดูเหตุผลเต็มที่ lateSinceOf()
+         ⚠️ เปลี่ยนกลับไปใช้ lateStageOf() เมื่อไหร่ กล่องจะเรียงกลับทางทันที */
+      const lateP = lateSinceOf(o, c, dl, ref);
       lates.push({o, at, lateP, over: lateP ? daysBetween(dl[lateP], ref) : null});
     }
     else if(st.code === 'soon') n.soon++;
@@ -3759,7 +3785,7 @@ function wtRenderDue(sub){
   out += `<text x="${cx}" y="${cy - 4}" font-size="26" font-weight="700" text-anchor="middle" fill="var(--text)">${numFmt(total)}</text>`
     + `<text x="${cx}" y="${cy + 16}" font-size="11.5" text-anchor="middle" fill="var(--text-dim)">ใบที่ยังไม่เสร็จ</text>`;
   document.getElementById('wtDue').innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"`
-    + ` role="img" aria-label="สัดส่วนใบที่ยังไม่เสร็จ แบ่งตามกำหนดส่ง">${out}</svg>`;
+    + ` role="img" aria-label="สัดส่วนใบที่ยังไม่เสร็จ แบ่งตามสถานะเวลา">${out}</svg>`;
 
   document.getElementById('wtDueList').innerHTML = slices.map(s=>
     `<div class="wtdr"><i style="background:${s.color}"></i><span class="nm">${escapeHtml(s.name)}</span>`
@@ -3773,11 +3799,12 @@ function wtRenderDue(sub){
     ? top.map(x=>`<div class="wtlr"><span class="po">${escapeHtml(x.o.poNo)}</span>`
         + `<span class="wh">${sub ? '' : escapeHtml(x.o.subName || '—') + ' · '}`
         + `ค้างที่ ${escapeHtml(x.at ? ((PROCESS_BY_ID[x.at] || {}).short || x.at) : '—')}</span>`
+        // กิ่ง null เป็นด่านกันพลาด ไม่ใช่กรณีที่เกิดจริง — ใบที่สถานะ late ต้องมีขั้นที่เลยกำหนดเสมอ
         + `<span class="dd">${x.over == null ? 'ไม่ได้ตั้งวันกำหนด'
             : 'เลยกำหนด ' + escapeHtml((PROCESS_BY_ID[x.lateP] || {}).short || x.lateP) + ' มา ' + numFmt(x.over) + ' วัน'}</span></div>`).join('')
     : '<div class="wtnote">ไม่มีใบที่ล่าช้า</div>')
     + `<div class="wtnote">เกณฑ์เดียวกับป้าย “ล่าช้า” ที่ใช้อยู่ทั้งระบบ (A5) ·`
-    + ' <b>จำนวนวันคิดจากกำหนดของขั้นที่ทำให้ใบนี้ล่าช้า ไม่ใช่กำหนดส่ง</b> ·'
+    + ' <b>จำนวนวันนับจากกำหนดแรกที่เลยมาแล้ว ไม่ใช่กำหนดส่ง</b> จึงเทียบข้ามแถวได้ และใช้เรียงลำดับกล่องนี้ ·'
     + ' “ค้างที่” คือขั้นแรกในสายที่ยอดยังไม่ถึงยอดสั่ง จึงเป็นคนละขั้นกันได้'
     + (lates.length > top.length ? ` · แสดง ${numFmt(top.length)} จาก ${numFmt(lates.length)} ใบ` : '')
     + '</div>';
