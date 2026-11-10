@@ -3247,35 +3247,24 @@ function bucketWeekly(labels, data){
   return out;
 }
 
-function renderChart(){
-  renderChartLegend();
-  const range = getChartRange();
-  const caption = document.getElementById('chartRangeCaption');
-  if(!range){
-    document.getElementById('chartWrap').innerHTML = `<div class="empty-hint">เลือกทั้ง "จากวันที่" และ "ถึงวันที่" เพื่อแสดงกราฟ</div>`;
-    caption.textContent = '';
-    return;
-  }
-  if(range.error){
-    document.getElementById('chartWrap').innerHTML = `<div class="empty-hint">${escapeHtml(range.error)}</div>`;
-    caption.textContent = '';
-    return;
-  }
-  const {startISO, endISO} = range;
-  const subF = dashSubName();
-  const daily = buildDailyTotals(startISO, endISO, subF);
-  /* ช่วงยาววาดรายวันแล้วอ่านไม่ออก — 90 วันคือ 450 แท่ง แท่งละ 2px
-     รวมเป็นรายสัปดาห์แทน เหลือ 13 กลุ่ม เต็มจอพอดีโดยไม่ต้องเลื่อน
-     และตรงกับที่ทั้งระบบคิดเป็น WK อยู่แล้ว */
-  const bucketed = daily.labels.length > CHART_DAILY_MAX;
-  const bucket = bucketed ? bucketWeekly(daily.labels, daily.data) : null;
-  const labels = bucketed ? bucket.labels : daily.labels;
-  const data = bucketed ? bucket.data : daily.data;
-  const spans = bucketed ? bucket.spans : null;
-  caption.textContent = `แสดง ${fmtDateTH(startISO)} – ${fmtDateTH(endISO)} (${daily.labels.length} วัน)`
-    + (bucketed ? ' · รวมรายสัปดาห์ จ–อา' : '')
-    + (subF ? ` · ${subF}` : '');
-
+/** วาดกราฟแท่งกลุ่มลงในกล่องที่ส่งมา — **ที่เดียวที่วาดกราฟแท่งกลุ่มของทั้งแอป**
+ *
+ *  แยกออกมาจาก renderChart() เมื่อ 9 พ.ย. 2026 ตอนเพิ่มหน้า "ยอดค้างรายวัน"
+ *  ⚠️ ห้ามก๊อปไปทำชุดที่สอง — สองกราฟที่อยู่หน้าเดียวกันแต่คนละสูตร จะมีวันหน้าตาไม่ตรงกัน
+ *     แล้วคนอ่านจะเทียบสองกราฟนั้นด้วยตาไม่ได้ ซึ่งเป็นเหตุผลทั้งหมดที่เอามาวางคู่กัน
+ *
+ *  ⚠️ สีต้องผ่าน escapeHtml() — สีของขั้นที่ไม่ใช่ห้าขั้นตั้งต้นมาจากรายการที่ซิงค์มา
+ *     และ validProcessList() ไม่ตรวจช่อง color เลย · `#111" onmouseover="…` ปิด attribute
+ *     แล้วแทรกของใหม่ได้ (ผู้ตรวจรันพิสูจน์บน #131)
+ *     ⚠️ ที่นี่ไม่มีรู CSS เพิ่ม — สีลง `fill` ของ SVG ซึ่งไม่โหลด URL ภายนอก (ผู้ตรวจ #131 รอบ 3 รันยืนยัน)
+ *        รู CSS อยู่ที่ที่เขียนสีลง `style` attribute ดู renderWipTrend() และ renderChartLegend()
+ *
+ *  labels = วัน (ISO) · data = {ขั้น: [ค่าแต่ละวัน]} · procs = ขั้นที่จะวาดจริง
+ *  opts.spans = ช่วงวันจริงของแต่ละแท่งตอนรวมรายสัปดาห์ · opts.tipPrefix = คำนำหน้าใน tooltip
+ */
+function drawGroupedBars(wrapEl, labels, data, procs, opts){
+  const o = opts || {};
+  const spans = o.spans || null;
   /* ความกว้างของกราฟ = ความกว้างของกล่องที่มันอยู่ ไม่ใช่เลขตายตัว (เจ้าของสั่งเมื่อ 8 ก.ย. 2026)
    *
    * ⚠️ ของเดิมคิดจากจำนวนวัน × พิกเซลต่อวัน แล้วตรึงขั้นต่ำ 600px
@@ -3283,12 +3272,10 @@ function renderChart(){
    *
    *    ตอนนี้ยึดความกว้างจริงของกล่องเป็นหลัก แล้วค่อยขยายเกินกล่องเมื่อช่องแคบเกินอ่าน
    *    (ต่ำกว่า minPerSlot) — กรณีนั้น .chart-wrap เลื่อนดูได้เหมือนเดิม */
-  const minPerSlot = bucketed ? 46 : 14;
-  const wrapEl = document.getElementById('chartWrap');
+  const minPerSlot = o.minPerSlot || 14;
   const avail = Math.max(320, Math.floor(wrapEl.clientWidth) || 0);
   const w = Math.max(avail, labels.length*minPerSlot);
   const h = 220, padL=44, padB=28, padT=10;
-  const procs = chartProcesses();
   /* ⚠️ สเกลต้องคิดจากขั้นที่แสดงอยู่เท่านั้น ไม่งั้นปิดขั้นที่ยอดสูงสุดทิ้งแล้ว
      แท่งที่เหลือยังเตี้ยติดพื้นเหมือนเดิม ทั้งที่จุดประสงค์ของการปิดคือขอดูให้ชัดขึ้น */
   const maxVal = Math.max(1, ...procs.map(x=>Math.max(...data[x])));
@@ -3328,13 +3315,300 @@ function renderChart(){
       const barH = (val/maxVal)*plotH;
       const x = gx + offsetIdx*(barW+gap) - barW/2;
       const y = padT+plotH-barH;
-      bars += `<rect data-proc="${key}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${color}" rx="1.5"><title>${when} ${escapeHtml(PROCESS_LABELS[key])}: ${numFmt(val)}</title></rect>`;
+      bars += `<rect data-proc="${key}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${escapeHtml(color)}" rx="1.5"><title>${when} ${escapeHtml((o.tipPrefix||'') + PROCESS_LABELS[key])}: ${numFmt(val)}</title></rect>`;
     });
     if(i % labelStep === 0){
       bars += `<text x="${gx.toFixed(1)}" y="${h-8}" font-size="10" text-anchor="middle" fill="#6b7280">${lab.slice(5)}</text>`;
     }
   });
-  document.getElementById('chartWrap').innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${bands}${grid}${bars}</svg>`;
+  wrapEl.innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${bands}${grid}${bars}</svg>`;
+}
+
+function renderChart(){
+  renderChartLegend();
+  const range = getChartRange();
+  const caption = document.getElementById('chartRangeCaption');
+  if(!range){
+    document.getElementById('chartWrap').innerHTML = `<div class="empty-hint">เลือกทั้ง "จากวันที่" และ "ถึงวันที่" เพื่อแสดงกราฟ</div>`;
+    caption.textContent = '';
+    return;
+  }
+  if(range.error){
+    document.getElementById('chartWrap').innerHTML = `<div class="empty-hint">${escapeHtml(range.error)}</div>`;
+    caption.textContent = '';
+    return;
+  }
+  const {startISO, endISO} = range;
+  const subF = dashSubName();
+  const daily = buildDailyTotals(startISO, endISO, subF);
+  /* ช่วงยาววาดรายวันแล้วอ่านไม่ออก — 90 วันคือ 450 แท่ง แท่งละ 2px
+     รวมเป็นรายสัปดาห์แทน เหลือ 13 กลุ่ม เต็มจอพอดีโดยไม่ต้องเลื่อน
+     และตรงกับที่ทั้งระบบคิดเป็น WK อยู่แล้ว */
+  const bucketed = daily.labels.length > CHART_DAILY_MAX;
+  const bucket = bucketed ? bucketWeekly(daily.labels, daily.data) : null;
+  const labels = bucketed ? bucket.labels : daily.labels;
+  const data = bucketed ? bucket.data : daily.data;
+  const spans = bucketed ? bucket.spans : null;
+  caption.textContent = `แสดง ${fmtDateTH(startISO)} – ${fmtDateTH(endISO)} (${daily.labels.length} วัน)`
+    + (bucketed ? ' · รวมรายสัปดาห์ จ–อา' : '')
+    + (subF ? ` · ${subF}` : '');
+
+  drawGroupedBars(document.getElementById('chartWrap'), labels, data, chartProcesses(), {
+    spans, minPerSlot: bucketed ? 46 : 14
+  });
+}
+
+/* ---------- ยอดค้างรายวัน (แท็บใหม่ · เจ้าของสั่ง 9 พ.ย. 2026) ----------
+ *
+ * คนอ่านตัวจริงขอ "ยอดค้างที่เปลี่ยนไปในแต่ละวัน เหมือนกราฟยอดผลิต"
+ * ทั้งหน้านี้เป็นแท็บแยก ของเดิมบนแดชบอร์ดไม่ถูกแตะเลย — เลือกได้แล้วค่อยปิดอันที่ไม่เอาทิ้ง
+ *
+ * ⚠️ สามกราฟบนหน้านี้ใช้ชุดขั้นไม่เท่ากัน และนั่นถูกแล้ว
+ *    · จำนวน PO และ ยอดผลิตรายวัน → PROCESSES (ทุกขั้น) เพราะทุกขั้นมีช่องให้คีย์ยอด
+ *    · ยอดค้างรายวัน              → MAIN_PROCESSES เพราะของค้างคิดจาก "ขั้นก่อนหน้า ลบ ขั้นนี้"
+ *      ซึ่งขั้นนับแยกไม่มีขั้นก่อนหน้า และไม่ได้ส่งต่อให้ขั้นไหน (A3 · A5)
+ *    มีข้อความกำกับไว้บนหน้าแล้ว ไม่งั้นคนนับแท่งแล้วคิดว่าขั้นหนึ่งหายไป
+ */
+
+/** กี่ใบที่ยัง "ทำขั้นนั้นไม่เสร็จ" ณ วันนี้
+ *  = เกณฑ์เดียวกับช่อง "ซ่อนที่เสร็จแล้ว" ของหน้าคีย์ยอดรายวัน (`cum >= orderQty` คือเสร็จ)
+ *    เลขนี้จึงเท่ากับจำนวนแถวที่เหลือบนหน้านั้นเสมอ ซึ่งเป็นสิ่งที่เจ้าของขอให้ตรงกัน
+ *  ⚠️ ตรงกับหน้านั้นเป๊ะทุกค่าที่เกิดขึ้นจริง (`''` `0` `null` และสตริงตัวเลข)
+ *     ต่างกันเฉพาะตอน `orderQty` **หายไปทั้งฟิลด์** ซึ่งที่นั่นได้ `cum>=undefined` = NaN = ยังไม่เสร็จ
+ *     ส่วนที่นี่ `Number(undefined)||0` = 0 = เสร็จแล้ว · **ระบบสร้างข้อมูลแบบนั้นเองไม่ได้**
+ *     ตัวอ่านไฟล์แผนทิ้งแถวที่ยอดไม่ใช่เลขบวก และที่ซิงค์มาได้ `''` (ผู้ตรวจ #131 รอบ 4)
+ *  ⚠️ เลขนี้ **มากขึ้นเรื่อย ๆ ตามลำดับของสาย** เพราะใบที่ยังทำขั้นก่อนหน้าไม่เสร็จ
+ *     ก็ยังทำขั้นหลังไม่เสร็จด้วยแน่นอน · **ห้ามเอามาบวกกัน** และห้าม "แก้" ให้มันลดลง */
+function poNotDoneNow(subName){
+  const cum = buildCumMap(state.records);
+  const out = {};
+  PROCESSES.forEach(p=>out[p] = 0);
+  activeOrders().forEach(o=>{
+    if(subName && o.subName !== subName) return;
+    const c = cum[o.id] || emptyCum();
+    const q = Number(o.orderQty)||0;
+    PROCESSES.forEach(p=>{ if((c[p]||0) < q) out[p]++; });
+  });
+  return out;
+}
+
+/** ยอดค้างหน้าแต่ละขั้น ณ **สิ้นวัน** ของทุกวันในช่วง — คิดสดจากสมุดยอด ไม่ได้เก็บไว้ที่ไหน
+ *
+ *  ค้างหน้าขั้นแรก  = ยอดสั่ง − ยอดสะสมของขั้นแรก
+ *  ค้างหน้าขั้นถัดไป = ยอดสะสมของขั้นก่อนหน้า − ยอดสะสมของขั้นนั้น
+ *
+ *  ⚠️ **ต้องกรองด้วย importedAt** — ใบที่เพิ่งนำเข้าเมื่อวาน ห้ามไปโผล่เป็นของค้างของเดือนที่แล้ว
+ *     ไม่งั้นจอเล่าอดีตด้วยข้อมูลของอนาคต (C1) และกราฟจะกระโดดทั้งเส้นทุกครั้งที่นำเข้าไฟล์ใหม่
+ *     ใบที่ไม่มี importedAt (ข้อมูลเก่ามาก) ถือว่ามีมาตั้งแต่ต้น ดีกว่าทำให้มันหายทั้งใบ
+ *  ⚠️ **ครอบ Math.min(สะสม, orderQty) ต่อใบ** เหมือนบัญชีของค้าง ไม่งั้นใบที่คีย์เกินยอดสั่ง
+ *     จะดันยอดค้างของขั้นถัดไปให้ติดลบ แล้วแท่งหายไปเฉย ๆ โดยไม่มีอะไรฟ้อง
+ *  ⚠️ เดินทีละวันจากยอดก่อนเริ่มช่วง ไม่ใช่คิดใหม่ทั้งก้อนทุกวัน — ที่ 712 ใบ × 90 วัน
+ *     แบบหลังคือการไล่ records ทั้งหมด 90 รอบ */
+/** วันตามปฏิทิน**ของเครื่อง** จาก timestamp ISO ซึ่งเก็บเป็น UTC
+ *  ⚠️ ตัดสิบตัวแรกตรง ๆ ไม่ได้ — ไทยเป็น UTC+7 ใบที่นำเข้าก่อนเจ็ดโมงเช้าจะได้วันของเมื่อวาน
+ *     แล้วโผล่ในกราฟเร็วกว่าจริงหนึ่งวัน (ผู้ตรวจ #131 รอบ 2)
+ *  ⚠️ ค่าที่แปลงไม่ได้ ตกกลับไปใช้สิบตัวแรก ดีกว่าทำให้ใบนั้นหายทั้งใบ */
+function localDayOf(ts){
+  const s = String(ts == null ? '' : ts);
+  if(!s) return '';
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s.slice(0,10) : isoLocal(d);
+}
+
+function wipDailySeries(startISO, endISO, subName){
+  const mains = MAIN_PROCESSES;
+  const orders = activeOrders().filter(o=> !subName || o.subName === subName);
+  const pos = {};
+  orders.forEach((o,i)=>{ pos[o.id] = i; });
+  const qty = orders.map(o=> Number(o.orderQty)||0);
+  const cum = orders.map(()=> mains.map(()=>0));
+
+  const byDate = {};
+  const firstRec = {};   // ดัชนีใบ -> วันของ record แรกสุดของใบนั้น
+  state.records.forEach(r=>{
+    if(r.voided) return;
+    const i = pos[r.orderId];
+    if(i == null) return;
+    /* ⚠️ จำวันแรกสุด **ก่อน** คัดขั้น — record ของขั้นนับแยกก็เป็นหลักฐานว่าใบนี้มีอยู่แล้ว */
+    if(firstRec[i] == null || r.date < firstRec[i]) firstRec[i] = r.date;
+    const sIdx = mains.indexOf(r.process);
+    if(sIdx < 0) return;
+    (byDate[r.date] || (byDate[r.date] = [])).push([i, sIdx, Number(r.qty)||0]);
+  });
+
+  /* วันที่ถือว่าใบนี้ "มีอยู่แล้ว" = วันที่นำเข้า **หรือวันของ record แรกสุด แล้วแต่อันไหนก่อน**
+   *
+   * ⚠️ เอา importedAt อย่างเดียวไม่ได้ · เครื่องที่สองนำเข้าไฟล์แผนเองก่อนเคยซิงค์ใบนั้นลงมา
+   *    จะได้ importedAt เป็นวันนี้ แล้ว push ทับทุกเครื่อง (mergeRowsInto ตัดสินด้วย updatedAt
+   *    ซึ่งของเครื่องที่นำเข้าทีหลังใหม่กว่าเสมอ) · ผลคือ **ใบนั้นมียอดที่คีย์ไว้เมื่อห้าวันก่อน
+   *    แต่กราฟยอดค้างขึ้นศูนย์ทั้งแถบ** ส่วนกราฟยอดผลิตข้างล่างขึ้นยอดของวันนั้น
+   *    อ่านคู่กันได้ว่า "วันนั้นผลิต 300 แต่ของค้างไม่ขยับ" ซึ่งเป็นการขัดกันเองของสองกราฟ
+   *    ที่หน้านี้วางคู่กันมาเพื่อให้อ่านด้วยกัน (ผู้ตรวจ #131 รอบ 5 รันวัดได้)
+   *
+   * ⚠️ **ยังรักษาด่าน C1 ไว้ครบ** — ใบที่เพิ่งนำเข้าและยังไม่เคยคีย์อะไรเลย ไม่มี record
+   *    จึงยังใช้ importedAt เหมือนเดิม ไม่โผล่ย้อนหลัง */
+  /* ⚠️ ครอบไม่ให้เกินวันนี้ — นาฬิกาของอีกเครื่องล้ำแล้วนำเข้าไฟล์แผน จะได้ importedAt เป็นวันหน้า
+     แล้ว **ใบนั้นหายจากกราฟทั้งแถบรวมวันนี้** ขณะที่หัวเลข "ยังไม่ได้ส่ง" บนแดชบอร์ดยังนับมันอยู่
+     ซึ่งเป็นคู่เลขที่เจ้าของจะเอามาเทียบตอนเลือกว่าจะเก็บหน้าไหน (ผู้ตรวจ #131 รอบ 6 รันวัดได้) */
+  const today = todayISO();
+  const born = orders.map((o,i)=>{
+    const imp = localDayOf(o.importedAt);
+    if(!imp) return '';
+    const b = (firstRec[i] && firstRec[i] < imp) ? firstRec[i] : imp;
+    return b > today ? today : b;
+  });
+  // ยอดก่อนวันแรกของช่วง บวกเข้าไปก่อน — กราฟจึงเริ่มจากสภาพจริง ไม่ใช่จากศูนย์
+  Object.keys(byDate).forEach(d=>{
+    if(d < startISO) byDate[d].forEach(([i,sIdx,q])=>{ cum[i][sIdx] += q; });
+  });
+
+  const labels = [];
+  const data = {};
+  mains.forEach(p=>data[p] = []);
+  const days = daysBetween(startISO, endISO) + 1;
+  for(let k=0; k<days; k++){
+    const iso = addDaysISO(startISO, k);
+    labels.push(iso);
+    (byDate[iso]||[]).forEach(([i,sIdx,q])=>{ cum[i][sIdx] += q; });
+    const tot = mains.map(()=>0);
+    for(let i=0; i<orders.length; i++){
+      if(born[i] && born[i] > iso) continue;
+      let prev = qty[i];
+      for(let sIdx=0; sIdx<mains.length; sIdx++){
+        /* ⚠️ ของที่ไหลต่อไปขั้นถัดไป ต้องไม่เกินของที่ไหลเข้ามา
+           ใบที่ข้อมูลย้อนแย้ง (คีย์ขั้นหลังมากกว่าขั้นหน้า) ถ้าไม่ครอบตรงนี้
+           ยอดค้างรวมทุกขั้นจะโตเกินยอดสั่งของใบนั้น ซึ่งเป็นเลขที่ไม่มีอยู่จริง
+           ความย้อนแย้งมีที่ฟ้องของมันเองอยู่แล้วบนแดชบอร์ด (hasOrderAnomaly) */
+        const done = Math.min(cum[i][sIdx], qty[i], prev);
+        tot[sIdx] += prev - done;
+        prev = done;
+      }
+    }
+    mains.forEach((p,sIdx)=>data[p].push(tot[sIdx]));
+  }
+  return {labels, data};
+}
+
+/** รวมยอดค้างเป็นรายสัปดาห์ — **เอาค่าของวันสุดท้ายในสัปดาห์ ไม่ใช่ผลบวก**
+ *  ⚠️ ห้ามใช้ bucketWeekly() กับยอดค้าง · ตัวนั้นบวกทุกวันเข้าด้วยกันซึ่งถูกสำหรับ "ยอดที่ทำได้"
+ *     แต่ยอดค้างเป็นของที่กองอยู่ ไม่ใช่ของที่ทำได้ บวกเจ็ดวันแล้วได้เลขที่ไม่มีความหมายอะไรเลย
+ *     (และสูงกว่าความจริงเจ็ดเท่า) */
+function bucketWeeklyLast(labels, data, procs){
+  const out = {labels:[], data:{}, spans:[]};
+  procs.forEach(x=>out.data[x]=[]);
+  let idx = -1, prevKey = null;
+  labels.forEach((iso,i)=>{
+    const dow = ((daysBetween(MONDAY_ANCHOR, iso) % 7) + 7) % 7;
+    const monday = addDaysISO(iso, -dow);
+    if(monday !== prevKey){
+      prevKey = monday; idx++;
+      out.labels.push(monday);
+      out.spans.push({from: iso, to: iso});
+      procs.forEach(x=>out.data[x].push(0));
+    }
+    out.spans[idx].to = iso;
+    procs.forEach(x=>{ out.data[x][idx] = data[x][i]; });
+  });
+  return out;
+}
+
+/** กราฟแท่งเดี่ยวต่อขั้น (ภาพนิ่งวันนี้) — ใช้กับจำนวน PO
+ *  มีเลขกำกับบนหัวแท่ง เพราะกราฟนี้มีแค่หกเจ็ดแท่ง จึงมีที่ว่างพอ และคนอ่านอายุ 60+ */
+function drawStageBars(wrapEl, procs, values){
+  const avail = Math.max(320, Math.floor(wrapEl.clientWidth) || 0);
+  const w = Math.max(avail, procs.length*110);
+  const h = 220, padL=44, padB=30, padT=20;
+  const maxVal = Math.max(1, ...procs.map(p=>values[p]||0));
+  const plotH = h-padT-padB;
+  const slotW = (w-padL)/procs.length;
+  const barW = Math.min(64, slotW*0.5);
+  let out = '';
+  for(let g=0; g<=4; g++){
+    const val = Math.round(maxVal*g/4);
+    const y = padT+plotH-(val/maxVal)*plotH;
+    out += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w}" y2="${y.toFixed(1)}" stroke="#e2e6ed" stroke-width="1"/><text x="${padL-6}" y="${(y+3).toFixed(1)}" font-size="10" text-anchor="end" fill="#6b7280">${val}</text>`;
+  }
+  procs.forEach((p,i)=>{
+    const v = values[p]||0;
+    const gx = padL + i*slotW + slotW/2;
+    const barH = (v/maxVal)*plotH;
+    const y = padT+plotH-barH;
+    out += `<rect data-proc="${p}" x="${(gx-barW/2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${escapeHtml(PROCESS_COLORS[p])}" rx="1.5">`
+         + `<title>${escapeHtml(PROCESS_LABELS[p])} ยังไม่เสร็จ: ${numFmt(v)} ใบ</title></rect>`
+         + `<text x="${gx.toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="13" font-weight="700" text-anchor="middle" fill="#1f2937">${numFmt(v)}</text>`
+         + `<text x="${gx.toFixed(1)}" y="${h-10}" font-size="10" text-anchor="middle" fill="#6b7280">${escapeHtml(PROCESS_LABELS[p])}</text>`;
+  });
+  wrapEl.innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${out}</svg>`;
+}
+
+/** หน้า "ยอดค้างรายวัน" — สามกราฟเรียง PO → ยอดค้าง → ยอดผลิต ตามที่เจ้าของสั่ง
+ *  ⚠️ ช่วงวันใช้ตัวเดียวกับกราฟบนแดชบอร์ด (getChartRange) โดยตั้งใจ — ไม่เพิ่มค่าที่ต้องเก็บใหม่ (E1–E4)
+ *     ข้อความใต้หัวข้อบอกไว้ว่าเปลี่ยนช่วงได้ที่ไหน ไม่งั้นคนหาปุ่มไม่เจอแล้วคิดว่าเปลี่ยนไม่ได้ */
+function renderWipTrend(){
+  const sub = dashSubName();
+  /* ⚠️ สีลง `style` attribute — `escapeHtml()` กันการแตก attribute ได้ แต่ **กันรู CSS ไม่ได้**
+     สีที่ซิงค์มาเป็น `#111;background-image:url(https://…)` ทำให้เบราว์เซอร์ยิงคำขอออกเน็ตจริง
+     (ผู้ตรวจ #131 รอบ 3 รันพิสูจน์) · เป็นรูชนิดเดียวกับที่ CLAUDE.md จดไว้ว่าอยู่ที่ renderChartLegend
+     **ใบ "กรองรูปแบบสี #rrggbb ที่ต้นทาง" ต้องนับที่นี่ด้วย** ไม่ใช่เฉพาะสองที่ของกราฟ
+     ไม่ได้ขยายความเสี่ยงเกินของเดิม — เงื่อนไขเดียวกันทำให้คำอธิบายสีของแดชบอร์ดยิงอยู่แล้ว */
+  document.getElementById('wtLegend').innerHTML = PROCESSES.map(x=>
+    `<span class="legend-item" style="cursor:default"><i style="background:${escapeHtml(PROCESS_COLORS[x])}"></i>${escapeHtml(PROCESS_LABELS[x])}</span>`
+  ).join('');
+
+  drawStageBars(document.getElementById('wtPo'), PROCESSES, poNotDoneNow(sub));
+
+  /* ⚠️ ใบที่ยอดสะสมย้อนแย้ง (คีย์ขั้นหลังมากกว่าขั้นหน้า) ทำให้เลขของหน้านี้ไม่ตรงกับ
+     บัญชีของค้างบนแดชบอร์ด — หน้านี้ไล่ต่อเนื่องต่อใบ (ของที่ไหลต่อไม่เกินของที่ไหลเข้า)
+     ส่วนแดชบอร์ดลบที่ยอดรวม · ใบที่ไม่ย้อนแย้งตรงกันทุกใบ
+     แดชบอร์ดมีแถบเหลืองฟ้องอยู่แล้ว ถ้าหน้านี้เงียบ คนที่เอาสองหน้ามาเทียบจะสรุปว่า
+     "ยอดไม่ตรง" ทั้งที่ทั้งคู่ถูกในนิยามของตัวเอง แล้วเลิกเชื่อทั้งสองหน้า (ผู้ตรวจ #131) */
+  const cumAll = buildCumMap(state.records);
+  const anom = activeOrders().filter(o=>
+    (!sub || o.subName === sub) && hasOrderAnomaly(cumAll[o.id] || emptyCum()));
+  const anomEl = document.getElementById('wtAnom');
+  /* ⚠️ ต้องคุมด้วย style.display ไม่ใช่ .hidden — .wanom ตั้ง display:flex ไว้ ซึ่งชนะ [hidden]
+     เขียน .hidden แล้วแถบจะโผล่ตลอดเวลา รวมตอนที่ไม่มีใบย้อนแย้งเลย (ผู้ตรวจ #131 รอบ 2 ของผมเอง) */
+  anomEl.style.display = anom.length ? 'flex' : 'none';
+  if(anom.length){
+    anomEl.innerHTML = `<span class="badge amber">ข้อมูลย้อนแย้ง ${numFmt(anom.length)} ใบ</span> `
+      + `<span>คีย์ขั้นหลังมากกว่าขั้นหน้า `
+      + 'หน้านี้ถือว่า<b>ของที่ไหลต่อไปขั้นถัดไปไม่เกินของที่ไหลเข้ามา</b> '
+      + 'ยอดค้างรวมจึงไม่เกินยอดสั่ง · <b>บัญชีของค้างบนแดชบอร์ดลบที่ยอดรวม จึงได้เลขต่างจากหน้านี้</b> '
+      + 'เฉพาะใบพวกนี้ · ใบที่ไม่ย้อนแย้งตรงกันทุกใบ<br>'
+      /* ⚠️ แถบบนแดชบอร์ดนับจาก dashFilteredRows() ซึ่งติ๊ก "ซ่อนงานที่ส่งของครบแล้ว" ไว้เป็นค่าตั้งต้น
+         ส่วนแถบนี้นับทุกใบที่ยังไม่ยกเลิก · สองที่จึงได้คนละเลขเป็นปกติ และบางทีที่นั่นไม่มีแถบเลย
+         ไม่เขียนกำกับ = ส่งคนไปหาใบที่หาไม่เจอ ซึ่งเป็นอาการเดียวกับที่แถบนี้มาเพื่อป้องกัน
+         (เปลี่ยนวิธีนับให้ตรงกันไม่ได้ หน้านี้ไม่มีตัวกรองชุดนั้น · ผู้ตรวจ #131 รอบ 2) */
+      + 'ไล่ดูรายใบได้ที่แถบข้อมูลย้อนแย้งบนแดชบอร์ด — <b>แถบนั้นนับเฉพาะใบที่ผ่านตัวกรองของหน้านั้น</b> '
+      + 'ต้องปลดติ๊ก "ซ่อนงานที่ส่งของครบแล้ว" ก่อน ถึงจะเห็นครบเท่าเลขข้างบน</span>';
+  }
+
+  const cap = document.getElementById('wtCaption');
+  const range = getChartRange();
+  const hint = msg => {
+    document.getElementById('wtWip').innerHTML = `<div class="empty-hint">${escapeHtml(msg)}</div>`;
+    document.getElementById('wtDaily').innerHTML = `<div class="empty-hint">${escapeHtml(msg)}</div>`;
+    cap.textContent = '';
+  };
+  if(!range) return hint('เลือกทั้ง "จากวันที่" และ "ถึงวันที่" ในแท็บ Dashboard เพื่อแสดงกราฟ');
+  if(range.error) return hint(range.error);
+
+  const {startISO, endISO} = range;
+  const wip = wipDailySeries(startISO, endISO, sub);
+  const bucketed = wip.labels.length > CHART_DAILY_MAX;
+  cap.textContent = `แสดง ${fmtDateTH(startISO)} – ${fmtDateTH(endISO)} (${wip.labels.length} วัน)`
+    + (bucketed ? ' · รวมรายสัปดาห์ จ–อา' : '') + (sub ? ` · ${sub}` : '');
+
+  const wb = bucketed ? bucketWeeklyLast(wip.labels, wip.data, MAIN_PROCESSES) : wip;
+  drawGroupedBars(document.getElementById('wtWip'), wb.labels, wb.data, MAIN_PROCESSES, {
+    spans: bucketed ? wb.spans : null, minPerSlot: bucketed ? 46 : 14, tipPrefix: 'ค้างหน้า '
+  });
+
+  const daily = buildDailyTotals(startISO, endISO, sub);
+  const db = bucketed ? bucketWeekly(daily.labels, daily.data) : daily;
+  drawGroupedBars(document.getElementById('wtDaily'), db.labels, db.data, PROCESSES, {
+    spans: bucketed ? db.spans : null, minPerSlot: bucketed ? 46 : 14
+  });
 }
 
 function renderDashFilterOptions(){
@@ -5074,6 +5348,9 @@ function renderAll(){
   /* เครื่องที่นั่งค้างหน้านี้ไว้ ต้องเห็นยอดที่เครื่องอื่นเพิ่งคีย์หลังซิงค์
    * เช็กแท็บก่อนเหมือนสองบรรทัดบน — หน้านี้เดินผ่าน record ทั้งก้อนหนึ่งรอบต่อการวาด */
   if(document.getElementById('view-daily').classList.contains('active')) renderDayTable();
+  /* เหตุผลเดียวกับสามบรรทัดบน — หน้านี้เดินผ่าน record ทั้งก้อน × จำนวนวันในช่วง
+     ปล่อยให้วิ่งทุกครั้งที่ซิงค์ เครื่องที่ไม่ได้เปิดหน้านี้จะเสียเวลาฟรีทุกรอบ */
+  if(document.getElementById('view-wiptrend').classList.contains('active')) renderWipTrend();
   renderSyncBadge();
 }
 
@@ -5095,6 +5372,10 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(tab==='delivery'){ renderDeliveryNote(); renderDnLog(); }
     if(tab==='fg'){ renderFg(); }
     if(tab==='daily'){ renderDashFilterOptions(); renderDayTable(); }
+    /* ⚠️ ต้องวาดตอนกดเข้าแท็บ — renderAll() ตอนเปิดโปรแกรมวิ่งขณะแท็บ import ยัง active
+       กล่องกราฟจึงกว้าง 0 แล้ว drawGroupedBars คิดความกว้างจากกล่อง ได้กราฟแคบติดกัน
+       (บทเรียนเดียวกับ renderDnLog ของใบ #103) */
+    if(tab==='wiptrend'){ renderDashFilterOptions(); renderWipTrend(); }
   });
 });
 
@@ -5666,6 +5947,11 @@ window.addEventListener('resize', ()=>{
   chartResizeTimer = setTimeout(()=>{
     const el = document.getElementById('chartWrap');
     if(el && el.clientWidth > 0) renderChart();
+    /* หน้ายอดค้างรายวันก็คิดความกว้างจากกล่องเหมือนกัน ไม่วาดใหม่แล้วกราฟค้างขนาดเดิม
+       แล้วต้องเลื่อนจอดูหลังหมุนมือถือ ทั้งที่กราฟของแดชบอร์ดไม่ต้อง (ผู้ตรวจ #131) */
+    const wt = document.getElementById('wtWip');
+    if(wt && wt.clientWidth > 0
+       && document.getElementById('view-wiptrend').classList.contains('active')) renderWipTrend();
   }, 150);
 });
 
