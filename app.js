@@ -3680,7 +3680,11 @@ function wtLegend(elId, procs, key){
         + ` aria-pressed="${off ? 'false' : 'true'}" title="${off ? 'กดเพื่อแสดงขั้นนี้' : 'กดเพื่อซ่อนขั้นนี้'}">${col}</button>`
       : `<span class="legend-item" style="cursor:default">${col}</span>`;
   }).join('');
-  // CSS.escape เพราะ id ของขั้นมาจากรายการที่ซิงค์มา และไม่ได้กรองอักขระ (G3)
+  /* ⚠️ คอมเมนต์เดิมตรงนี้เขียนว่า "id ของขั้นไม่ได้กรองอักขระ" — **ไม่จริง**
+     `validProcessList()` บังคับ /^[a-z][a-z0-9_]{1,23}$/ และทุกทางที่เรียก `applyProcessList()`
+     ผ่าน `composeProcesses()` · `data-proc="${p}"` ข้างบนที่ไม่ escape จึงปลอดภัย **เพราะด่านนั้น**
+     ไม่ใช่เพราะโชค · `CSS.escape` ที่นี่เป็นด่านชั้นสอง เผื่อวันหนึ่งด่าน id ถูกผ่อน (G3)
+     เขียนเหตุผลผิดไว้ก็เท่ากับทำให้คนถัดไปเชื่อว่าด่านนั้นไม่มี (ผู้ตรวจ #132 รอบ 7) */
   if(wasProc){
     const back = el.querySelector(`[data-proc="${CSS.escape(wasProc)}"]`);
     if(back) back.focus();
