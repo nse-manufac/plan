@@ -619,6 +619,19 @@ test('รายการย้อนแย้งต้องได้เต็�
   expect(inner, 'ต้องได้เกือบเต็มความกว้างของแถบ').toBeGreaterThan(outer * 0.9);
 });
 
+test('G2 — โฟกัสบนปุ่มคำอธิบายสีต้องไม่ตกไป BODY เมื่อหน้าวาดใหม่เอง', async ({ page }) => {
+  /* ⚠️ ซิงค์อัตโนมัติเรียก renderWipTrend() ทุก 20 วิ · คนที่ Tab มาค้างบนชื่อขั้นจะตกไป BODY
+     เองโดยไม่ได้กดอะไร แล้วต้อง Tab จากต้นหน้าใหม่ · การคืนโฟกัสต้องอยู่ใน wtLegend()
+     ไม่ใช่ในตัวจับคลิก ไม่งั้นครอบแค่เส้นทางที่คนกดเอง (ผู้ตรวจ #132 รอบ 2 วัดได้) */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  await page.locator('#wtWipLegend .legend-item').first().focus();
+  const before = await page.evaluate(() => document.activeElement.dataset.proc || document.activeElement.tagName);
+  await page.evaluate(() => renderWipTrend());
+  await page.waitForTimeout(150);
+  const after = await page.evaluate(() => document.activeElement.dataset.proc || document.activeElement.tagName);
+  expect(after, 'ต้องยังอยู่ที่ปุ่มขั้นเดิม').toBe(before);
+});
+
 test('ช่วงวันที่ใช้ไม่ได้ ต้องไม่ให้แถบเทียบช่วงอ้างวันที่เก่าที่ไม่ตรงกับช่องบนจอ', async ({ page }) => {
   /* จอที่อ้างวันที่ซึ่งไม่ตรงกับช่องข้าง ๆ คือจอโกหก — แย่กว่าไม่บอกอะไรเลย */
   await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);

@@ -1104,7 +1104,9 @@
   </div>
 </section>
 
-<div class="wttip" id="wtTip" role="status" aria-live="polite" hidden></div>
+<!-- ⚠️ ห้ามใส่ aria-live/role=status — กล่องนี้ถูกเขียนทับทุก pointermove โปรแกรมอ่านหน้าจอจะพูดรัว
+     ค่าของแท่งอ่านได้จาก <title> ของแท่งอยู่แล้ว ซึ่งเป็นชื่อที่ถูกต้องตามมาตรฐาน (ผู้ตรวจ #132 รอบ 2) -->
+<div class="wttip" id="wtTip" hidden></div>
 </main>
 
 <div class="modal-overlay" id="mergeModal">

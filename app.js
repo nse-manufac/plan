@@ -3627,7 +3627,13 @@ function wtRenderDiff(){
  *  ⚠️ สีต้องผ่าน escapeHtml() — ลง style attribute และ validProcessList() ไม่ตรวจช่อง color (G3) */
 function wtLegend(elId, procs, key){
   const hidden = key ? wtHidden[key] : null;
-  document.getElementById(elId).innerHTML = procs.map(x=>{
+  const el = document.getElementById(elId);
+  /* ⚠️ จำปุ่มที่โฟกัสค้างไว้ก่อนวาดทับ แล้วคืนให้ — ไม่ใช่แค่ตอนกด
+     ซิงค์อัตโนมัติเรียก renderWipTrend() ทุก 20 วิ คนที่ Tab มาค้างบนชื่อขั้นจะตกไป BODY
+     เองโดยไม่ได้กดอะไร (G2 · ผู้ตรวจ #132 รอบ 2 วัดได้ BUTTON/winding → BODY) */
+  const act = document.activeElement;
+  const wasProc = act && el.contains(act) && act.dataset ? act.dataset.proc : null;
+  el.innerHTML = procs.map(x=>{
     const off = hidden && hidden.has(x);
     const col = `<i style="background:${escapeHtml(PROCESS_COLORS[x])}"></i>${escapeHtml(PROCESS_LABELS[x])}`;
     return key
@@ -3635,6 +3641,11 @@ function wtLegend(elId, procs, key){
         + ` aria-pressed="${off ? 'false' : 'true'}" title="${off ? 'กดเพื่อแสดงขั้นนี้' : 'กดเพื่อซ่อนขั้นนี้'}">${col}</button>`
       : `<span class="legend-item" style="cursor:default">${col}</span>`;
   }).join('');
+  // CSS.escape เพราะ id ของขั้นมาจากรายการที่ซิงค์มา และไม่ได้กรองอักขระ (G3)
+  if(wasProc){
+    const back = el.querySelector(`[data-proc="${CSS.escape(wasProc)}"]`);
+    if(back) back.focus();
+  }
 }
 const wtHidden = {wip: new Set(), daily: new Set()};
 function wtProcs(key, all){
@@ -3822,6 +3833,9 @@ function wtDrawSection(key){
     /* ⚠️ ต้องทำเครื่องหมายว่าช่วงนี้ใช้ไม่ได้ ไม่ใช่ปล่อย wtRange ค้างของเก่าไว้
        ไม่งั้นแถบเทียบช่วงจะอ้างวันที่ที่ไม่ตรงกับช่องบนจอ = จอโกหก (ผู้ตรวจ #132) */
     wtRange[key] = Object.assign({}, wtRange[key], {invalid: true});
+    // ปุ่มสำเร็จรูปต้องไม่ไฮไลต์ค้าง ไม่งั้นจอบอกว่ากำลังดู 14 วันทั้งที่ช่วงใช้ไม่ได้
+    document.querySelectorAll(`.wtrng[data-rng="${key}"] button`)
+      .forEach(b=>b.setAttribute('aria-pressed', 'false'));
     return;
   }
   wtRange[key] = {startISO: r.startISO, endISO: r.endISO};
@@ -3947,7 +3961,10 @@ document.getElementById('view-wiptrend').addEventListener('click', e=>{
        ทุกปุ่มขีดฆ่าและ aria-pressed=false ขณะที่กราฟยังวาดครบทุกขั้น (ผู้ตรวจ #132 รันเจอ)
        ต้องเช็กก่อนเพิ่มลง Set เพราะ Set นี้อยู่ถาวร ไม่ใช่ของใหม่ทุกครั้งแบบของแดชบอร์ด */
     const all = key === 'wip' ? MAIN_PROCESSES : PROCESSES;
-    if(!wtHidden[key].has(p) && wtHidden[key].size + 1 >= all.length){
+    /* ⚠️ นับเฉพาะขั้นที่ยังมีอยู่จริง — wtHidden เก็บ id ไว้ถาวร ขั้นที่ถูกซ่อนจากแผงจัดการขั้น
+       ทีหลังจะค้างอยู่ใน Set แล้วทำให้ด่านนี้ปฏิเสธเร็วกว่าที่ควร (ผู้ตรวจ #132 รอบ 2 อ่านโค้ดเจอ) */
+    const offNow = all.filter(x=>wtHidden[key].has(x)).length;
+    if(!wtHidden[key].has(p) && offNow + 1 >= all.length){
       toast('ต้องเหลือไว้อย่างน้อยหนึ่งขั้น');
       return;
     }
