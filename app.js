@@ -3822,7 +3822,9 @@ function wtRenderDue(sub){
   const top = lates.slice(0, 5);
   document.getElementById('wtLate').innerHTML = (top.length
     ? top.map(x=>`<div class="wtlr"><span class="po">${escapeHtml(x.o.poNo)}</span>`
-        + `<span class="wh">${sub ? '' : escapeHtml(x.o.subName || '—') + ' · '}`
+        // P/N ต้องอยู่ด้วย — PO เดียวกันคนละ P/N มีได้สองใบ ไม่งั้นได้สองแถวที่อ่านเหมือนกันทุกตัวอักษร
+        // (กฎเดียวกับ data-anom-row = poNo|pn · ผู้ตรวจ #132 รอบ 10) · escapeHtml ครอบ String() ให้ P/N ที่เป็นตัวเลข
+        + `<span class="wh">${escapeHtml(x.o.pn)} · ${sub ? '' : escapeHtml(x.o.subName || '—') + ' · '}`
         + `ค้างที่ ${escapeHtml(x.at ? ((PROCESS_BY_ID[x.at] || {}).short || x.at) : '—')}</span>`
         // กิ่ง null เป็นด่านกันพลาด ไม่ใช่กรณีที่เกิดจริง — ใบที่สถานะ late ต้องมีขั้นที่เลยกำหนดเสมอ
         + `<span class="dd">${x.over == null ? 'ไม่ได้ตั้งวันกำหนด'
