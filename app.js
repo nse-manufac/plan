@@ -2055,6 +2055,24 @@ function computeDeadlines(order){
   // ⚠️ ต้องไม่กลายเป็น orderDate+0 ไม่งั้นทุกใบจะขึ้นล่าช้าขั้นนั้นทันที (A4)
   return Object.fromEntries(PROCESSES.map(p=>[p, off[p]==null ? null : addDaysISO(order.orderDate, off[p])]));
 }
+/** ขั้นที่ทำให้ใบนี้ "ล่าช้า" — ขั้นปลายน้ำสุดที่เลยกำหนดของมันเองแล้วและยังไม่ถึงยอดสั่ง
+ *  คืน null เมื่อไม่มีขั้นไหนเลยกำหนด
+ *
+ *  ⚠️ A5 — รายงานขั้นปลายน้ำก่อนเสมอ จึงไล่จากขั้นท้ายสุดย้อนขึ้นไป ห้ามไล่จากต้นน้ำ
+ *  ⚠️ ไล่ MAIN_PROCESSES ไม่ใช่ PROCESSES — เกณฑ์คือ "ยอดขั้นนั้นยังไม่ถึง orderQty"
+ *     ซึ่งเป็นยอดของสายหลัก ขั้นนับแยกไม่มีทางถึง ถ้ารวมมาด้วยจะขึ้นล่าช้าทุกใบทันที
+ *
+ *  🚨 **แยกออกมาเพื่อให้มีเกณฑ์ชุดเดียว** — กล่อง "ใบที่ล่าช้านานที่สุด" ต้องรู้ว่าขั้นไหนทำให้ล่าช้า
+ *     เพื่อคิดจำนวนวันจากกำหนดของขั้นนั้น · เขียนลูปชุดที่สองเมื่อไหร่ ป้ายสถานะกับจำนวนวัน
+ *     จะชี้คนละขั้นได้ ซึ่งเป็นกับดักเดียวกับที่ CLAUDE.md จดไว้เรื่อง orderAnomalyPairs() */
+function lateStageOf(order, cum, dl, refISO){
+  for(let i = MAIN_PROCESSES.length - 1; i >= 0; i--){
+    const p = MAIN_PROCESSES[i];
+    if(dl[p] && refISO > dl[p] && (cum[p]||0) < order.orderQty) return p;
+  }
+  return null;
+}
+
 function computeStatus(order, cum, dl, refISO){
   const done = cum.shipping >= order.orderQty;
   if(done) return {code:'done', label:'ส่งของครบแล้ว', color:'green'};
@@ -2065,10 +2083,8 @@ function computeStatus(order, cum, dl, refISO){
    * ⚠️ ไล่ MAIN_PROCESSES ไม่ใช่ PROCESSES — เกณฑ์ตรงนี้คือ "ยอดขั้นนั้นยังไม่ถึง orderQty"
    *    ซึ่งเป็นยอดของสายหลัก ขั้นนับแยกไม่มีทางถึง ถ้ารวมมาด้วยจะขึ้นล่าช้าทุกใบทันที
    *    ที่ตั้งวันกำหนดให้ขั้นนับแยกได้ ยังได้เหมือนเดิม — วันถูกคิดและแสดง แค่ไม่ตัดสินล่าช้า */
-  for(let i = MAIN_PROCESSES.length - 1; i >= 0; i--){
-    const p = MAIN_PROCESSES[i];
-    if(dl[p] && refISO > dl[p] && (cum[p]||0) < order.orderQty) return {code:'late', label:ptext(p, 'late'), color:'red'};
-  }
+  const lateP = lateStageOf(order, cum, dl, refISO);
+  if(lateP) return {code:'late', label:ptext(lateP, 'late'), color:'red'};
   if(dl.shipping){
     const daysLeft = daysBetween(refISO, dl.shipping);
     if(daysLeft!=null && daysLeft<=3) return {code:'soon', label:`ใกล้ครบกำหนด (เหลือ ${daysLeft} วัน)`, color:'amber'};
@@ -3678,7 +3694,15 @@ function wtDueData(sub){
       n.late++;
       // ค้างที่ขั้นแรกในสายที่ยังไม่ถึงยอดสั่ง — ขั้นที่ต้องไปตามก่อน
       const at = MAIN_PROCESSES.find(p=>(c[p] || 0) < (Number(o.orderQty) || 0));
-      lates.push({o, at, over: dl.shipping ? daysBetween(dl.shipping, ref) : null});
+      /* 🚨 จำนวนวันต้องคิดจาก **กำหนดของขั้นที่ทำให้ใบนี้ล่าช้า** ไม่ใช่กำหนดส่ง
+         ใบเข้ากล่องนี้ด้วยเกณฑ์ "ขั้นไหนขั้นหนึ่งเลยกำหนดของขั้นนั้น" (A5)
+         ค่าตั้งต้นคือ winding 10 วัน · shipping 28 วัน จึงมีช่วง 18 วันที่ใบล่าช้าแล้ว
+         แต่ยังไม่ถึงกำหนดส่ง · คิดจากกำหนดส่งแล้วได้ "เลยมา −13 วัน" บนกล่องชื่อ
+         "ใบที่ล่าช้านานที่สุด" (ผู้ตรวจ #132 รอบ 4 รันพิสูจน์)
+         ⚠️ ครอบที่ 0 ไม่พอ — มันกลบความต่างระหว่าง "เลยมาวันนี้" กับ "ยังไม่ถึงกำหนดส่งอีก 16 วัน"
+         lateP ไม่เป็น null แน่นอนเมื่อ st.code === 'late' และ dl[lateP] ผ่านมาแล้วเสมอ จึงไม่ติดลบ */
+      const lateP = lateStageOf(o, c, dl, ref);
+      lates.push({o, at, lateP, over: lateP ? daysBetween(dl[lateP], ref) : null});
     }
     else if(st.code === 'soon') n.soon++;
     else n.ok++;
@@ -3706,7 +3730,9 @@ function wtPctShares(values, total){
 function wtRenderDue(sub){
   const {n, lates} = wtDueData(sub);
   const slices = [
-    {id: 'late', name: 'เลยกำหนดส่งแล้ว', color: 'var(--red)', v: n.late},
+    /* ⚠️ "ล่าช้า" ไม่ใช่ "เลยกำหนดส่งแล้ว" — เกณฑ์คือขั้นไหนขั้นหนึ่งเลยกำหนดของขั้นนั้น (A5)
+       ใบที่เพิ่งเริ่มช้าจะเข้าช่องนี้ตั้งแต่ยังไม่ถึงกำหนดส่งอีกหลายวัน · คำเดิมแคบกว่าของที่นับจริง */
+    {id: 'late', name: 'ล่าช้า', color: 'var(--red)', v: n.late},
     {id: 'soon', name: 'ใกล้ครบกำหนด (เหลือ ≤ 3 วัน)', color: 'var(--amber)', v: n.soon},
     {id: 'ok', name: 'ยังมีเวลา', color: 'var(--green)', v: n.ok},
     {id: 'unknown', name: 'วันที่สั่งผิดหรือไม่มี — ตัดสินไม่ได้', color: '#9ca3af', v: n.unknown}
@@ -3719,14 +3745,15 @@ function wtRenderDue(sub){
   const pct = wtPctShares(slices.map(s=>s.v), total);
   const size = 190, r = 72, cx = size / 2, cy = size / 2, sw = 30, C = 2 * Math.PI * r;
   let acc = 0, out = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--gray-light)" stroke-width="${sw}"/>`;
-  slices.forEach(s=>{
+  slices.forEach((s, si)=>{
     if(!s.v || !total) return;
     const frac = s.v / total;
     out += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${sw}"`
       + ` stroke-dasharray="${(frac * C).toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-acc * C).toFixed(2)}"`
       + ` transform="rotate(-90 ${cx} ${cy})" class="wthit" data-wt-tip="one" data-wt-name="${escapeHtml(s.name)}"`
       + ` data-wt-color="${s.color}" data-wt-unit="ใบ" data-wt-v="${s.v}"`
-      + ` data-wt-sub="${Math.round(frac * 100)}% ของใบที่ยังไม่เสร็จ"/>`;
+      // ⚠️ ใช้ pct ชุดเดียวกับรายการข้าง ๆ — คิดใหม่ตรงนี้แล้วเลขของช่องเดียวกันต่างกันได้ 1%
+      + ` data-wt-sub="${pct[si]}% ของใบที่ยังไม่เสร็จ"/>`;
     acc += frac;
   });
   out += `<text x="${cx}" y="${cy - 4}" font-size="26" font-weight="700" text-anchor="middle" fill="var(--text)">${numFmt(total)}</text>`
@@ -3746,10 +3773,14 @@ function wtRenderDue(sub){
     ? top.map(x=>`<div class="wtlr"><span class="po">${escapeHtml(x.o.poNo)}</span>`
         + `<span class="wh">${sub ? '' : escapeHtml(x.o.subName || '—') + ' · '}`
         + `ค้างที่ ${escapeHtml(x.at ? ((PROCESS_BY_ID[x.at] || {}).short || x.at) : '—')}</span>`
-        + `<span class="dd">${x.over == null ? 'ไม่ได้ตั้งวันกำหนด' : 'เลยมา ' + numFmt(x.over) + ' วัน'}</span></div>`).join('')
-    : '<div class="wtnote">ไม่มีใบที่เลยกำหนด</div>')
-    + '<div class="wtnote">เกณฑ์เดียวกับป้าย “ล่าช้า” ที่ใช้อยู่ทั้งระบบ'
-    + ' · “ค้างที่” คือขั้นแรกในสายที่ยอดยังไม่ถึงยอดสั่ง</div>';
+        + `<span class="dd">${x.over == null ? 'ไม่ได้ตั้งวันกำหนด'
+            : 'เลยกำหนด ' + escapeHtml((PROCESS_BY_ID[x.lateP] || {}).short || x.lateP) + ' มา ' + numFmt(x.over) + ' วัน'}</span></div>`).join('')
+    : '<div class="wtnote">ไม่มีใบที่ล่าช้า</div>')
+    + `<div class="wtnote">เกณฑ์เดียวกับป้าย “ล่าช้า” ที่ใช้อยู่ทั้งระบบ (A5) ·`
+    + ' <b>จำนวนวันคิดจากกำหนดของขั้นที่ทำให้ใบนี้ล่าช้า ไม่ใช่กำหนดส่ง</b> ·'
+    + ' “ค้างที่” คือขั้นแรกในสายที่ยอดยังไม่ถึงยอดสั่ง จึงเป็นคนละขั้นกันได้'
+    + (lates.length > top.length ? ` · แสดง ${numFmt(top.length)} จาก ${numFmt(lates.length)} ใบ` : '')
+    + '</div>';
 }
 
 /* ---------- มุมมองแยกรายขั้น: แท่งนอน มีตัวเลขทุกแท่ง ----------
