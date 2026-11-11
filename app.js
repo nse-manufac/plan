@@ -2055,6 +2055,47 @@ function computeDeadlines(order){
   // ⚠️ ต้องไม่กลายเป็น orderDate+0 ไม่งั้นทุกใบจะขึ้นล่าช้าขั้นนั้นทันที (A4)
   return Object.fromEntries(PROCESSES.map(p=>[p, off[p]==null ? null : addDaysISO(order.orderDate, off[p])]));
 }
+/** ขั้นที่ทำให้ใบนี้ "ล่าช้า" — ขั้นปลายน้ำสุดที่เลยกำหนดของมันเองแล้วและยังไม่ถึงยอดสั่ง
+ *  คืน null เมื่อไม่มีขั้นไหนเลยกำหนด
+ *
+ *  ⚠️ A5 — รายงานขั้นปลายน้ำก่อนเสมอ จึงไล่จากขั้นท้ายสุดย้อนขึ้นไป ห้ามไล่จากต้นน้ำ
+ *  ⚠️ ไล่ MAIN_PROCESSES ไม่ใช่ PROCESSES — เกณฑ์คือ "ยอดขั้นนั้นยังไม่ถึง orderQty"
+ *     ซึ่งเป็นยอดของสายหลัก ขั้นนับแยกไม่มีทางถึง ถ้ารวมมาด้วยจะขึ้นล่าช้าทุกใบทันที
+ *
+ *  🚨 **แยกออกมาเพื่อให้มีเกณฑ์ชุดเดียว** — กล่อง "ใบที่ล่าช้านานที่สุด" ต้องรู้ว่าขั้นไหนทำให้ล่าช้า
+ *     เพื่อคิดจำนวนวันจากกำหนดของขั้นนั้น · เขียนลูปชุดที่สองเมื่อไหร่ ป้ายสถานะกับจำนวนวัน
+ *     จะชี้คนละขั้นได้ ซึ่งเป็นกับดักเดียวกับที่ CLAUDE.md จดไว้เรื่อง orderAnomalyPairs() */
+function lateStageOf(order, cum, dl, refISO){
+  for(let i = MAIN_PROCESSES.length - 1; i >= 0; i--){
+    const p = MAIN_PROCESSES[i];
+    if(dl[p] && refISO > dl[p] && (cum[p]||0) < order.orderQty) return p;
+  }
+  return null;
+}
+
+/** ขั้นที่ทำให้ใบนี้ "ล่าช้ามานานที่สุด" — ขั้นที่กำหนดของมันเลยมาแล้ว**นานสุด** และยังไม่ถึงยอดสั่ง
+ *
+ *  🚨 **คนละตัวกับ `lateStageOf()` โดยตั้งใจ และห้ามเอามาแทนกัน**
+ *  · `lateStageOf()` = ขั้น **ปลายน้ำสุด** ที่เลยกำหนด — ใช้กับ **ป้ายสถานะ** (A5 รายงานปลายน้ำก่อน)
+ *  · `lateSinceOf()` = ขั้นที่ **เลยกำหนดมานานสุด** — ใช้กับ **จำนวนวันและการเรียงลำดับ**
+ *
+ *  เหตุผล: เลขของ `lateStageOf()` **เทียบข้ามใบไม่ได้** เพราะแต่ละใบนับจากกำหนดของขั้นคนละขั้น
+ *  ใบที่เลยกำหนดส่งแล้วเพิ่งเริ่มนับใหม่จาก 1 ส่วนใบที่เพิ่งเลยขั้นต้นน้ำโตได้ถึง 6–7 วันเสมอ
+ *  เอาไปเรียงแล้ว **กล่องเรียงกลับทางกับความจริง** และใบที่หนักสุดถูกเบียดออกจากห้าแถวแรก
+ *  (ผู้ตรวจ #132 รอบ 5 รันพิสูจน์ · เป็นผลข้างเคียงของตัวแก้ในรอบ 4 เอง)
+ *
+ *  ⚠️ เลือกด้วย **วันกำหนดที่น้อยที่สุด** ไม่ใช่ "ขั้นแรกในสาย" — วันกำหนดตั้งเองได้ จึงไม่รับประกัน
+ *     ว่าเรียงจากน้อยไปมากตามลำดับสาย (A4) · เสมอกันให้ขั้นต้นน้ำชนะ
+ *  ⚠️ ไล่ MAIN_PROCESSES ไม่ใช่ PROCESSES ด้วยเหตุผลเดียวกับ lateStageOf() (A3 · A5) */
+function lateSinceOf(order, cum, dl, refISO){
+  let best = null;
+  MAIN_PROCESSES.forEach(p=>{
+    if(!dl[p] || refISO <= dl[p] || (cum[p] || 0) >= order.orderQty) return;
+    if(!best || dl[p] < dl[best]) best = p;
+  });
+  return best;
+}
+
 function computeStatus(order, cum, dl, refISO){
   const done = cum.shipping >= order.orderQty;
   if(done) return {code:'done', label:'ส่งของครบแล้ว', color:'green'};
@@ -2065,10 +2106,8 @@ function computeStatus(order, cum, dl, refISO){
    * ⚠️ ไล่ MAIN_PROCESSES ไม่ใช่ PROCESSES — เกณฑ์ตรงนี้คือ "ยอดขั้นนั้นยังไม่ถึง orderQty"
    *    ซึ่งเป็นยอดของสายหลัก ขั้นนับแยกไม่มีทางถึง ถ้ารวมมาด้วยจะขึ้นล่าช้าทุกใบทันที
    *    ที่ตั้งวันกำหนดให้ขั้นนับแยกได้ ยังได้เหมือนเดิม — วันถูกคิดและแสดง แค่ไม่ตัดสินล่าช้า */
-  for(let i = MAIN_PROCESSES.length - 1; i >= 0; i--){
-    const p = MAIN_PROCESSES[i];
-    if(dl[p] && refISO > dl[p] && (cum[p]||0) < order.orderQty) return {code:'late', label:ptext(p, 'late'), color:'red'};
-  }
+  const lateP = lateStageOf(order, cum, dl, refISO);
+  if(lateP) return {code:'late', label:ptext(lateP, 'late'), color:'red'};
   if(dl.shipping){
     const daysLeft = daysBetween(refISO, dl.shipping);
     if(daysLeft!=null && daysLeft<=3) return {code:'soon', label:`ใกล้ครบกำหนด (เหลือ ${daysLeft} วัน)`, color:'amber'};
@@ -3301,7 +3340,7 @@ function drawGroupedBars(wrapEl, labels, data, procs, opts){
     const y = padT+plotH-(val/maxVal)*plotH;
     grid += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w}" y2="${y.toFixed(1)}" stroke="#e2e6ed" stroke-width="1"/><text x="${padL-6}" y="${(y+3).toFixed(1)}" font-size="10" text-anchor="end" fill="#6b7280">${val}</text>`;
   }
-  let bars='';
+  let bars='', hits='';
   // ตำแหน่งซ้าย-ขวาของแต่ละขั้นในกลุ่ม คิดจากจำนวนขั้นที่แสดงอยู่ กลุ่มจึงอยู่กลางช่องเสมอ
   const series = procs.map((key,i)=>[key, PROCESS_COLORS[key], i - (procs.length-1)/2]);
   // ป้ายกำกับแกน X ถี่เกินไปจะทับกันเมื่อช่วงยาว — เว้นระยะให้เหลือไม่เกิน ~18 ป้าย
@@ -3317,11 +3356,18 @@ function drawGroupedBars(wrapEl, labels, data, procs, opts){
       const y = padT+plotH-barH;
       bars += `<rect data-proc="${key}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${escapeHtml(color)}" rx="1.5"><title>${when} ${escapeHtml((o.tipPrefix||'') + PROCESS_LABELS[key])}: ${numFmt(val)}</title></rect>`;
     });
+    /* ช่องรับเมาส์เป็น "ทั้งวัน" ไม่ใช่ทีละแท่ง — แท่งกว้างไม่กี่พิกเซล จิ้มไม่โดน
+       เปิดเฉพาะผู้เรียกที่ส่ง hitKey มา (หน้ายอดค้างรายวัน) กราฟของแดชบอร์ดไม่เปลี่ยน */
+    if(o.hitKey){
+      hits += `<rect class="wthit" data-wt-tip="day" data-wt-key="${o.hitKey}" data-wt-i="${i}"`
+           + ` x="${(padL+i*groupW).toFixed(1)}" y="${padT}" width="${groupW.toFixed(1)}" height="${plotH}"/>`;
+    }
     if(i % labelStep === 0){
       bars += `<text x="${gx.toFixed(1)}" y="${h-8}" font-size="10" text-anchor="middle" fill="#6b7280">${lab.slice(5)}</text>`;
     }
   });
-  wrapEl.innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${bands}${grid}${bars}</svg>`;
+  const svg = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${bands}${grid}${bars}${hits}</svg>`;
+  wrapEl.innerHTML = o.wrap ? `<div class="chart-wrap">${svg}</div>` : svg;
 }
 
 function renderChart(){
@@ -3516,7 +3562,14 @@ function bucketWeeklyLast(labels, data, procs){
  *  มีเลขกำกับบนหัวแท่ง เพราะกราฟนี้มีแค่หกเจ็ดแท่ง จึงมีที่ว่างพอ และคนอ่านอายุ 60+ */
 function drawStageBars(wrapEl, procs, values){
   const avail = Math.max(320, Math.floor(wrapEl.clientWidth) || 0);
-  const w = Math.max(avail, procs.length*110);
+  /* ⚠️ ช่องขั้นต่ำต่อขั้นต้องพอให้ **ทุกขั้นอยู่ในกรอบที่จอ 1024** ซึ่งเป็นจอของเครื่องหน้างาน
+     ใบนี้ย่อกราฟเหลือครึ่งจอตามที่เจ้าของสั่ง กล่องจึงเหลือ ~462px · ของเดิม 110px/ขั้น
+     ทำให้ 7 ขั้นกินไปถึง 770px แล้ว Inspection กับ ส่งของ **อยู่นอกกรอบตั้งแต่เปิดมา**
+     มีแถบเลื่อนให้ก็จริง แต่กราฟนี้เป็นภาพนิ่งที่มีไว้ "กวาดตาครั้งเดียว" ของคนอ่านอายุ 60+
+     และแท่งส่งของคือแท่งที่ตอบว่ายังส่งไม่ครบกี่ใบ (ผู้ตรวจ #132 รอบ 8 วัดได้ 770 ใน 462)
+     56px/ขั้น → 7 ขั้นกิน 392px พอดีกับกล่องตั้งแต่จุดตัดสองคอลัมน์ (900px) ขึ้นไป
+     ⚠️ ฟังก์ชันนี้ถูกเรียกที่ #wtPo ที่เดียว การลดเลขนี้จึงไม่กระทบกราฟของแดชบอร์ด */
+  const w = Math.max(avail, procs.length*56);
   const h = 220, padL=44, padB=30, padT=20;
   const maxVal = Math.max(1, ...procs.map(p=>values[p]||0));
   const plotH = h-padT-padB;
@@ -3528,88 +3581,534 @@ function drawStageBars(wrapEl, procs, values){
     const y = padT+plotH-(val/maxVal)*plotH;
     out += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${w}" y2="${y.toFixed(1)}" stroke="#e2e6ed" stroke-width="1"/><text x="${padL-6}" y="${(y+3).toFixed(1)}" font-size="10" text-anchor="end" fill="#6b7280">${val}</text>`;
   }
+  let hits = '';
   procs.forEach((p,i)=>{
     const v = values[p]||0;
     const gx = padL + i*slotW + slotW/2;
+    /* ช่องรับเมาส์เต็มความสูงของช่อง ไม่ใช่เฉพาะตัวแท่ง — แท่งเตี้ย ๆ จิ้มไม่โดน
+       ⚠️ ต้องวางหลังแท่งทั้งหมดใน DOM ไม่งั้นแท่งทับช่องรับเมาส์ */
+    hits += `<rect class="wthit" data-wt-tip="one" data-wt-name="${escapeHtml(PROCESS_LABELS[p])}"`
+         + ` data-wt-color="${escapeHtml(PROCESS_COLORS[p])}" data-wt-unit="ใบ" data-wt-v="${v}"`
+         + ` data-wt-sub="ยังทำขั้นนี้ไม่เสร็จ" x="${(padL+i*slotW).toFixed(1)}" y="${padT}"`
+         + ` width="${slotW.toFixed(1)}" height="${plotH}"/>`;
     const barH = (v/maxVal)*plotH;
     const y = padT+plotH-barH;
     out += `<rect data-proc="${p}" x="${(gx-barW/2).toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${escapeHtml(PROCESS_COLORS[p])}" rx="1.5">`
          + `<title>${escapeHtml(PROCESS_LABELS[p])} ยังไม่เสร็จ: ${numFmt(v)} ใบ</title></rect>`
          + `<text x="${gx.toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="13" font-weight="700" text-anchor="middle" fill="#1f2937">${numFmt(v)}</text>`
-         + `<text x="${gx.toFixed(1)}" y="${h-10}" font-size="10" text-anchor="middle" fill="#6b7280">${escapeHtml(PROCESS_LABELS[p])}</text>`;
+         /* ⚠️ ใช้ชื่อสั้น ไม่ใช่ชื่อเต็ม — ช่องกว้าง ~56px ชื่อเต็มอย่าง "Winding/Trimming"
+            จะทับช่องข้าง ๆ · ชื่อเต็มยังอ่านได้ที่คำอธิบายสีเหนือกราฟ และในป้ายตอนเอาเมาส์ชี้
+            จึงไม่มีข้อมูลหาย (ของเดิมเป็นชื่อเต็มตอนกราฟยังกินเต็มจอ) */
+         + `<text x="${gx.toFixed(1)}" y="${h-10}" font-size="10" text-anchor="middle" fill="#6b7280">${escapeHtml((PROCESS_BY_ID[p] || {}).short || PROCESS_LABELS[p])}</text>`;
   });
-  wrapEl.innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${out}</svg>`;
+  wrapEl.innerHTML = `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${out}${hits}</svg>`;
 }
 
-/** หน้า "ยอดค้างรายวัน" — สามกราฟเรียง PO → ยอดค้าง → ยอดผลิต ตามที่เจ้าของสั่ง
- *  ⚠️ ช่วงวันใช้ตัวเดียวกับกราฟบนแดชบอร์ด (getChartRange) โดยตั้งใจ — ไม่เพิ่มค่าที่ต้องเก็บใหม่ (E1–E4)
- *     ข้อความใต้หัวข้อบอกไว้ว่าเปลี่ยนช่วงได้ที่ไหน ไม่งั้นคนหาปุ่มไม่เจอแล้วคิดว่าเปลี่ยนไม่ได้ */
-function renderWipTrend(){
-  const sub = dashSubName();
-  /* ⚠️ สีลง `style` attribute — `escapeHtml()` กันการแตก attribute ได้ แต่ **กันรู CSS ไม่ได้**
-     สีที่ซิงค์มาเป็น `#111;background-image:url(https://…)` ทำให้เบราว์เซอร์ยิงคำขอออกเน็ตจริง
-     (ผู้ตรวจ #131 รอบ 3 รันพิสูจน์) · เป็นรูชนิดเดียวกับที่ CLAUDE.md จดไว้ว่าอยู่ที่ renderChartLegend
-     **ใบ "กรองรูปแบบสี #rrggbb ที่ต้นทาง" ต้องนับที่นี่ด้วย** ไม่ใช่เฉพาะสองที่ของกราฟ
-     ไม่ได้ขยายความเสี่ยงเกินของเดิม — เงื่อนไขเดียวกันทำให้คำอธิบายสีของแดชบอร์ดยิงอยู่แล้ว */
-  document.getElementById('wtLegend').innerHTML = PROCESSES.map(x=>
-    `<span class="legend-item" style="cursor:default"><i style="background:${escapeHtml(PROCESS_COLORS[x])}"></i>${escapeHtml(PROCESS_LABELS[x])}</span>`
-  ).join('');
+/* ---------- หน้า "ยอดค้างรายวัน": ตัวกรองของหน้านี้เอง ----------
+ *
+ * 🔒 **Sub-Name เป็นของหน้านี้เอง ไม่ได้ยืมของแดชบอร์ดแล้ว** (เจ้าของสั่ง 11 พ.ย. 2569)
+ *    เหตุผลเดิมที่ยืมมาคือ "ไม่เพิ่มค่าที่ต้องเก็บใหม่" แต่คนอ่านตัวจริงต้องข้ามไปอีกแท็บ
+ *    แล้วกลับมา ซึ่งเป็นสิ่งที่เขาทำไม่ได้ · **อันเดียวคุมทั้งหน้า** ตามที่สั่ง —
+ *    กราฟ PO · โดนัท · รายการใบที่เลยกำหนด · แถบย้อนแย้ง · และกราฟล่างทั้งสอง
+ *    ถ้าบางที่กรองบางที่ไม่กรอง คนเอาสองที่มาเทียบจะสรุปว่ายอดไม่ตรง ทั้งที่ทั้งคู่ถูก
+ *    (หลักเดียวกับที่แดชบอร์ดถูกทำให้ทั้งหน้าใช้ค่าเดียวกันเมื่อ 8 ก.ย. 2026)
+ *
+ * 🔒 **ช่วงวันแยกของแต่ละ section** (เจ้าของสั่ง 11 พ.ย. 2569) — เดิมใช้ของแดชบอร์ดร่วมกันทั้งหน้า
+ *    ⚠️ ผลพ่วงที่ต้องฟ้อง: สองกราฟล่างถูกวางคู่กันเพื่อ **กวาดตาลงมาอ่านทีละวัน**
+ *       ตั้งช่วงไม่เท่ากันเมื่อไหร่ คอลัมน์ก็ไม่ตรงกัน การอ่านคู่กันกลายเป็นการอ่านผิด
+ *       จึงมีแถบเหลืองขึ้นเองเมื่อสองช่วงต่างกัน (#wtDiff) **ห้ามถอด**
+ *
+ * ⚠️ ทั้งสองอย่าง **ไม่เก็บลง state** เหมือนตัวกรองอื่นของหน้านี้ (E1–E4)
+ *    เปิดโปรแกรมใหม่เริ่มที่ "ทั้งหมด" และ 14 วันเสมอ
+ */
+function wtSubName(){
+  const el = document.getElementById('wtSubFilter');
+  return el ? el.value : '';
+}
 
+const WT_DEFAULT_DAYS = 14;
+const wtRange = {wip: null, daily: null};
+const wtMode  = {wip: 'group', daily: 'group'};
+/** ชุดที่วาดอยู่จริงของแต่ละ section — ป้ายตอนเอาเมาส์ชี้อ่านจากตรงนี้ */
+const wtCur   = {wip: null, daily: null};
+const WT_IDS  = {wip: {from:'wtWipFrom', to:'wtWipTo', cap:'wtCaption', body:'wtWip', legend:'wtWipLegend'},
+                 daily:{from:'wtDailyFrom', to:'wtDailyTo', cap:'wtDailyCaption', body:'wtDaily', legend:'wtDailyLegend'}};
+
+function wtSetRange(key, days){
+  const endISO = todayISO();
+  wtRange[key] = {startISO: addDaysISO(endISO, -(days - 1)), endISO};
+}
+/** อ่านช่วงจากช่องวันที่ แล้วตรวจ — คืน {error} เมื่อใช้ไม่ได้ ไม่เดาค่าให้ */
+function wtReadRange(key){
+  const startISO = document.getElementById(WT_IDS[key].from).value;
+  const endISO = document.getElementById(WT_IDS[key].to).value;
+  if(!startISO || !endISO) return {error: 'เลือกทั้ง "จากวันที่" และ "ถึงวันที่"'};
+  if(startISO > endISO) return {error: 'ช่วงวันกลับข้าง — "จากวันที่" อยู่หลัง "ถึงวันที่" จึงไม่มีวันไหนเข้าเงื่อนไขเลย'};
+  if(daysBetween(startISO, endISO) + 1 > MAX_CHART_DAYS) return {error: `ช่วงเวลายาวเกินไป (สูงสุด ${MAX_CHART_DAYS} วัน)`};
+  return {startISO, endISO};
+}
+function wtSyncInputs(key){
+  const r = wtRange[key];
+  document.getElementById(WT_IDS[key].from).value = r.startISO;
+  document.getElementById(WT_IDS[key].to).value = r.endISO;
+  const n = daysBetween(r.startISO, r.endISO);
+  document.querySelectorAll(`.wtrng[data-rng="${key}"] button`).forEach(b=>{
+    // ไฮไลต์ปุ่มสำเร็จรูปเฉพาะตอนช่วงตรงกับมันเป๊ะ และจบที่วันนี้
+    b.setAttribute('aria-pressed', String(n != null && n + 1 === +b.dataset.days && r.endISO === todayISO()));
+  });
+}
+/** ⚠️ ช่วงวันต่างกัน = อ่านคู่กันทีละวันไม่ได้อีก — ต้องบอก ไม่ใช่ปล่อยเงียบ */
+function wtRenderDiff(){
+  const el = document.getElementById('wtDiff');
+  const a = wtRange.wip, b = wtRange.daily;
+  // ฝั่งไหนช่วงใช้ไม่ได้ ก็ไม่มีอะไรให้เทียบ — ข้อความของฝั่งนั้นบอกอยู่แล้วว่าผิดตรงไหน
+  if(a.invalid || b.invalid){ el.hidden = true; return; }
+  const same = a.startISO === b.startISO && a.endISO === b.endISO;
+  el.hidden = same;
+  if(!same) el.innerHTML = '<span>⚠️</span><div><b>ช่วงวันของสองกราฟล่างไม่เท่ากัน</b> — '
+    + `ยอดค้าง ${escapeHtml(fmtDateTH(a.startISO))} – ${escapeHtml(fmtDateTH(a.endISO))} · `
+    + `ยอดผลิต ${escapeHtml(fmtDateTH(b.startISO))} – ${escapeHtml(fmtDateTH(b.endISO))} · `
+    + 'คอลัมน์จึงไม่ตรงกัน <b>กวาดตาลงมาอ่านคู่กันทีละวันไม่ได้</b></div>';
+}
+
+/** คำอธิบายสีของ section หนึ่ง — ของใครของมัน บอกเฉพาะขั้นที่กราฟนั้นวาดจริง
+ *  ⚠️ แถบเดียวรวมบนสุดเคยบอกครบเจ็ดขั้น ทั้งที่กราฟยอดค้างวาดแค่ขั้นในสาย (A3)
+ *  ⚠️ สีต้องผ่าน escapeHtml() — ลง style attribute และ validProcessList() ไม่ตรวจช่อง color (G3) */
+function wtLegend(elId, procs, key){
+  const hidden = key ? wtHidden[key] : null;
+  const el = document.getElementById(elId);
+  /* ⚠️ จำปุ่มที่โฟกัสค้างไว้ก่อนวาดทับ แล้วคืนให้ — ไม่ใช่แค่ตอนกด
+     ซิงค์อัตโนมัติเรียก renderWipTrend() ทุก 20 วิ คนที่ Tab มาค้างบนชื่อขั้นจะตกไป BODY
+     เองโดยไม่ได้กดอะไร (G2 · ผู้ตรวจ #132 รอบ 2 วัดได้ BUTTON/winding → BODY) */
+  const act = document.activeElement;
+  const wasProc = act && el.contains(act) && act.dataset ? act.dataset.proc : null;
+  el.innerHTML = procs.map(x=>{
+    const off = hidden && hidden.has(x);
+    const col = `<i style="background:${escapeHtml(PROCESS_COLORS[x])}"></i>${escapeHtml(PROCESS_LABELS[x])}`;
+    return key
+      ? `<button type="button" class="legend-item${off ? ' off' : ''}" data-wt-lg="${key}" data-proc="${x}"`
+        + ` aria-pressed="${off ? 'false' : 'true'}" title="${off ? 'กดเพื่อแสดงขั้นนี้' : 'กดเพื่อซ่อนขั้นนี้'}">${col}</button>`
+      : `<span class="legend-item" style="cursor:default">${col}</span>`;
+  }).join('');
+  /* ⚠️ คอมเมนต์เดิมตรงนี้เขียนว่า "id ของขั้นไม่ได้กรองอักขระ" — **ไม่จริง**
+     `validProcessList()` บังคับ /^[a-z][a-z0-9_]{1,23}$/ และทุกทางที่เรียก `applyProcessList()`
+     ผ่าน `composeProcesses()` · `data-proc="${p}"` ข้างบนที่ไม่ escape จึงปลอดภัย **เพราะด่านนั้น**
+     ไม่ใช่เพราะโชค · `CSS.escape` ที่นี่เป็นด่านชั้นสอง เผื่อวันหนึ่งด่าน id ถูกผ่อน (G3)
+     เขียนเหตุผลผิดไว้ก็เท่ากับทำให้คนถัดไปเชื่อว่าด่านนั้นไม่มี (ผู้ตรวจ #132 รอบ 7) */
+  if(wasProc){
+    const back = el.querySelector(`[data-proc="${CSS.escape(wasProc)}"]`);
+    if(back) back.focus();
+  }
+}
+const wtHidden = {wip: new Set(), daily: new Set()};
+/** ขั้นที่จะวาดจริงของ section นี้ — และ **ทำให้ `wtHidden` ตรงกับของที่วาดเสมอ**
+ *
+ *  🚨 คำอธิบายสีวาดจาก `wtHidden` ส่วนกราฟวาดจากค่าที่คืนตรงนี้ · สองอย่างต้องตรงกันเสมอ
+ *     ไม่งั้นได้จอที่ขัดกับตัวเอง — ปุ่มขีดฆ่าทั้งแถวขณะที่กราฟยังวาดครบ
+ *  ⚠️ รายการขั้นเปลี่ยนกลางทางได้ผ่านการซิงค์ · id ที่ถูกซ่อนไปแล้วจะค้างใน Set
+ *     แล้วนับรวมในด่าน "ต้องเหลืออย่างน้อยหนึ่งขั้น" ทั้งที่ไม่มีขั้นนั้นอยู่จริง
+ *  ⚠️ ตกกลับแล้วต้องล้าง Set ด้วย ไม่ใช่แค่คืน all — ไม่งั้นปุ่มยังขีดฆ่าอยู่ทั้งแถว
+ *     (ผู้ตรวจ #132 รอบ 6 รันเจอทางซิงค์ · อาการเดียวกับที่รอบ 2 บล็อกไว้ทางการกด) */
+function wtProcs(key, all){
+  Array.from(wtHidden[key]).forEach(x=>{ if(!all.includes(x)) wtHidden[key].delete(x); });
+  const vis = all.filter(x=>!wtHidden[key].has(x));
+  if(vis.length) return vis;
+  wtHidden[key].clear();
+  return all.slice();
+}
+
+/* ---------- ภาพนิ่งวันนี้: ใบที่ยังไม่เสร็จ แบ่งตามสถานะเวลา ----------
+ *
+ * ⚠️ **ห้ามแบ่งตามขั้น** — กราฟแท่งข้าง ๆ ก็เป็นเลขรายขั้น แต่คนละเกณฑ์
+ *    (แท่ง = ใบเดียวนับได้หลายขั้น · อันนี้ = ใบละช่องเดียว) ขั้นเดียวกันจะได้สองเลข
+ *    เจ้าของทักเองว่าคนอ่านจะสรุปว่า "ยอดไม่ตรง" และคำกำกับใต้กราฟไม่ช่วย เพราะไม่มีใครอ่าน
+ *    พอตัวแบ่งไม่ใช่ "ขั้น" ก็ไม่เหลือเลขคู่ไหนให้เอามาเทียบผิดคู่ได้เลย
+ * ⚠️ ใช้ computeStatus ตัวเดียวกับทั้งระบบ (A4 · A5) ห้ามเขียนเกณฑ์ล่าช้าขึ้นใหม่
+ * ⚠️ ใบที่วันที่สั่งผิดหรือไม่มีวันที่สั่ง แยกเป็นช่องของตัวเอง ไม่ยัดรวมกับ "ยังมีเวลา"
+ *    ซึ่งจะกลบข้อมูลที่คีย์ผิดไว้ (หลักเดียวกับที่ fgRows เขียนไว้) */
+function wtDueData(sub){
+  const cum = buildCumMap(state.records);
+  const ref = todayISO();
+  const n = {late: 0, soon: 0, ok: 0, unknown: 0};
+  const lates = [];
+  activeOrders().forEach(o=>{
+    if(sub && o.subName !== sub) return;
+    const c = cum[o.id] || emptyCum();
+    const dl = computeDeadlines(o);
+    const st = computeStatus(o, c, dl, ref);
+    if(st.code === 'done') return;
+    if(!o.orderDate || st.code === 'baddate'){ n.unknown++; return; }
+    if(st.code === 'late'){
+      n.late++;
+      // ค้างที่ขั้นแรกในสายที่ยังไม่ถึงยอดสั่ง — ขั้นที่ต้องไปตามก่อน
+      const at = MAIN_PROCESSES.find(p=>(c[p] || 0) < (Number(o.orderQty) || 0));
+      /* 🚨 จำนวนวันต้องคิดจาก **กำหนดของขั้นที่ทำให้ใบนี้ล่าช้า** ไม่ใช่กำหนดส่ง
+         ใบเข้ากล่องนี้ด้วยเกณฑ์ "ขั้นไหนขั้นหนึ่งเลยกำหนดของขั้นนั้น" (A5)
+         ค่าตั้งต้นคือ winding 10 วัน · shipping 28 วัน จึงมีช่วง 18 วันที่ใบล่าช้าแล้ว
+         แต่ยังไม่ถึงกำหนดส่ง · คิดจากกำหนดส่งแล้วได้ "เลยมา −13 วัน" บนกล่องชื่อ
+         "ใบที่ล่าช้านานที่สุด" (ผู้ตรวจ #132 รอบ 4 รันพิสูจน์)
+         ⚠️ ครอบที่ 0 ไม่พอ — มันกลบความต่างระหว่าง "เลยมาวันนี้" กับ "ยังไม่ถึงกำหนดส่งอีก 16 วัน"
+         lateP ไม่เป็น null แน่นอนเมื่อ st.code === 'late' และ dl[lateP] ผ่านมาแล้วเสมอ จึงไม่ติดลบ */
+      /* 🚨 ใช้ lateSinceOf() ไม่ใช่ lateStageOf() — เลขนี้ทำสองหน้าที่: แสดงบนแถว **และ**
+         เป็นกุญแจเรียงของกล่อง จึงต้องเทียบข้ามแถวได้ ดูเหตุผลเต็มที่ lateSinceOf()
+         ⚠️ เปลี่ยนกลับไปใช้ lateStageOf() เมื่อไหร่ กล่องจะเรียงกลับทางทันที */
+      const lateP = lateSinceOf(o, c, dl, ref);
+      lates.push({o, at, lateP, over: lateP ? daysBetween(dl[lateP], ref) : null});
+    }
+    else if(st.code === 'soon') n.soon++;
+    else n.ok++;
+  });
+  lates.sort((a, b)=>(b.over || 0) - (a.over || 0)
+    || String(a.o.poNo).localeCompare(String(b.o.poNo))
+    || String(a.o.pn).localeCompare(String(b.o.pn)));
+  return {n, lates};
+}
+
+/** ปัดเปอร์เซ็นต์ให้ผลรวมเป็น 100 เสมอ — แจกเศษที่เหลือให้ช่องที่เศษมากสุดก่อน
+ *  คืนอาร์เรย์เรียงตามลำดับที่รับมา · total = 0 คืน 0 ทุกช่อง */
+function wtPctShares(values, total){
+  if(!total) return values.map(()=>0);
+  const raw = values.map(v=>v / total * 100);
+  const out = raw.map(x=>Math.floor(x));
+  let left = 100 - out.reduce((a, b)=>a + b, 0);
+  // เรียงตามเศษจากมากไปน้อย · เศษเท่ากันตัดสินด้วยลำดับเดิม เพื่อให้ผลเหมือนกันทุกเครื่อง
+  const order = raw.map((x, i)=>[x - Math.floor(x), i])
+    .sort((a, b)=> b[0] - a[0] || a[1] - b[1]);
+  for(let k = 0; k < order.length && left > 0; k++, left--) out[order[k][1]]++;
+  return out;
+}
+
+function wtRenderDue(sub){
+  const {n, lates} = wtDueData(sub);
+  const slices = [
+    /* ⚠️ "ล่าช้า" ไม่ใช่ "เลยกำหนดส่งแล้ว" — เกณฑ์คือขั้นไหนขั้นหนึ่งเลยกำหนดของขั้นนั้น (A5)
+       ใบที่เพิ่งเริ่มช้าจะเข้าช่องนี้ตั้งแต่ยังไม่ถึงกำหนดส่งอีกหลายวัน · คำเดิมแคบกว่าของที่นับจริง */
+    {id: 'late', name: 'ล่าช้า', color: 'var(--red)', v: n.late},
+    {id: 'soon', name: 'ใกล้ครบกำหนด (เหลือ ≤ 3 วัน)', color: 'var(--amber)', v: n.soon},
+    {id: 'ok', name: 'ยังมีเวลา', color: 'var(--green)', v: n.ok},
+    {id: 'unknown', name: 'วันที่สั่งผิดหรือไม่มี — ตัดสินไม่ได้', color: '#9ca3af', v: n.unknown}
+  ].filter(s=>s.v > 0 || s.id !== 'unknown');
+  const total = slices.reduce((a, s)=>a + s.v, 0);
+  /* ⚠️ ปัดเปอร์เซ็นต์ทีละแถวแล้วรวมได้ 99 หรือ 101 (เช่น 3 ใบแบ่ง 3 ช่อง ได้ 33+33+33)
+     หน้าที่มีเลข "รวมแล้วเท่ากับเลขกลางวงพอดี" เขียนกำกับอยู่ จะกลายเป็นจอที่ขัดกับตัวเอง
+     จึงปัดแบบเหลือเศษมากสุดได้ก่อน (largest remainder) ให้ผลรวมเป็น 100 เสมอ
+     จำนวน "ใบ" ไม่ได้ถูกแตะ — ยังเป็นเลขจริงทุกแถว (ผู้ตรวจ #132 รอบ 3) */
+  const pct = wtPctShares(slices.map(s=>s.v), total);
+  const size = 190, r = 72, cx = size / 2, cy = size / 2, sw = 30, C = 2 * Math.PI * r;
+  let acc = 0, out = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--gray-light)" stroke-width="${sw}"/>`;
+  slices.forEach((s, si)=>{
+    if(!s.v || !total) return;
+    const frac = s.v / total;
+    out += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${sw}"`
+      + ` stroke-dasharray="${(frac * C).toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-acc * C).toFixed(2)}"`
+      + ` transform="rotate(-90 ${cx} ${cy})" class="wthit" data-wt-tip="one" data-wt-name="${escapeHtml(s.name)}"`
+      + ` data-wt-color="${s.color}" data-wt-unit="ใบ" data-wt-v="${s.v}"`
+      // ⚠️ ใช้ pct ชุดเดียวกับรายการข้าง ๆ — คิดใหม่ตรงนี้แล้วเลขของช่องเดียวกันต่างกันได้ 1%
+      + ` data-wt-sub="${pct[si]}% ของใบที่ยังไม่เสร็จ"/>`;
+    acc += frac;
+  });
+  out += `<text x="${cx}" y="${cy - 4}" font-size="26" font-weight="700" text-anchor="middle" fill="var(--text)">${numFmt(total)}</text>`
+    + `<text x="${cx}" y="${cy + 16}" font-size="11.5" text-anchor="middle" fill="var(--text-dim)">ใบที่ยังไม่เสร็จ</text>`;
+  document.getElementById('wtDue').innerHTML = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"`
+    + ` role="img" aria-label="สัดส่วนใบที่ยังไม่เสร็จ แบ่งตามสถานะเวลา">${out}</svg>`;
+
+  document.getElementById('wtDueList').innerHTML = slices.map(s=>
+    `<div class="wtdr"><i style="background:${s.color}"></i><span class="nm">${escapeHtml(s.name)}</span>`
+    + `<span class="qt">${numFmt(s.v)}</span>`
+    + `<span class="pc">${pct[slices.indexOf(s)]}%</span></div>`).join('')
+    + `<div class="wtnote">รวม ${numFmt(total)} ใบ — เท่ากับเลขกลางวงพอดี`
+    + (sub ? ` · เฉพาะ ${escapeHtml(sub)}` : '') + '</div>';
+
+  const top = lates.slice(0, 5);
+  document.getElementById('wtLate').innerHTML = (top.length
+    ? top.map(x=>{
+        /* P/N ต้องอยู่ด้วย — PO เดียวกันคนละ P/N มีได้สองใบ ไม่งั้นได้สองแถวที่อ่านเหมือนกันทุกตัวอักษร
+           (กฎเดียวกับ data-anom-row = poNo|pn · ผู้ตรวจ #132 รอบ 10) · escapeHtml ครอบ String() ให้ P/N ที่เป็นตัวเลข
+           ⚠️ ลำดับใน DOM ต้องเป็น po → dd → wh เพราะ .wh กินเต็มบรรทัดล่าง (grid-column:1/-1)
+              สลับลำดับเมื่อไหร่ grid จะดันจำนวนวันลงไปอยู่บรรทัดที่สามเอง
+           ⚠️ `|| '—'` ให้ P/N ด้วย เหมือน subName ข้าง ๆ — ใบที่ซิงค์มาโดย pn ว่าง
+              จะได้แถวขึ้นต้นด้วย " · " ลอย ๆ (ผู้ตรวจ #132 รอบ 11) */
+        const where = `${escapeHtml(x.o.pn || '—')} · ${sub ? '' : escapeHtml(x.o.subName || '—') + ' · '}`
+          + `ค้างที่ ${escapeHtml(x.at ? ((PROCESS_BY_ID[x.at] || {}).short || x.at) : '—')}`;
+        return `<div class="wtlr"><span class="po">${escapeHtml(x.o.poNo)}</span>`
+        // กิ่ง null เป็นด่านกันพลาด ไม่ใช่กรณีที่เกิดจริง — ใบที่สถานะ late ต้องมีขั้นที่เลยกำหนดเสมอ
+        + `<span class="dd">${x.over == null ? 'ไม่ได้ตั้งวันกำหนด'
+            : 'เลยกำหนด ' + escapeHtml((PROCESS_BY_ID[x.lateP] || {}).short || x.lateP) + ' มา ' + numFmt(x.over) + ' วัน'}</span>`
+          // title เป็นตาข่ายชั้นสอง เผื่อ P/N กับชื่อขั้นยาวจนบรรทัดล่างยังไม่พอ
+          + `<span class="wh" title="${where}">${where}</span></div>`;
+      }).join('')
+    : '<div class="wtnote">ไม่มีใบที่ล่าช้า</div>')
+    + `<div class="wtnote">เกณฑ์เดียวกับป้าย “ล่าช้า” ที่ใช้อยู่ทั้งระบบ (A5) ·`
+    + ' <b>จำนวนวันนับจากกำหนดแรกที่เลยมาแล้ว ไม่ใช่กำหนดส่ง</b> จึงเทียบข้ามแถวได้ และใช้เรียงลำดับกล่องนี้ ·'
+    + ' “ค้างที่” คือขั้นแรกในสายที่ยอดยังไม่ถึงยอดสั่ง จึงเป็นคนละขั้นกันได้'
+    + (lates.length > top.length ? ` · แสดง ${numFmt(top.length)} จาก ${numFmt(lates.length)} ใบ` : '')
+    + '</div>';
+}
+
+/* ---------- มุมมองแยกรายขั้น: แท่งนอน มีตัวเลขทุกแท่ง ----------
+ *
+ * 🔒 เจ้าของเก็บมุมมองนี้ไว้คู่กับ "รวมทุกขั้น" (11 พ.ย. 2569) — **ยังไม่ตัดสิน รอคนอ่านตัวจริงดูก่อน**
+ *    ห้ามลบเองถ้าไม่ได้สั่ง · แท่งเป็นแนวนอนเพราะตัวเลขหลักล้านยัดบนหัวแท่งแนวตั้งไม่ลง */
+function wtCards(key, labels, data, procs, weekly){
+  const rows = (sid)=>labels.map((lab, i)=>{
+    const v = data[sid][i], max = Math.max(1, ...data[sid]);
+    const pct = (v / max) * 100;
+    return `<div class="wtrow${i === labels.length - 1 ? ' last' : ''}${v ? '' : ' zero'}">`
+      + `<span class="dy">${escapeHtml(lab.slice(5))}</span>`
+      + `<span class="tr"><span class="fl" style="width:${pct.toFixed(1)}%;background:${escapeHtml(PROCESS_COLORS[sid])}"></span></span>`
+      + `<span class="vl">${numFmt(v)}</span></div>`;
+  }).join('');
+  document.getElementById(WT_IDS[key].body).innerHTML = '<div class="wtcards">' + procs.map(sid=>{
+    const max = Math.max(0, ...data[sid]);
+    return `<div class="wtcard"><div class="ch"><i style="background:${escapeHtml(PROCESS_COLORS[sid])}"></i>`
+      + `<span class="nm">${escapeHtml(PROCESS_LABELS[sid])}</span>`
+      + `<span class="pk">สูงสุด ${numFmt(max)}</span></div>`
+      + `<div class="wtnote" style="margin:0 0 4px">สเกลของการ์ดนี้เอง</div>`
+      + `<div class="rows">${rows(sid)}</div></div>`;
+  }).join('') + '</div>'
+    + '<div class="wtnote">แต่ละการ์ดมีสเกลของตัวเอง — <b>ความยาวแท่งเทียบข้ามการ์ดไม่ได้ ให้อ่านที่ตัวเลข</b>'
+    + (weekly ? ' · <b>หนึ่งแถว = หนึ่งสัปดาห์</b> วันที่ที่เห็นคือวันจันทร์ต้นสัปดาห์' + wtWeeklyNote(key) : '')
+    + ' · แถวล่างสุดคือล่าสุด</div>';
+  /* ⚠️ เลื่อนลงสุดให้ด้วย — การ์ดสูงได้ไม่เกิน 360px ช่วง 15–21 วันจึงล้น
+     แล้วเปิดมาเห็นวันเก่าสุด ขณะที่คำกำกับใต้การ์ดเขียนว่า "แถวล่างสุดคือล่าสุด"
+     คนอ่านตัวจริงใช้คอมไม่เก่ง และต้องเลื่อนแยกทีละการ์ด (ผู้ตรวจ #132 รอบ 6 วัดได้ scrollTop 0)
+     ปุ่มสำเร็จรูปไม่โดนข้อนี้ (7/14 วันสั้นพอ · 30/90 วันกลายเป็นรายสัปดาห์) แต่ช่องกรอกเองโดน */
+  document.querySelectorAll(`#${WT_IDS[key].body} .wtcard .rows`)
+    .forEach(el=>{ el.scrollTop = el.scrollHeight; });
+}
+
+/** ประโยคบอกว่าแท่งหนึ่งแท่งคืออะไรตอนรวมรายสัปดาห์
+ *  🚨 **ห้ามตัดทิ้งเพื่อความสั้น** — "ยอดค้างของสัปดาห์" อ่านได้สองแบบ และผิดไปเจ็ดเท่าถ้าอ่านผิดแบบ */
+function wtWeeklyNote(key){
+  return key === 'daily'
+    ? ' · แท่งหนึ่งแท่ง = <b>ผลบวกของทั้งสัปดาห์</b>'
+    : ' · แท่งหนึ่งแท่ง = <b>ยอดค้าง ณ วันสุดท้ายของสัปดาห์</b> ไม่ใช่ผลบวก'
+      + ' เพราะยอดค้างเป็นของที่กองอยู่ ไม่ใช่ของที่ทำได้';
+}
+
+/* ---------- ป้ายตัวเลขตัวใหญ่ตอนเอาเมาส์ชี้ ----------
+ *
+ * ทำเองแทน <title> ของ SVG เพราะตัวนั้นรอเป็นวินาทีกว่าจะขึ้น ตัวหนังสือเล็ก และปรับขนาดไม่ได้
+ * ซึ่งเป็นข้อเดียวที่เจ้าของขอ ("ให้คนแก่อ่านได้ง่าย ๆ")
+ *
+ * ⚠️ **<title> ยังอยู่ใน DOM ทุกแท่ง ห้ามถอด** — เป็นชื่อสำหรับโปรแกรมอ่านหน้าจอ
+ *    และเทสทั้งไฟล์ tests/wip-trend.spec.js อ่านค่าจริงจากตรงนั้น
+ *    ที่กันไม่ให้มันโผล่มาแข่งคือ CSS `pointer-events:none` บนแท่ง
+ * ⚠️ ช่องรับเมาส์เป็น **ทั้งคอลัมน์ของวัน** ไม่ใช่ทีละแท่ง — แท่งกว้างไม่กี่พิกเซล จิ้มไม่โดน
+ *    และการเห็นทุกขั้นของวันนั้นพร้อมกันคือสิ่งที่คนอ่านอยากรู้อยู่แล้ว
+ * ⚠️ รองรับนิ้วด้วย (pointerdown) — จอสัมผัสไม่มี hover */
+function wtTipShow(html, x, y){
+  const el = document.getElementById('wtTip');
+  el.innerHTML = html;
+  el.hidden = false;
+  const b = el.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+  // พลิกด้านเมื่อชนขอบ ไม่งั้นป้ายของวันขวาสุด ซึ่งเป็นวันล่าสุด = วันที่คนดูบ่อยที่สุด จะโดนตัดครึ่ง
+  let left = x + 16; if(left + b.width > vw - 8) left = Math.max(8, x - 16 - b.width);
+  let top = y + 16;  if(top + b.height > vh - 8)  top = Math.max(8, y - 16 - b.height);
+  el.style.left = left + 'px';
+  el.style.top = top + 'px';
+}
+function wtTipHide(){ const el = document.getElementById('wtTip'); if(el) el.hidden = true; }
+
+function wtTipHtml(t){
+  const d = t.dataset;
+  if(d.wtTip === 'one')
+    /* ⚠️ สีต้องผ่าน escapeHtml() ตรงนี้ด้วย — ค่าที่อ่านกลับจาก dataset เป็นค่าดิบ
+       ที่ escape ไว้ตอนเขียน attribute ถูกเบราว์เซอร์ถอดกลับให้แล้ว · สีของขั้นที่ซิงค์มา
+       ไม่ถูกตรวจรูปแบบที่ไหนเลย (validProcessList ไม่ดูช่อง color) จึงแตก attribute ได้จริง
+       ผู้ตรวจ #132 รันพิสูจน์ว่าสคริปต์ทำงาน — แรงกว่ารู CSS ที่ CLAUDE.md จดไว้ (G3) */
+    return `<div class="th"><span style="display:inline-block;width:9px;height:9px;border-radius:2px;`
+      + `background:${escapeHtml(d.wtColor)}"></span> ${escapeHtml(d.wtName)}</div>`
+      + `<div><span class="big">${numFmt(+d.wtV)}</span><span class="unit">${escapeHtml(d.wtUnit || '')}</span></div>`
+      + (d.wtSub ? `<div class="th" style="margin:4px 0 0">${escapeHtml(d.wtSub)}</div>` : '');
+  const c = wtCur[d.wtKey];
+  if(!c) return '';
+  const i = +d.wtI;
+  const when = c.spans ? `${fmtDateTH(c.spans[i].from)} – ${fmtDateTH(c.spans[i].to)}` : fmtDateTH(c.labels[i]);
+  // เรียงมากไปน้อยของวันนั้น — คนที่ชี้มาอยากรู้ว่าวันนั้นอะไรกองเยอะสุด
+  return `<div class="th">${escapeHtml(when)} · หน่วยเป็นชิ้น`
+    + (c.weekly ? (d.wtKey === 'daily' ? ' (รวมทั้งสัปดาห์)' : ' (ณ วันสุดท้าย)') : '') + '</div>'
+    + c.procs.slice().sort((a, b)=>c.data[b][i] - c.data[a][i]).map(sid=>{
+        const v = c.data[sid][i];
+        return `<div class="r${v ? '' : ' dim'}"><i style="background:${escapeHtml(PROCESS_COLORS[sid])}"></i>`
+          + `<span class="n">${escapeHtml(PROCESS_LABELS[sid])}</span><b>${numFmt(v)}</b></div>`;
+      }).join('');
+}
+
+/* ---------- วาดหน้า ---------- */
+
+function wtDrawSection(key){
+  const ids = WT_IDS[key], body = document.getElementById(ids.body);
+  const all = key === 'wip' ? MAIN_PROCESSES : PROCESSES;
+  const procs = wtProcs(key, all);
+  wtLegend(ids.legend, all, key);
+  const r = wtReadRange(key);
+  if(r.error){
+    body.innerHTML = `<div class="empty-hint">${escapeHtml(r.error)}</div>`;
+    document.getElementById(ids.cap).textContent = '';
+    wtCur[key] = null;
+    /* ⚠️ ต้องทำเครื่องหมายว่าช่วงนี้ใช้ไม่ได้ ไม่ใช่ปล่อย wtRange ค้างของเก่าไว้
+       ไม่งั้นแถบเทียบช่วงจะอ้างวันที่ที่ไม่ตรงกับช่องบนจอ = จอโกหก (ผู้ตรวจ #132) */
+    wtRange[key] = Object.assign({}, wtRange[key], {invalid: true});
+    // ปุ่มสำเร็จรูปต้องไม่ไฮไลต์ค้าง ไม่งั้นจอบอกว่ากำลังดู 14 วันทั้งที่ช่วงใช้ไม่ได้
+    document.querySelectorAll(`.wtrng[data-rng="${key}"] button`)
+      .forEach(b=>b.setAttribute('aria-pressed', 'false'));
+    return;
+  }
+  wtRange[key] = {startISO: r.startISO, endISO: r.endISO};
+  wtSyncInputs(key);
+  const sub = wtSubName();
+  const raw = key === 'wip'
+    ? wipDailySeries(r.startISO, r.endISO, sub)
+    : buildDailyTotals(r.startISO, r.endISO, sub);
+  /* 🚨 สองกราฟรวมรายสัปดาห์ **คนละวิธี และสลับกันไม่ได้เด็ดขาด**
+     · ยอดผลิต = ผลบวกทั้งสัปดาห์ (ของที่ทำได้)
+     · ยอดค้าง = ค่าของวันสุดท้าย (ของที่กองอยู่) — บวกเจ็ดวันได้เลขสูงกว่าความจริงเจ็ดเท่า */
+  const weekly = raw.labels.length > CHART_DAILY_MAX;
+  const b = !weekly ? raw
+    : (key === 'wip' ? bucketWeeklyLast(raw.labels, raw.data, all) : bucketWeekly(raw.labels, raw.data));
+  wtCur[key] = {labels: b.labels, data: b.data, procs, spans: weekly ? b.spans : null, weekly};
+  document.getElementById(ids.cap).textContent =
+    `${fmtDateTH(r.startISO)} – ${fmtDateTH(r.endISO)} (${raw.labels.length} วัน)`
+    + (weekly ? ` · รวมรายสัปดาห์ จ–อา · ${b.labels.length} สัปดาห์` : '');
+  if(wtMode[key] === 'cards'){ wtCards(key, b.labels, b.data, procs, weekly); return; }
+  drawGroupedBars(body, b.labels, b.data, procs, {
+    spans: weekly ? b.spans : null, minPerSlot: weekly ? 46 : 14,
+    tipPrefix: key === 'wip' ? 'ค้างหน้า ' : '', hitKey: key, wrap: true
+  });
+  body.insertAdjacentHTML('beforeend', '<div class="wtnote">ทุกขั้นใช้สเกลเดียวกัน จึงเทียบความสูงข้ามขั้นได้'
+    + ' · <b>ขั้นที่ยอดสูงมากจะกดขั้นอื่นให้เตี้ยติดพื้น — กดชื่อขั้นในคำอธิบายสีเพื่อปิดแล้วสเกลจะคิดใหม่</b>'
+    + (weekly ? wtWeeklyNote(key) : '') + '</div>');
+}
+
+/** หน้า "ยอดค้างรายวัน" — ภาพนิ่งวันนี้สองใบ แล้วเส้นเวลาสองชุด ชุดละช่วงวันของตัวเอง */
+function renderWipTrend(){
+  const sub = wtSubName();
+  wtLegend('wtPoLegend', PROCESSES, null);
   drawStageBars(document.getElementById('wtPo'), PROCESSES, poNotDoneNow(sub));
+  wtRenderDue(sub);
+  document.getElementById('wtSubNote').textContent = sub
+    ? `กำลังดูเฉพาะ ${sub} — มีผลกับทุกกราฟและรายการในหน้านี้`
+    : 'กำลังดูรวมทุกหน่วย';
 
   /* ⚠️ ใบที่ยอดสะสมย้อนแย้ง (คีย์ขั้นหลังมากกว่าขั้นหน้า) ทำให้เลขของหน้านี้ไม่ตรงกับ
-     บัญชีของค้างบนแดชบอร์ด — หน้านี้ไล่ต่อเนื่องต่อใบ (ของที่ไหลต่อไม่เกินของที่ไหลเข้า)
-     ส่วนแดชบอร์ดลบที่ยอดรวม · ใบที่ไม่ย้อนแย้งตรงกันทุกใบ
-     แดชบอร์ดมีแถบเหลืองฟ้องอยู่แล้ว ถ้าหน้านี้เงียบ คนที่เอาสองหน้ามาเทียบจะสรุปว่า
-     "ยอดไม่ตรง" ทั้งที่ทั้งคู่ถูกในนิยามของตัวเอง แล้วเลิกเชื่อทั้งสองหน้า (ผู้ตรวจ #131) */
+     บัญชีของค้างบนแดชบอร์ด — หน้านี้ไล่ต่อเนื่องต่อใบ ส่วนแดชบอร์ดลบที่ยอดรวม
+     ถ้าหน้านี้เงียบ คนที่เอาสองหน้ามาเทียบจะสรุปว่า "ยอดไม่ตรง" ทั้งที่ทั้งคู่ถูกในนิยามของตัวเอง */
   const cumAll = buildCumMap(state.records);
-  const anom = activeOrders().filter(o=>
-    (!sub || o.subName === sub) && hasOrderAnomaly(cumAll[o.id] || emptyCum()));
+  const anom = activeOrders()
+    .filter(o=>(!sub || o.subName === sub) && hasOrderAnomaly(cumAll[o.id] || emptyCum()))
+    .map(o=>({o, bad: orderAnomalyPairs(cumAll[o.id] || emptyCum())}));
   const anomEl = document.getElementById('wtAnom');
-  /* ⚠️ ต้องคุมด้วย style.display ไม่ใช่ .hidden — .wanom ตั้ง display:flex ไว้ ซึ่งชนะ [hidden]
-     เขียน .hidden แล้วแถบจะโผล่ตลอดเวลา รวมตอนที่ไม่มีใบย้อนแย้งเลย (ผู้ตรวจ #131 รอบ 2 ของผมเอง) */
+  /* ⚠️ ต้องคุมด้วย style.display ไม่ใช่ .hidden — .wtanom ตั้ง display:flex ไว้ ซึ่งชนะ [hidden] */
   anomEl.style.display = anom.length ? 'flex' : 'none';
   if(anom.length){
+    /* ⚠️ จำว่าโฟกัสค้างอยู่ปุ่มไหนก่อนวาดทับ — ซิงค์อัตโนมัติเรียก renderWipTrend() ทุก 20 วิ
+       คนที่ Tab มาค้างไว้จะตกไป BODY เองโดยไม่ได้กดอะไร (G2 · กฎเดียวกับ renderWipCards) */
+    const act = document.activeElement;
+    const wasToggle = !!(act && act.id === 'wtAnomToggle');
+    const wasPo = act && act.dataset ? act.dataset.anomPo : null;
     anomEl.innerHTML = `<span class="badge amber">ข้อมูลย้อนแย้ง ${numFmt(anom.length)} ใบ</span> `
-      + `<span>คีย์ขั้นหลังมากกว่าขั้นหน้า `
+      + '<span>คีย์ขั้นหลังมากกว่าขั้นหน้า '
       + 'หน้านี้ถือว่า<b>ของที่ไหลต่อไปขั้นถัดไปไม่เกินของที่ไหลเข้ามา</b> '
       + 'ยอดค้างรวมจึงไม่เกินยอดสั่ง · <b>บัญชีของค้างบนแดชบอร์ดลบที่ยอดรวม จึงได้เลขต่างจากหน้านี้</b> '
-      + 'เฉพาะใบพวกนี้ · ใบที่ไม่ย้อนแย้งตรงกันทุกใบ<br>'
-      /* ⚠️ แถบบนแดชบอร์ดนับจาก dashFilteredRows() ซึ่งติ๊ก "ซ่อนงานที่ส่งของครบแล้ว" ไว้เป็นค่าตั้งต้น
-         ส่วนแถบนี้นับทุกใบที่ยังไม่ยกเลิก · สองที่จึงได้คนละเลขเป็นปกติ และบางทีที่นั่นไม่มีแถบเลย
-         ไม่เขียนกำกับ = ส่งคนไปหาใบที่หาไม่เจอ ซึ่งเป็นอาการเดียวกับที่แถบนี้มาเพื่อป้องกัน
-         (เปลี่ยนวิธีนับให้ตรงกันไม่ได้ หน้านี้ไม่มีตัวกรองชุดนั้น · ผู้ตรวจ #131 รอบ 2) */
-      + 'ไล่ดูรายใบได้ที่แถบข้อมูลย้อนแย้งบนแดชบอร์ด — <b>แถบนั้นนับเฉพาะใบที่ผ่านตัวกรองของหน้านั้น</b> '
-      + 'ต้องปลดติ๊ก "ซ่อนงานที่ส่งของครบแล้ว" ก่อน ถึงจะเห็นครบเท่าเลขข้างบน</span>';
+      + 'เฉพาะใบพวกนี้ · ใบที่ไม่ย้อนแย้งตรงกันทุกใบ</span>'
+      + `<button type="button" class="wanom-t" id="wtAnomToggle" aria-expanded="${wtAnomOpen}">`
+      + `${wtAnomOpen ? 'ซ่อนรายการ ▴' : 'ดูรายการ ▾'}</button>`
+      + (wtAnomOpen ? anomalyListHtml(anom) : '');
+    const tg = document.getElementById('wtAnomToggle');
+    if(tg) tg.addEventListener('click', ()=>{ wtAnomOpen = !wtAnomOpen; renderWipTrend(); });
+    /* 🚨 ปุ่มเลข PO ต้องพาไปหน้าแก้ไขรายการจริง — `anomalyListHtml()` วาดปุ่มที่มี title
+       สัญญาว่าจะพาไป แต่ตัวจับคลิกของแดชบอร์ดผูกกับ #wipCards เท่านั้น กล่องนี้จึงต้องผูกเอง
+       ไม่ผูก = ปุ่มหน้าตาเป็นลิงก์ที่กดแล้วเงียบ ซึ่งลบล้างข้อ "ตามต่อได้" ที่เป็นเหตุผลของแถบนี้
+       (ผู้ตรวจ #132 รันพิสูจน์ว่ากดแล้วแท็บไม่เปลี่ยนและช่องค้นหายังว่าง) */
+    anomEl.querySelectorAll('[data-anom-po]').forEach(el=>{
+      el.addEventListener('click', ()=> openRecordsForPo(el.dataset.anomPo));
+    });
+    // CSS.escape เพราะรหัส PO ซิงค์ข้ามเครื่องได้ และไม่ได้กรองอักขระ (G3)
+    if(wasToggle){ if(tg) tg.focus(); }
+    else if(wasPo){
+      const back = anomEl.querySelector(`[data-anom-po="${CSS.escape(wasPo)}"]`);
+      if(back) back.focus();
+    }
   }
 
-  const cap = document.getElementById('wtCaption');
-  const range = getChartRange();
-  const hint = msg => {
-    document.getElementById('wtWip').innerHTML = `<div class="empty-hint">${escapeHtml(msg)}</div>`;
-    document.getElementById('wtDaily').innerHTML = `<div class="empty-hint">${escapeHtml(msg)}</div>`;
-    cap.textContent = '';
-  };
-  if(!range) return hint('เลือกทั้ง "จากวันที่" และ "ถึงวันที่" ในแท็บ Dashboard เพื่อแสดงกราฟ');
-  if(range.error) return hint(range.error);
-
-  const {startISO, endISO} = range;
-  const wip = wipDailySeries(startISO, endISO, sub);
-  const bucketed = wip.labels.length > CHART_DAILY_MAX;
-  cap.textContent = `แสดง ${fmtDateTH(startISO)} – ${fmtDateTH(endISO)} (${wip.labels.length} วัน)`
-    + (bucketed ? ' · รวมรายสัปดาห์ จ–อา' : '') + (sub ? ` · ${sub}` : '');
-
-  const wb = bucketed ? bucketWeeklyLast(wip.labels, wip.data, MAIN_PROCESSES) : wip;
-  drawGroupedBars(document.getElementById('wtWip'), wb.labels, wb.data, MAIN_PROCESSES, {
-    spans: bucketed ? wb.spans : null, minPerSlot: bucketed ? 46 : 14, tipPrefix: 'ค้างหน้า '
-  });
-
-  const daily = buildDailyTotals(startISO, endISO, sub);
-  const db = bucketed ? bucketWeekly(daily.labels, daily.data) : daily;
-  drawGroupedBars(document.getElementById('wtDaily'), db.labels, db.data, PROCESSES, {
-    spans: bucketed ? db.spans : null, minPerSlot: bucketed ? 46 : 14
-  });
+  wtDrawSection('wip');
+  wtDrawSection('daily');
+  wtRenderDiff();
 }
+/* ⚠️ ต้องอยู่นอกฟังก์ชัน — แถบถูกวาดใหม่ทั้งก้อนทุกครั้งที่เปลี่ยนตัวกรอง
+   เก็บไว้ข้างในแล้วรายการจะหุบเองทุกครั้งที่คนขยับตัวกรอง (กฎเดียวกับ anomOpen ของแดชบอร์ด)
+   ⚠️ **ตัวแปรของหน้านี้เอง ห้ามใช้ anomOpen ร่วมกับแดชบอร์ด** — กางที่หนึ่งแล้วอีกที่กางตามไม่ได้ */
+let wtAnomOpen = false;
+
+/* ---------- แท็บยอดค้างรายวัน: ผูกปุ่ม ----------
+ * ⚠️ ตั้งช่วงวันตั้งต้นลงช่องก่อน แล้วค่อยวาดครั้งแรก — wtReadRange() อ่านจากช่อง
+ *    ถ้าช่องยังว่าง การวาดครั้งแรกจะขึ้นข้อความ "เลือกทั้งจากวันที่และถึงวันที่" ทั้งที่ไม่ได้ผิดอะไร
+ *    (กฎเดียวกับ setDashRange() ที่ต้องมาก่อน openState()) */
+wtSetRange('wip', WT_DEFAULT_DAYS);
+wtSetRange('daily', WT_DEFAULT_DAYS);
+wtSyncInputs('wip');
+wtSyncInputs('daily');
+
+document.getElementById('wtSubFilter').addEventListener('change', renderWipTrend);
+
+document.getElementById('view-wiptrend').addEventListener('click', e=>{
+  const rb = e.target.closest('.wtrng button');
+  if(rb){
+    const key = rb.closest('.wtrng').dataset.rng;
+    wtSetRange(key, +rb.dataset.days);
+    wtSyncInputs(key);
+    wtDrawSection(key);
+    wtRenderDiff();
+    return;
+  }
+  const seg = e.target.closest('.wtseg button');
+  if(seg){
+    const key = seg.dataset.view;
+    wtMode[key] = seg.dataset.mode;
+    [...seg.parentNode.children].forEach(b=>b.setAttribute('aria-pressed', String(b === seg)));
+    wtDrawSection(key);
+    return;
+  }
+  const lg = e.target.closest('[data-wt-lg]');
+  if(lg){
+    const key = lg.dataset.wtLg, p = lg.dataset.proc;
+    /* ⚠️ ห้ามปิดจนไม่เหลือสักขั้น (กฎเดียวกับคำอธิบายสีของแดชบอร์ด)
+       ด่านตกกลับใน wtProcs() กันกราฟเปล่าไว้ก็จริง แต่ทำให้จอขัดกับตัวเอง —
+       ทุกปุ่มขีดฆ่าและ aria-pressed=false ขณะที่กราฟยังวาดครบทุกขั้น (ผู้ตรวจ #132 รันเจอ)
+       ต้องเช็กก่อนเพิ่มลง Set เพราะ Set นี้อยู่ถาวร ไม่ใช่ของใหม่ทุกครั้งแบบของแดชบอร์ด */
+    const all = key === 'wip' ? MAIN_PROCESSES : PROCESSES;
+    /* ⚠️ นับเฉพาะขั้นที่ยังมีอยู่จริง — wtHidden เก็บ id ไว้ถาวร ขั้นที่ถูกซ่อนจากแผงจัดการขั้น
+       ทีหลังจะค้างอยู่ใน Set แล้วทำให้ด่านนี้ปฏิเสธเร็วกว่าที่ควร (ผู้ตรวจ #132 รอบ 2 อ่านโค้ดเจอ) */
+    const offNow = all.filter(x=>wtHidden[key].has(x)).length;
+    if(!wtHidden[key].has(p) && offNow + 1 >= all.length){
+      toast('ต้องเหลือไว้อย่างน้อยหนึ่งขั้น');
+      return;
+    }
+    if(wtHidden[key].has(p)) wtHidden[key].delete(p); else wtHidden[key].add(p);
+    wtDrawSection(key);
+    /* ⚠️ คืนโฟกัสให้ปุ่มเดิม — คำอธิบายสีถูกวาดใหม่ทั้งแถบ ไม่คืนแล้วคนที่ไล่ด้วยแป้นพิมพ์
+       ตกไป BODY แล้วต้องเริ่มจากต้นหน้าใหม่ทุกครั้งที่ปิดขั้น (G2 · กฎเดียวกับ #dayProcBtns) */
+    const back = document.querySelector(`[data-wt-lg="${key}"][data-proc="${p}"]`);
+    if(back) back.focus();
+  }
+});
+
+['wtWipFrom', 'wtWipTo'].forEach(id=>
+  document.getElementById(id).addEventListener('change', ()=>{ wtDrawSection('wip'); wtRenderDiff(); }));
+['wtDailyFrom', 'wtDailyTo'].forEach(id=>
+  document.getElementById(id).addEventListener('change', ()=>{ wtDrawSection('daily'); wtRenderDiff(); }));
+
+/* pointer ครอบทั้งเมาส์และนิ้ว — จอสัมผัสไม่มี hover จิ้มแล้วต้องขึ้น */
+function wtOnPoint(e){
+  const t = e.target.closest ? e.target.closest('[data-wt-tip]') : null;
+  if(t) wtTipShow(wtTipHtml(t), e.clientX, e.clientY); else wtTipHide();
+}
+document.addEventListener('pointermove', wtOnPoint);
+document.addEventListener('pointerdown', wtOnPoint);
+window.addEventListener('scroll', wtTipHide, true);
+window.addEventListener('blur', wtTipHide);
 
 function renderDashFilterOptions(){
   fillSelect('dashWeekFilter', uniqueSorted(activeOrders().map(o=>o.week)));
@@ -3620,6 +4119,7 @@ function renderDashFilterOptions(){
   fillSelect('dashSubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
   fillSelect('dayWeekFilter', uniqueSorted(activeOrders().map(o=>o.week)));
   fillSelect('daySubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
+  fillSelect('wtSubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
 }
 
 /** แถบ progress 2 ส่วน: ฟ้า = ยอดที่บันทึกทันหรือก่อนวัน deadline ของขั้นนั้น, เหลือง = บันทึกหลังเลย
