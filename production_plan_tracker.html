@@ -318,12 +318,18 @@
   .wtdr .pc{color:var(--text-dim);text-align:right;min-width:42px;}
   .wtlate{margin-top:14px;border-top:1px solid var(--border);padding-top:10px;}
   .wtlh{font-size:12.5px;font-weight:700;margin-bottom:6px;}
-  .wtlr{display:grid;grid-template-columns:auto 1fr auto;gap:4px 10px;align-items:baseline;
+  /* ⚠️ สองบรรทัดต่อแถว ไม่ใช่สามคอลัมน์ — บรรทัดบนคือ PO กับจำนวนวัน (ทั้งคู่ nowrap)
+     บรรทัดล่างคือ P/N · หน่วย · ค้างที่ ซึ่งกินเต็มความกว้างของตัวเอง
+     ของเดิมช่องกลางเป็นช่องเดียวที่ยอมหาย พอเติม P/N เข้าไป "ค้างที่ <ขั้น>" ก็ถูกตัดหาย
+     ที่จอ 1024 ซึ่งเป็นจอหน้างาน (ผู้ตรวจ #132 รอบ 11 วัดได้ ช่องมี 199px แต่ต้องใช้ 207–268px)
+     กล่องไม่มี max-height จึงมีที่ในแนวตั้งอยู่แล้ว · ความยาว P/N กับชื่อขั้นตั้งเองได้
+     การแย่งที่กันในบรรทัดเดียวจึงไม่มีทางพอแน่นอน */
+  .wtlr{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:baseline;
     padding:4px 0;border-bottom:1px dashed var(--border);font-size:12.5px;}
   .wtlr:last-child{border-bottom:none;}
   .wtlr .po{font-weight:700;white-space:nowrap;}
-  .wtlr .wh{color:var(--text-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .wtlr .dd{font-weight:700;color:var(--red);white-space:nowrap;}
+  .wtlr .wh{grid-column:1/-1;color:var(--text-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wtlr .dd{font-weight:700;color:var(--red);white-space:nowrap;text-align:right;}
   .wtcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px;}
   .wtcard{border:1px solid var(--border);border-radius:10px;padding:12px 14px;min-width:0;}
   .wtcard .ch{display:flex;align-items:center;gap:7px;margin-bottom:2px;}

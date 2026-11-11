@@ -3821,14 +3821,22 @@ function wtRenderDue(sub){
 
   const top = lates.slice(0, 5);
   document.getElementById('wtLate').innerHTML = (top.length
-    ? top.map(x=>`<div class="wtlr"><span class="po">${escapeHtml(x.o.poNo)}</span>`
-        // P/N ต้องอยู่ด้วย — PO เดียวกันคนละ P/N มีได้สองใบ ไม่งั้นได้สองแถวที่อ่านเหมือนกันทุกตัวอักษร
-        // (กฎเดียวกับ data-anom-row = poNo|pn · ผู้ตรวจ #132 รอบ 10) · escapeHtml ครอบ String() ให้ P/N ที่เป็นตัวเลข
-        + `<span class="wh">${escapeHtml(x.o.pn)} · ${sub ? '' : escapeHtml(x.o.subName || '—') + ' · '}`
-        + `ค้างที่ ${escapeHtml(x.at ? ((PROCESS_BY_ID[x.at] || {}).short || x.at) : '—')}</span>`
+    ? top.map(x=>{
+        /* P/N ต้องอยู่ด้วย — PO เดียวกันคนละ P/N มีได้สองใบ ไม่งั้นได้สองแถวที่อ่านเหมือนกันทุกตัวอักษร
+           (กฎเดียวกับ data-anom-row = poNo|pn · ผู้ตรวจ #132 รอบ 10) · escapeHtml ครอบ String() ให้ P/N ที่เป็นตัวเลข
+           ⚠️ ลำดับใน DOM ต้องเป็น po → dd → wh เพราะ .wh กินเต็มบรรทัดล่าง (grid-column:1/-1)
+              สลับลำดับเมื่อไหร่ grid จะดันจำนวนวันลงไปอยู่บรรทัดที่สามเอง
+           ⚠️ `|| '—'` ให้ P/N ด้วย เหมือน subName ข้าง ๆ — ใบที่ซิงค์มาโดย pn ว่าง
+              จะได้แถวขึ้นต้นด้วย " · " ลอย ๆ (ผู้ตรวจ #132 รอบ 11) */
+        const where = `${escapeHtml(x.o.pn || '—')} · ${sub ? '' : escapeHtml(x.o.subName || '—') + ' · '}`
+          + `ค้างที่ ${escapeHtml(x.at ? ((PROCESS_BY_ID[x.at] || {}).short || x.at) : '—')}`;
+        return `<div class="wtlr"><span class="po">${escapeHtml(x.o.poNo)}</span>`
         // กิ่ง null เป็นด่านกันพลาด ไม่ใช่กรณีที่เกิดจริง — ใบที่สถานะ late ต้องมีขั้นที่เลยกำหนดเสมอ
         + `<span class="dd">${x.over == null ? 'ไม่ได้ตั้งวันกำหนด'
-            : 'เลยกำหนด ' + escapeHtml((PROCESS_BY_ID[x.lateP] || {}).short || x.lateP) + ' มา ' + numFmt(x.over) + ' วัน'}</span></div>`).join('')
+            : 'เลยกำหนด ' + escapeHtml((PROCESS_BY_ID[x.lateP] || {}).short || x.lateP) + ' มา ' + numFmt(x.over) + ' วัน'}</span>`
+          // title เป็นตาข่ายชั้นสอง เผื่อ P/N กับชื่อขั้นยาวจนบรรทัดล่างยังไม่พอ
+          + `<span class="wh" title="${where}">${where}</span></div>`;
+      }).join('')
     : '<div class="wtnote">ไม่มีใบที่ล่าช้า</div>')
     + `<div class="wtnote">เกณฑ์เดียวกับป้าย “ล่าช้า” ที่ใช้อยู่ทั้งระบบ (A5) ·`
     + ' <b>จำนวนวันนับจากกำหนดแรกที่เลยมาแล้ว ไม่ใช่กำหนดส่ง</b> จึงเทียบข้ามแถวได้ และใช้เรียงลำดับกล่องนี้ ·'

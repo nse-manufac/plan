@@ -619,6 +619,37 @@ test('รายการย้อนแย้งต้องได้เต็�
   expect(inner, 'ต้องได้เกือบเต็มความกว้างของแถบ').toBeGreaterThan(outer * 0.9);
 });
 
+test('แถวในกล่องใบที่ล่าช้าต้องอ่านได้ครบที่จอ 1024 — P/N ห้ามเบียด “ค้างที่” หาย', async ({ page }) => {
+  /* 🚨 ก่อนแก้ แถวเป็นสามคอลัมน์ `auto 1fr auto` และ PO กับจำนวนวันเป็น nowrap ทั้งคู่
+     ช่องกลางจึงเป็นช่องเดียวที่ยอมหาย · พอเติม P/N เข้าไป "ค้างที่ <ขั้น>" ก็ถูกตัดหาย
+     ผู้ตรวจ #132 รอบ 11 วัดที่ viewport 1024 (จอหน้างาน): ช่องมี 199px แต่ต้องใช้ 207–268px
+     ไม่มี title และไม่มีแถบเลื่อน จึงอ่านส่วนที่หายไม่ได้เลย
+     ⚠️ ช่วงที่โดนคือ ~900–1100px เท่านั้น — ต่ำกว่า 900 ตกเป็นคอลัมน์เดียว · 1440 กว้างพอ
+        ฉากนี้จึงต้องตั้ง viewport ที่ 1024 เป๊ะ ไม่งั้นเขียวเองโดยไม่ได้ตรวจอะไร
+     ⚠️ P/N ของ fixture ยาว 10 ตัว ซึ่งเป็นความยาวของ P/N จริงในชุดเทสนี้ */
+  await page.setViewportSize({ width: 1024, height: 900 });
+  // รหัส PO ของจริงยาว ~10 ตัว ไม่ใช่ AA-1 — PO สั้นทำให้เหลือที่พอ แล้วเทสเขียวเองโดยไม่ได้ตรวจอะไร
+  const o = Object.assign(order('TM5201U101', 100, '2026-01-01T00:00:00.000Z'), { orderDate: isoAgo(30) });
+  await open(page, [o]);
+
+  /* ⚠️ วัด **โครงสร้าง** ไม่ใช่แค่ "ถูกตัดไหม" — การถูกตัดขึ้นกับความยาวของ P/N · รหัส PO
+     และชื่อขั้น ซึ่งตั้งเองได้ทั้งหมด · fixture ที่สั้นพอดีจะเขียวเองทั้งที่โครงยังผิด (เจอเองตอนเขียน)
+     สิ่งที่ต้องคุมคือ "บรรทัดล่างกินเต็มแถวของตัวเอง" ซึ่งทำให้ไม่มีอะไรมาแย่งที่ได้เลย */
+  const m = await page.locator('#wtLate .wtlr').first().evaluate(row => {
+    const wh = row.querySelector('.wh'), po = row.querySelector('.po');
+    return { txt: wh.textContent, title: wh.getAttribute('title'),
+      clipped: wh.scrollWidth > wh.clientWidth + 1,
+      ownLine: wh.getBoundingClientRect().top > po.getBoundingClientRect().top + 2,
+      fullWidth: wh.getBoundingClientRect().width > row.getBoundingClientRect().width - 2 };
+  });
+  expect(m.txt, 'ต้องมี P/N').toContain(PN);
+  expect(m.txt, 'ต้องมี "ค้างที่" ครบ').toContain('ค้างที่ Winding');
+  expect(m.ownLine, 'ต้องอยู่บรรทัดของตัวเอง ไม่แย่งที่กับ PO และจำนวนวัน').toBe(true);
+  expect(m.fullWidth, 'ต้องกินเต็มความกว้างของแถว').toBe(true);
+  expect(m.clipped, 'ข้อความต้องไม่ถูกตัด').toBe(false);
+  expect(m.title, 'ต้องมี title เป็นตาข่ายชั้นสอง').toBe(m.txt);
+});
+
 test('กราฟ PO ต้องเห็นครบทุกขั้นในกรอบที่จอ 1024 แม้มีเจ็ดขั้น', async ({ page }) => {
   /* ⚠️ ใบนี้ย่อกราฟเหลือครึ่งจอตามที่เจ้าของสั่ง กล่องจึงเหลือ ~455px
      ของเดิมกินช่องละ 110px → 7 ขั้นกิน 770px แล้ว Inspection กับ ส่งของ **อยู่นอกกรอบตั้งแต่เปิดมา**
