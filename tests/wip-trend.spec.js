@@ -1067,3 +1067,35 @@ test('กางคำอธิบายค้างไว้ แล้วหน�
   expect(await page.evaluate(() => document.activeElement.tagName),
     'โฟกัสต้องยังอยู่ที่ปุ่มกาง ไม่ตกไป BODY').toBe('SUMMARY');
 });
+
+test('ผลรวมของกราฟยอดค้าง = ยอดสั่ง ลบ ยอดส่งแล้ว — แต่ใบย้อนแย้งไม่หักล้าง และนั่นถูก', async ({ page }) => {
+  /* 🚨 ข้อนี้ตรึงคำรับรองที่ `CLAUDE.md` เขียนไว้ ไม่ให้มันเป็นแค่ประโยคในเอกสาร
+     ใบปกติ: ของค้างทุกขั้นบวกกันแล้วหักล้างกันหมด เหลือ "ของที่ยังไม่ได้ส่ง" พอดี
+     🚨 ใบย้อนแย้ง (คีย์ขั้นหลังมากกว่าขั้นหน้า) **ไม่หักล้าง** เพราะ Math.min(…, prev)
+        ครอบของที่ไหลต่อไม่ให้เกินของที่ไหลเข้า · ของที่ไม่เคยไหลผ่านขั้นต้นน้ำจึงไม่ถูกหักออก
+        ถ้ามีใครไป "แก้" ให้สองเลขเท่ากัน ยอดค้างรวมจะเกินยอดสั่ง ซึ่งเป็นเลขที่ไม่มีอยู่จริง
+        (ผู้ตรวจ #133 ทักว่าประโยคใน CLAUDE.md ครอบไม่ครบ — ข้อนี้คือสิ่งที่กันไม่ให้ลืมอีก) */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], [
+    rec('w1', 'AA-1|' + PN, 'winding', 800, isoAgo(3)),
+    rec('a1', 'AA-1|' + PN, 'assembly', 700, isoAgo(3)),
+    rec('s1', 'AA-1|' + PN, 'support', 700, isoAgo(3)),
+    rec('i1', 'AA-1|' + PN, 'inspection', 600, isoAgo(3)),
+    rec('p1', 'AA-1|' + PN, 'shipping', 500, isoAgo(3))
+  ]);
+  const clean = await totalsRow(page, 'wtWip');
+  expect(clean[clean.length - 1], 'ใบปกติ: 1,000 − ส่งแล้ว 500').toBe(500);
+  expect(await page.locator('#wtAnom').evaluate(el => getComputedStyle(el).display),
+    'ฉากนี้ต้องไม่ใช่ใบย้อนแย้ง ไม่งั้นครึ่งแรกของข้อนี้ไม่ได้ตรวจอะไร').toBe('none');
+});
+
+test('ใบย้อนแย้ง — ผลรวมต้องไม่ถูกหักด้วยยอดที่ไม่เคยไหลผ่านขั้นต้นน้ำ', async ({ page }) => {
+  // ยอดสั่ง 1,000 · winding 100 · shipping 500 (ย้อนแย้ง) → ของที่ไหลต่อถูกครอบไว้ที่ 100
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], [
+    rec('w1', 'AA-1|' + PN, 'winding', 100, isoAgo(3)),
+    rec('p1', 'AA-1|' + PN, 'shipping', 500, isoAgo(3))
+  ]);
+  const t = await totalsRow(page, 'wtWip');
+  expect(t[t.length - 1], 'ของ 500 ที่ไม่เคยผ่าน winding ห้ามถูกหักออกจากของค้าง').toBe(1000);
+  expect(await page.locator('#wtAnom').evaluate(el => getComputedStyle(el).display),
+    'และต้องมีแถบฟ้องว่าใบนี้ย้อนแย้ง ไม่ใช่ปล่อยให้คนงงกับเลขเอง').toBe('flex');
+});
