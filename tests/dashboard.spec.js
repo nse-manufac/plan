@@ -1,0 +1,90 @@
+// แท็บ Dashboard ถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569 (เจ้าของสั่ง · PR #134)
+//
+// ไฟล์นี้เคยมีเทสของหน้านั้น 57 ข้อ · ของที่ยังมีความหมายย้ายไปอยู่กับหน้าที่ยังอยู่แล้ว
+//   · รายการใบย้อนแย้ง  → tests/anomaly-list.spec.js (แถบ #wtAnom ของหน้ายอดค้างรายวัน)
+//   · รูปร่างของกราฟแท่ง → tests/chart-bars.spec.js  (กราฟยอดผลิตรายวันของหน้าเดียวกัน)
+//
+// ⚠️ **ไฟล์นี้ไม่ได้ถูกลบ และไม่ควรลบ** — มันเปลี่ยนหน้าที่จาก "ตรวจหน้าแดชบอร์ด"
+//    เป็น "ตรวจว่าหน้าแดชบอร์ดไม่กลับมาเอง" ซึ่งเป็นกฎที่เจ้าของสั่งไว้ตรง ๆ และเป็นกฎ
+//    ที่ไม่มีอะไรอื่นคุม · CLAUDE.md เขียนว่า "ห้ามเอาแท็บนี้กลับมาเองโดยไม่ได้สั่ง"
+//    ถ้าวันหนึ่งเจ้าของสั่งให้เอากลับมาจริง ๆ ให้ลบเทสในไฟล์นี้ทิ้งพร้อมกับใบที่เอากลับมา
+//    — ตอนนั้นจะมีคนสั่ง ไม่ใช่ agent ตัดสินเอง
+
+const { test, expect } = require('@playwright/test');
+const { waitReady } = require('./app-state');
+const { appSources } = require('./app-source');
+
+const APP = '/production_plan_tracker.html';
+const K_STATE = 'tue_order_tracker_v1';
+const PN = '9000000002';
+
+const order = (poNo, qty) => ({
+  id: poNo + '|' + PN, week: 'WK 34', poNo, pn: PN, subName: 'TUE-U', orderQty: qty,
+  orderDate: '2026-08-03', status: 'active',
+  importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false
+});
+
+async function open(page, orders = [order('AA-1', 1000)]) {
+  await page.addInitScript(([k, o]) => localStorage.getItem(k) || localStorage.setItem(k, JSON.stringify({
+    version: 1, deviceName: 't',
+    deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
+    chartPref: { mode: '14', from: '', to: '' },
+    orders: o, records: [], deliveryNotes: [], deltaWip: [], importHistory: []
+  })), [K_STATE, orders]);
+  await page.goto(APP);
+  await waitReady(page);
+}
+
+test('แท็บ Dashboard ต้องไม่มีอยู่ — ทั้งปุ่มและตัวหน้า', async ({ page }) => {
+  /* 🔒 เจ้าของสั่งลบทั้งแท็บเมื่อ 12 พ.ย. 2569 หลังถามยืนยันเรื่องของสามอย่างที่ไม่มีที่อื่นแทน
+     (หัวเลขรวม · บัญชีของค้างรายขั้น · ตารางราย P/N) — "ลบทั้งแท็บไปเลยครับ"
+     ข้อนี้คือสิ่งที่ทำให้คำสั่งนั้นมีผลต่อไป แม้คนที่มาทีหลังจะไม่ได้อ่าน CLAUDE.md */
+  await open(page);
+  await expect(page.locator('.tab-btn[data-tab="dashboard"]'), 'ปุ่มแท็บต้องไม่มี').toHaveCount(0);
+  await expect(page.locator('#view-dashboard'), 'ตัวหน้าต้องไม่มี').toHaveCount(0);
+  // และแท็บที่เหลือต้องครบเจ็ด ไม่ใช่หายตามไปด้วย
+  expect(await page.locator('.tab-btn').evaluateAll(b => b.map(x => x.dataset.tab)))
+    .toEqual(['import', 'entry', 'daily', 'delivery', 'fg', 'wiptrend', 'data']);
+});
+
+test('ของที่ย้ายบ้านต้องยังทำงานอยู่ — ไม่ได้ถูกลบตามแท็บไปด้วย', async ({ page }) => {
+  /* ⚠️ สองอย่างนี้เคยอยู่บนแดชบอร์ดและถูก "ยืม" ไปใช้ที่หน้ายอดค้างรายวัน
+     ตอนลบแท็บจึงเสี่ยงที่สุดที่จะถูกลบติดมือไปด้วย (anomalyListHtml · drawGroupedBars)
+     เทสเต็มของทั้งสองอย่างอยู่ที่ tests/anomaly-list.spec.js กับ tests/chart-bars.spec.js
+     ข้อนี้เป็นด่านหยาบ ๆ ว่ามันยังถูกวาดอยู่จริงหลังลบแท็บ */
+  await open(page);
+  await page.click('.tab-btn[data-tab="wiptrend"]');
+  await page.waitForTimeout(350);
+  await expect(page.locator('#wtDaily svg'), 'กราฟยอดผลิตรายวันต้องยังวาดอยู่').toBeVisible();
+  await expect(page.locator('#wtPo svg'), 'กราฟ PO ต้องยังวาดอยู่').toBeVisible();
+  expect(await page.evaluate(() => typeof anomalyListHtml),
+    'ตัวสร้างรายการใบย้อนแย้งต้องยังอยู่ — แถบ #wtAnom เรียกใช้มัน').toBe('function');
+});
+
+test('ซอร์สต้องไม่เหลือซากของหน้าแดชบอร์ด — กันการเอากลับมาแบบครึ่ง ๆ', async ({ page }) => {
+  /* 🚨 สิ่งที่กันคือ "เอากลับมาโดยไม่มีใครสั่ง" ซึ่งมักเริ่มจากคนก๊อปโค้ดเก่าบางส่วนกลับมา
+     แล้วเหลือ id ที่ไม่มีใครวาด · ตัวจับ event ที่ชี้ไปที่ของที่ไม่มี · หรือฟังก์ชันตายที่
+     อ่านแล้วเข้าใจว่าหน้านั้นยังอยู่ · ตรวจทุกไฟล์ที่หน้าโหลด ไม่ใช่แค่ HTML (tests/app-source.js)
+     ⚠️ ค้นเฉพาะชื่อที่เป็นของหน้านั้นล้วน ๆ — ไม่เอาชื่อที่ใช้ร่วมกับหน้าอื่น
+        เช่น `renderFilterOptions` (เดิมชื่อ renderDashFilterOptions) ยังเติมช่องเลือกให้สามหน้าที่เหลือ
+     ⚠️ ข้ามคอมเมนต์ — ประวัติที่เขียนว่า "เคยมี X ของแดชบอร์ด" คือสิ่งที่อยากให้เหลือไว้ */
+  const DEAD = ['view-dashboard', 'dashTable', 'wipCards', 'wipScopeNote', 'chartWrap', 'chartLegend',
+    'chartRangeCaption', 'dashSubFilter', 'dashWeekFilter', 'dashStatusFilter', 'dashWipFilter',
+    'dashHideDone', 'dashPresets', 'btnPrintDash', 'printHeader', 'printMeta',
+    'renderWipCards', 'renderDashTable', 'renderDashScoped', 'dashFilteredRows', 'dashRangeRecords',
+    'renderChartLegend', 'getChartRange', 'chartHiddenProcs', 'fillPrintHeader', 'buildCumSplitMap'];
+  /* ⚠️ ต้องลบคอมเมนต์ออกทั้งก้อน ไม่ใช่ดูแค่ตัวอักษรหน้าบรรทัด — คอมเมนต์ก้อนของ repo นี้
+     ขึ้นบรรทัดต่อไปโดยไม่มี `*` นำ การดูแค่ตัวแรกจึงจับประวัติที่ตั้งใจเก็บไว้เป็นของจริง
+     (เจอเองตอนรันครั้งแรก) · แทนที่ด้วยช่องว่างเพื่อให้เลขบรรทัดยังตรงของจริง */
+  const strip = t => t
+    .replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '))
+    .replace(/<!--[\s\S]*?-->/g, m => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:"'`])\/\/[^\n]*/g, (m, p) => p);
+  const hits = [];
+  for (const { file, text } of appSources()) {
+    strip(text).split(/\r?\n/).forEach((line, i) => {
+      for (const name of DEAD) if (line.includes(name)) hits.push(`${file}:${i + 1} ${name}`);
+    });
+  }
+  expect(hits, 'ของพวกนี้ถูกลบไปพร้อมแท็บแล้ว เหลืออยู่ = มีคนเอากลับมาครึ่งเดียว').toEqual([]);
+});
