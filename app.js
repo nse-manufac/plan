@@ -3981,7 +3981,7 @@ document.addEventListener('pointerdown', wtOnPoint);
 window.addEventListener('scroll', wtTipHide, true);
 window.addEventListener('blur', wtTipHide);
 
-/* ชื่อเดิม renderFilterOptions() — เปลี่ยนชื่อเมื่อ 12 พ.ย. 2569 ตอนลบแท็บ Dashboard
+/* เดิมชื่อ renderDashFilterOptions() — เปลี่ยนเมื่อ 12 พ.ย. 2569 ตอนลบแท็บ Dashboard
    มันเติมรายชื่อให้ช่องเลือกของสามหน้า (คีย์ยอด · ยอดรายวันทุกขั้น · ยอดค้างรายวัน) ไม่ใช่ของแดชบอร์ดอย่างเดียว */
 function renderFilterOptions(){
   fillSelect('entryWeekFilter', uniqueSorted(activeOrders().map(o=>o.week)));
@@ -5493,7 +5493,7 @@ function renderAll(){
   if(document.getElementById('view-fg').classList.contains('active')) renderFg();
   /* log ใบส่งสินค้าซิงค์ข้ามเครื่อง — เครื่องที่นั่งค้างหน้านี้ไว้ต้องเห็นใบที่เครื่องอื่นเพิ่งออก
    * ⚠️ เช็กแท็บก่อนเหมือน renderFg() บรรทัดบน — ทุกแถว log เรียก deliveryGroups() ใหม่หนึ่งรอบ
-   *    ปล่อยให้วิ่งทุกครั้งที่ซิงค์ เครื่องที่นั่งอยู่หน้า Dashboard จะเสียเวลาฟรีทุกรอบ
+   *    ปล่อยให้วิ่งทุกครั้งที่ซิงค์ เครื่องที่นั่งอยู่หน้าอื่นจะเสียเวลาฟรีทุกรอบ
    *    (ผู้ตรวจ #103 วัดได้ 121 ms ที่ log 300 แถว / 4,000 record) */
   if(document.getElementById('view-delivery').classList.contains('active')) renderDnLog();
   /* เครื่องที่นั่งค้างหน้านี้ไว้ ต้องเห็นยอดที่เครื่องอื่นเพิ่งคีย์หลังซิงค์
@@ -5658,7 +5658,8 @@ document.getElementById('btnRecalcSubName').addEventListener('click', ()=>{
 });
 
 /** ส่วนของหน้าจอที่มีหนึ่งช่องต่อหนึ่งขั้น — วาดจาก PROCESSES ทั้งหมด ไม่มี HTML ตายตัวของขั้นไหนเหลือ
- *  หัวจอ · ปุ่มเลือกขั้นหน้าคีย์ยอด · ตัวกรองค้างอยู่ที่ขั้น · ตัวกรองขั้นในตารางแก้ไข · ช่องวันกำหนดส่ง
+ *  หัวจอ · ปุ่มเลือกขั้นหน้าคีย์ยอด · ตัวกรองขั้นในตารางแก้ไข · ช่องวันกำหนดส่ง
+ *  (ตัวกรอง "ค้างอยู่ที่ขั้น" ถูกลบไปพร้อมแท็บ Dashboard เมื่อ 12 พ.ย. 2569)
  *
  *  ⚠️ เดิมปุ่มเป็น HTML ตายตัวแต่ผูกด้วย PROCESSES.forEach — เพิ่มขั้นโดยลืมเพิ่มปุ่ม
  *     getElementById คืน null แล้ว throw ตอนโหลด โค้ดส่วน Init ไม่ถูกรัน แอปพังทั้งหน้า
@@ -5937,8 +5938,11 @@ document.getElementById('processTable').addEventListener('click', e=>{
      บอกว่าแท่งจะหาย/จะกลับมาคือส่งคนไปหาของที่ไม่มี และขัดกับอีกสามที่ที่แอปเขียนไว้เอง
      (ป้ายนับแยก · คำยืนยันตอนเพิ่มขั้น · title ของช่องติ๊ก) — ผู้ตรวจ #123 รอบ 12
      ⚠️ **ข้อความนี้เคยเขียนว่า "คอลัมน์ · แถวในบัญชีของค้าง" ซึ่งเป็นของบนแดชบอร์ด**
-     แท็บนั้นถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569 · ของที่หายจริงตอนนี้คือปุ่มเลือกขั้นกับแท่งในกราฟ */
-  const list = 'ปุ่มเลือกขั้น · แท่งในกราฟยอดผลิตรายวัน'
+     แท็บนั้นถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569 · ของที่หายจริงตอนนี้คือปุ่มเลือกขั้นกับแท่งในกราฟ
+     ⚠️ **ต้องนับกราฟ PO ด้วย** — `drawStageBars(#wtPo, PROCESSES, …)` วาดจากทุกขั้น
+     ซ่อนขั้นแล้วแท่งของมันหายจากกราฟนั้นเหมือนกัน · ของเดิมก็ไม่ได้บอก แต่จังหวะแก้คือตอนนี้
+     (ผู้ตรวจ #134 รอบ 3) · กราฟยอดค้างใช้ MAIN_PROCESSES จึงยังเป็นข้อที่ขั้นนับแยกไม่มี */
+  const list = 'ปุ่มเลือกขั้น · แท่งในกราฟ PO · แท่งในกราฟยอดผลิตรายวัน'
     + (p.standalone ? '' : ' · แท่งในกราฟยอดค้างรายวัน');
   const msg = p.hidden ? `เลิกซ่อนขั้น "${p.label}"? ${list} จะกลับมาทุกเครื่อง`
     : `ซ่อนขั้น "${p.label}"? ${list} จะหายไปจากทุกเครื่อง`
@@ -6034,10 +6038,10 @@ document.getElementById('btnSaveSettings').addEventListener('click', ()=>{
   state.deadlineOffsets = offsets;
   saveState();
   toast('บันทึกการตั้งค่าแล้ว');
-  /* ⚠️ วันกำหนดของแต่ละขั้นมีผลกับป้ายสถานะและกล่องใบที่ล่าช้าของหน้ายอดค้างรายวัน
-     ต้องวาดใหม่ตอนกดบันทึก ไม่งั้นคนที่เปิดหน้านั้นค้างไว้จะเห็นสีเก่าจนกว่าจะสลับแท็บ */
-  if(document.getElementById('view-wiptrend').classList.contains('active')) renderWipTrend();
-  if(document.getElementById('view-daily').classList.contains('active')) renderDayTable();
+  /* ⚠️ **ไม่ต้องวาดหน้าอื่นใหม่ตรงนี้ และห้ามเติมกลับ** — ฟอร์มนี้อยู่ในแท็บ "ข้อมูล & แชร์"
+     แท็บอื่นจึงไม่มีทาง active ขณะกดปุ่มนี้ · เขียนเป็น `if(active) render…` ก็เป็นโค้ดตาย
+     (ผู้ตรวจ #134 รอบ 1 ทัก · ของเดิมเรียก renderWipCards/renderDashTable ตรง ๆ ไม่มีด่าน
+      จึงวาดจริงแม้มองไม่เห็น) · วันกำหนดที่เพิ่งบันทึกถูกอ่านใหม่ตอนกดเข้าแท็บนั้นอยู่แล้ว */
   if(syncCfg.url){ gsApi('pushSettings', {deadlineOffsets: state.deadlineOffsets}).catch(()=>{}); }
 });
 
