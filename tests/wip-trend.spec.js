@@ -718,7 +718,7 @@ test('รายการขั้นเปลี่ยนกลางทาง �
     'id ที่ไม่มีในรายการขั้นแล้วต้องถูกล้างออก').toBe(false);
 });
 
-test('การ์ดแยกรายขั้นต้องเลื่อนลงสุดให้ — คำกำกับเขียนว่าแถวล่างสุดคือล่าสุด', async ({ page }) => {
+test('การ์ดแยกรายขั้นต้องเลื่อนลงสุดให้ — คำอธิบายเขียนว่าแถวล่างสุดคือล่าสุด', async ({ page }) => {
   /* ⚠️ การ์ดสูงได้ไม่เกิน 360px ช่วง 15–21 วันจึงล้น แล้วเปิดมาเห็นวันเก่าสุด
      ซึ่งขัดกับคำกำกับใต้การ์ด และต้องเลื่อนแยกทีละใบ (ผู้ตรวจ #132 รอบ 6 วัดได้ scrollTop 0)
      ปุ่มสำเร็จรูปไม่โดน (7/14 วันสั้นพอ · 30/90 วันกลายเป็นรายสัปดาห์) ช่องกรอกเองถึงจะโดน */
@@ -1035,6 +1035,16 @@ test('คำอธิบายของทุกหัวข้อต้อง�
     await expect(box.locator('.desc'), 'กดแล้วต้องอ่านได้จริง').toBeVisible();
     expect((await box.locator('.desc').innerText()).length, 'ต้องมีเนื้อความจริง').toBeGreaterThan(40);
   }
+
+  /* 🚨 **สามประโยคนี้ `CLAUDE.md` สั่งว่าห้ามถอด** — การพับไว้ไม่ใช่การถอด แต่ถ้าวันหนึ่ง
+     มีคนลบเนื้อในกล่องทิ้งเพราะ "ไม่มีใครอ่านอยู่แล้ว" ก็จะไม่มีอะไรฟ้องเลย
+     ข้อข้างบนวัดแค่ความยาว ซึ่งเขียวได้ด้วยข้อความอะไรก็ได้ (ผู้ตรวจ #133 รอบ 2 ทัก)
+     ทั้งสามข้อคือสิ่งที่กันไม่ให้คนเอาเลขของสองที่มาเทียบกันผิดคู่แล้วเลิกเชื่อทั้งหน้า */
+  const all = (await page.locator('#view-wiptrend .wtexp .desc').allTextContents()).join(' ');
+  expect(all, 'สามกราฟใช้ชุดขั้นไม่เท่ากัน — ต้องบอกว่าขั้นนับแยกไม่มีในกราฟยอดค้าง')
+    .toContain('ขั้นนับแยกไม่มีในกราฟนี้');
+  expect(all, 'จำนวน PO ของแต่ละขั้นเอามาบวกกันไม่ได้').toContain('ห้ามเอามาบวกกัน');
+  expect(all, 'โดนัทกับกราฟแท่งนับคนละชุดใบ').toContain('ไม่ใช่ชุดใบเดียวกับแท่งทางซ้าย');
 });
 
 test('กางคำอธิบายค้างไว้ แล้วหน้าวาดใหม่เอง ต้องไม่หุบและโฟกัสต้องไม่ตก (G2)', async ({ page }) => {
@@ -1084,4 +1094,43 @@ test('ใบย้อนแย้ง — ผลรวมต้องไม่ถ
   expect(t[t.length - 1], 'ของ 500 ที่ไม่เคยผ่าน winding ห้ามถูกหักออกจากของค้าง').toBe(1000);
   expect(await page.locator('#wtAnom').evaluate(el => getComputedStyle(el).display),
     'และต้องมีแถบฟ้องว่าใบนี้ย้อนแย้ง ไม่ใช่ปล่อยให้คนงงกับเลขเอง').toBe('flex');
+});
+
+test('เลขรวมของวันขวาสุดต้องไม่ถูกขอบกราฟตัด — ที่จอ 819 ช่วง 21 วัน', async ({ page }) => {
+  /* 🚨 กราฟไม่มีที่ว่างฝั่งขวา (`groupW` คิดจาก `w-padL`) เลขรวมวางกลางช่องของวันนั้น
+     ครึ่งขวาของเลขวันสุดท้ายจึงล้นออกนอก `viewBox` แล้วถูกตัด **โดยไม่มีแถบเลื่อนให้ไปดู**
+     `2,000,000` เหลือ `2,000,00` ซึ่ง **ยังอ่านออกว่าเป็นเลข** คนอ่านตัวจริงจะอ่านว่า
+     ยอดวันล่าสุดตกไปสิบเท่า — แย่กว่าเลขหายทั้งตัว (ผู้ตรวจ #133 รอบ 2 วัดได้ล้น 11px)
+     ⚠️ **ฉากต้องเป็น 21 วันที่จอ 819** — เกิดเฉพาะตอน `(จำนวนวัน−1)` หารด้วย `labelStep` ลงตัว
+        คือวันสุดท้ายเป็นวันที่ถูกติดป้ายพอดี · ฉาก 14 วัน (labelStep 2) ป้ายสุดท้ายเป็นวันที่ 13
+        จึงเขียวเองโดยไม่ได้ตรวจอะไร · 21 คือช่วงรายวันที่ยาวที่สุดก่อนถูกรวมเป็นสัปดาห์
+     ⚠️ และต้องวัด **กับขอบ svg** ไม่ใช่แค่ระยะระหว่างเลขสองตัว — เทสเดิมวัดแต่ระยะระหว่างเลข */
+  await page.setViewportSize({ width: 819, height: 900 });
+  const orders = [];
+  for (let k = 0; k < 20; k++) {
+    const po = 'TM52' + (10 + k) + 'U101';
+    orders.push(Object.assign(order(po, 100000, '2026-08-01T00:00:00.000Z'), { id: po + '|' + PN }));
+  }
+  await open(page, orders);
+  await page.fill('#wtWipFrom', isoAgo(20));
+  await page.fill('#wtWipTo', isoAgo(0));
+  await page.waitForTimeout(350);
+
+  const m = await page.evaluate(() => {
+    const box = document.querySelector('#wtWip .chart-wrap'), svg = box.querySelector('svg');
+    const sr = svg.getBoundingClientRect();
+    const t = [...svg.querySelectorAll('text[font-weight="700"]')].map(e => e.getBoundingClientRect());
+    let gap = 1e9;
+    for (let i = 1; i < t.length; i++) gap = Math.min(gap, t[i].left - t[i - 1].right);
+    return { n: t.length, digits: svg.querySelector('text[font-weight="700"]').textContent.length,
+      right: Math.max(...t.map(r => r.right)) - sr.right,
+      left: sr.left - Math.min(...t.map(r => r.left)),
+      gap, scroll: box.scrollWidth - box.clientWidth };
+  });
+  expect(m.digits, 'ฉากนี้ต้องมียอดเจ็ดหลักจริง ไม่งั้นไม่ได้ตรวจอะไร').toBeGreaterThanOrEqual(9);
+  expect(m.n, 'ต้องมีเลขให้ตรวจหลายตัว').toBeGreaterThan(5);
+  expect(m.scroll, 'ไม่มีแถบเลื่อน = ของที่ล้นออกไปคือของที่หายไปเลย').toBe(0);
+  expect(m.right, 'เลขตัวขวาสุดต้องอยู่ในกรอบ').toBeLessThanOrEqual(0);
+  expect(m.left, 'และตัวซ้ายสุดก็ต้องอยู่ในกรอบ').toBeLessThanOrEqual(0);
+  expect(m.gap, 'ย่อช่องแล้วเลขสองตัวที่ติดกันต้องยังไม่ชนกัน').toBeGreaterThan(0);
 });
