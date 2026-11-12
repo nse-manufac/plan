@@ -1148,3 +1148,22 @@ test('เลขรวมของวันขวาสุดต้องไม�
   expect(m.left, 'และตัวซ้ายสุดก็ต้องอยู่ในกรอบ').toBeLessThanOrEqual(0);
   expect(m.gap, 'ย่อช่องแล้วเลขสองตัวที่ติดกันต้องยังไม่ชนกัน').toBeGreaterThan(0);
 });
+
+test('คำอธิบายที่พับไว้ต้องติดกระดาษ — บนกระดาษไม่มีปุ่มให้กด', async ({ page }) => {
+  /* 🚨 ก่อนใบนี้ข้อความพวกนี้อยู่นอกกล่องพับ จึงพิมพ์ติดไปด้วย · พอพับแล้วมันหายจากกระดาษเงียบ ๆ
+     บนจอยังกดดูได้ แต่บนกระดาษไม่มีอะไรให้กด — ของที่หายไปจึงหายจริง
+     🚨 **ต้องเป็น `::details-content` ห้ามใช้ `display`** — Chromium ซ่อนเนื้อของ <details>
+        ที่ปิดอยู่ด้วย `content-visibility` · เขียน `display:block` ทับแล้วไม่มีผล
+        (ลองเองแล้ววัดแล้ว · เทสข้อนี้คือสิ่งที่กันไม่ให้ใครเปลี่ยนกลับไปใช้ `display`)
+     ⚠️ ต้องวัดด้วย `checkVisibility()` ไม่ใช่ `getComputedStyle().display`
+        เพราะ `content-visibility` ไม่ได้เปลี่ยนค่า `display` เลย — วัดผิดตัวจะเขียวเองทั้งที่ยังหาย */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  const desc = page.locator('#view-wiptrend .wtexp .desc').first();
+  expect(await desc.evaluate(el => el.checkVisibility()), 'บนจอยังต้องพับอยู่').toBe(false);
+
+  await page.emulateMedia({ media: 'print' });
+  const m = await desc.evaluate(el => ({ vis: el.checkVisibility(), len: el.innerText.length }));
+  expect(m.vis, 'บนกระดาษต้องกางเอง').toBe(true);
+  expect(m.len, 'และต้องมีเนื้อความจริง ไม่ใช่กล่องเปล่า').toBeGreaterThan(40);
+  await page.emulateMedia({ media: 'screen' });
+});
