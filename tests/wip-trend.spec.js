@@ -5,7 +5,7 @@
 //    ถ้ามีใครทำให้ทั้งสามใช้ชุดเดียวกัน จะมีข้อหนึ่งในไฟล์นี้แดง
 
 const { test, expect } = require('@playwright/test');
-const { waitReady } = require('./app-state');
+const { readSaved, waitReady } = require('./app-state');
 
 const K_STATE = 'tue_order_tracker_v1';
 const PN = '9000000002';
@@ -181,18 +181,33 @@ test('จำนวน PO ต้องนับด้วยเกณฑ์เด�
   expect(po['Assembly'], 'ยังไม่มีใครทำ assembly เลย ครบทั้งสามใบ').toBe(3);
 });
 
-test('ตัวกรอง Sub-Name ของแดชบอร์ดต้องคุมทั้งสามกราฟ', async ({ page }) => {
+test('ตัวกรอง Sub-Name ของหน้านี้เองต้องคุมทั้งหน้า ไม่ใช่แค่กราฟเดียว', async ({ page }) => {
+  /* เจ้าของสั่ง 11 พ.ย. 2569 ให้ย้ายช่องมาไว้บนหน้านี้ ("ดูทีละ sub อยู่แล้ว")
+     ⚠️ ต้องคุม **ทุกที่** — กราฟยอดค้าง · กราฟ PO · โดนัทสถานะเวลา
+        ถ้าบางที่กรองบางที่ไม่กรอง คนเอาสองที่มาเทียบจะสรุปว่ายอดไม่ตรง ทั้งที่ทั้งคู่ถูก
+        (หลักเดียวกับที่แดชบอร์ดถูกทำให้ทั้งหน้าใช้ค่าเดียวกันเมื่อ 8 ก.ย. 2026)
+     ⚠️ ของแดชบอร์ดต้อง **ไม่** คุมหน้านี้อีกแล้ว ไม่งั้นมีสองช่องที่ขัดกันได้ */
   const a = order('AA-1', 1000, '2026-08-01T00:00:00.000Z');
   const b = Object.assign(order('BB-1', 500, '2026-08-01T00:00:00.000Z'), { subName: 'TUE-H' });
   await open(page, [a, b]);
   expect((await wipOf(page, 'winding'))[13], 'ยังไม่กรอง = ทั้งสองหน่วย').toBe(1500);
+  const dueAll = await page.locator('#wtDue svg text').first().textContent();
+  expect(dueAll, 'โดนัทต้องนับสองใบตอนยังไม่กรอง').toBe('2');
 
-  // ช่องกรองอยู่ในแท็บแดชบอร์ด (Sub-Name คุมทั้งหน้ามาตั้งแต่ 8 ก.ย. 2026) ต้องไปเปลี่ยนที่นั่น
+  await page.selectOption('#wtSubFilter', 'TUE-U');
+  await page.waitForTimeout(300);
+  expect((await wipOf(page, 'winding'))[13], 'กรองแล้วต้องเหลือหน่วยเดียว').toBe(1000);
+  expect(await page.locator('#wtDue svg text').first().textContent(),
+    'โดนัทต้องกรองตามด้วย ไม่ใช่ค้างที่ยอดรวม').toBe('1');
+  expect(await page.locator('#wtPo rect[data-proc="winding"] title').textContent(),
+    'กราฟ PO ต้องกรองตามด้วย').toContain('1 ใบ');
+
+  // ของแดชบอร์ดต้องไม่มีผลกับหน้านี้แล้ว
   await page.click('.tab-btn[data-tab="dashboard"]');
-  await page.selectOption('#dashSubFilter', 'TUE-U');
+  await page.selectOption('#dashSubFilter', 'TUE-H');
   await page.click('.tab-btn[data-tab="wiptrend"]');
   await page.waitForTimeout(350);
-  expect((await wipOf(page, 'winding'))[13], 'กรองแล้วต้องเหลือหน่วยเดียว').toBe(1000);
+  expect((await wipOf(page, 'winding'))[13], 'ต้องยังเป็นหน่วยที่เลือกไว้บนหน้านี้').toBe(1000);
 });
 
 /* ───────── ช่วงยาว: รวมรายสัปดาห์ ───────── */
@@ -202,12 +217,9 @@ test('รวมรายสัปดาห์ต้องเอา "ค่าข
      ความจริงเจ็ดเท่าและไม่มีความหมายอะไรเลย · เปลี่ยนไปใช้ bucketWeekly() แล้วข้อนี้แดง */
   await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
   // ช่วงยาวกว่า CHART_DAILY_MAX (21 วัน) เพื่อบังคับให้รวมรายสัปดาห์
-  await page.click('.tab-btn[data-tab="dashboard"]');
-  await page.selectOption('#chartRange', 'custom');
-  await page.fill('#chartFrom', isoAgo(60));
-  await page.fill('#chartTo', isoAgo(0));
-  await page.waitForTimeout(250);
-  await page.click('.tab-btn[data-tab="wiptrend"]');
+  // ช่วงวันเป็นของ section นี้เอง ไม่ใช่ของแดชบอร์ดแล้ว (เจ้าของสั่ง 11 พ.ย. 2569)
+  await page.fill('#wtWipFrom', isoAgo(60));
+  await page.fill('#wtWipTo', isoAgo(0));
   await page.waitForTimeout(350);
 
   await expect(page.locator('#wtCaption')).toContainText('รวมรายสัปดาห์');
@@ -218,11 +230,38 @@ test('รวมรายสัปดาห์ต้องเอา "ค่าข
 
 /* ───────── หน้าจอ ───────── */
 
-test('หน้านี้ต้องอ่านอย่างเดียว — ห้ามมีช่องกรอกใด ๆ', async ({ page }) => {
-  /* กฎเดียวกับหน้ายอดรายวันทุกขั้น — คนที่เปิดมา "ดู" ต้องเปลี่ยนข้อมูลด้วยความบังเอิญไม่ได้ */
+test('หน้านี้ต้องไม่เขียนข้อมูล — เล่นตัวกรองทุกตัวแล้ว state ต้องไม่ขยับแม้แต่ตัวอักษร', async ({ page }) => {
+  /* ⚠️ ข้อนี้เคยเขียนว่า "ห้ามมีช่องกรอกใด ๆ" ซึ่งใช้ไม่ได้แล้วตั้งแต่หน้านี้มีตัวกรองของตัวเอง
+     (เจ้าของสั่ง 11 พ.ย. 2569) · **แต่เจตนาเดิมยังอยู่ครบและสำคัญกว่าเดิม**:
+     คนที่เปิดมา "ดู" ต้องเปลี่ยนข้อมูลด้วยความบังเอิญไม่ได้
+     สิ่งที่ต้องกันคือ "ช่องที่เขียนลง state" ไม่ใช่ "ช่องทุกชนิด" — ตัวกรองเปลี่ยนแค่สิ่งที่แสดง
+     จึงเปลี่ยนมาวัดที่ state ตรง ๆ แบบเดียวกับเทสของหน้ายอดรายวันทุกขั้น
+     ⚠️ ห้ามถอยกลับไปนับจำนวน input — มันเขียวได้ทั้งที่มีใครเผลอต่อช่องเข้ากับ saveState() */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z'),
+    Object.assign(order('BB-1', 500, '2026-08-01T00:00:00.000Z'), { subName: 'TUE-H' })],
+    [rec('r1', 'AA-1|' + PN, 'winding', 100, isoAgo(2))]);
+  const before = JSON.stringify(await readSaved(page, K_STATE));
+
+  await page.selectOption('#wtSubFilter', 'TUE-U');
+  await page.click('.wtrng[data-rng="wip"] button[data-days="30"]');
+  await page.click('.wtrng[data-rng="daily"] button[data-days="7"]');
+  await page.fill('#wtWipFrom', isoAgo(40));
+  await page.click('.wtseg button[data-view="wip"][data-mode="cards"]');
+  await page.click('.wtseg button[data-view="daily"][data-mode="cards"]');
+  await page.click('#wtWipLegend .legend-item >> nth=0');
+  await page.waitForTimeout(400);
+
+  expect(JSON.stringify(await readSaved(page, K_STATE)),
+    'เล่นตัวกรองแล้วข้อมูลที่เก็บไว้ต้องเหมือนเดิมเป๊ะ').toBe(before);
+});
+
+test('ตารางและกราฟต้องไม่มีช่องกรอกข้อมูล — ตัวกรองเท่านั้นที่เป็นช่องได้', async ({ page }) => {
+  /* กันคนเผลอเอาช่องคีย์ยอดมาใส่หน้าอ่านอย่างเดียว · ตัวกรองอยู่ใน .wtsub กับ .wtrng เท่านั้น */
   await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
-  expect(await page.locator('#view-wiptrend input, #view-wiptrend select, #view-wiptrend textarea,'
-    + ' #view-wiptrend [contenteditable]').count()).toBe(0);
+  const n = await page.locator('#wtWip input, #wtWip select, #wtWip textarea, #wtWip [contenteditable],'
+    + ' #wtDaily input, #wtDaily select, #wtDaily textarea, #wtDaily [contenteditable],'
+    + ' #wtPo input, #wtPo select, #wtDue input, #wtDue select').count();
+  expect(n, 'ในกราฟกับตารางต้องไม่มีช่องกรอก').toBe(0);
 });
 
 test('จอมือถือ — ต้องไม่ล้นแนวนอน', async ({ page }) => {
@@ -305,8 +344,15 @@ test('แถบฟ้องต้องบอกว่าแถบบนแด�
   await open(page, [order('BAD-1', 100, '2026-08-01T00:00:00.000Z')],
     [rec('a1', 'BAD-1|' + PN, 'assembly', 100, isoAgo(3))]);
   const t = await page.locator('#wtAnom').innerText();
-  expect(t, 'ต้องบอกว่าแถบนั้นนับเฉพาะใบที่ผ่านตัวกรอง').toContain('ผ่านตัวกรองของหน้านั้น');
-  expect(t, 'ต้องบอกชื่อช่องที่ต้องปลดติ๊กตรง ๆ').toContain('ซ่อนงานที่ส่งของครบแล้ว');
+  expect(t, 'ต้องบอกว่าแดชบอร์ดคิดคนละเกณฑ์ จึงได้คนละเลข').toContain('ได้เลขต่างจากหน้านี้');
+
+  /* ⚠️ ข้อนี้เคยบังคับให้แถบเขียนว่า "ไล่ดูรายใบได้ที่แดชบอร์ด" เพราะหน้านี้กางรายการไม่ได้
+     เจ้าของสั่งให้กางได้ในหน้านี้เมื่อ 11 พ.ย. 2569 ประโยคนั้นจึงกลายเป็นการส่งคนไปผิดที่
+     สิ่งที่ต้องคุมแทนคือ **กางแล้วเห็นใบจริง** ซึ่งเป็นหลักประกันที่แรงกว่าเดิม */
+  await page.click('#wtAnomToggle');
+  await page.waitForTimeout(250);
+  await expect(page.locator('#wtAnom .wanl'), 'กางแล้วต้องมีรายการ').toBeVisible();
+  await expect(page.locator('#wtAnom .wanl')).toContainText('BAD-1');
 });
 
 /* ⚠️ **ต้องตรึงโซนเวลาไว้ที่กรุงเทพ ห้ามพึ่งโซนเวลาของเครื่องที่รัน**
@@ -387,4 +433,737 @@ test('นาฬิกาเครื่องอื่นล้ำ ทำให�
   /* ⚠️ ครอบที่ "วันนี้" ไม่ใช่ย้อนไปตลอดกาล — เราไม่รู้ว่าจริง ๆ ใบนี้ถูกนำเข้าเมื่อไหร่
      รู้แค่ว่าอย่างช้าที่สุดคือวันนี้ · เมื่อวานจึงยังเป็น 300 และนั่นถูก */
   expect(vals[12], 'เมื่อวานยังไม่มีหลักฐานว่าใบนี้มีอยู่').toBe(300);
+});
+
+/* ───────── ช่วงวันแยกของแต่ละ section (เจ้าของสั่ง 11 พ.ย. 2569) ───────── */
+
+const dailyOf = (page, proc) => page.$$eval(`#wtDaily rect[data-proc="${proc}"] title`,
+  els => els.map(e => Number(e.textContent.split(': ').pop().replace(/,/g, ''))));
+
+test('ยอดผลิตรวมรายสัปดาห์ต้องเป็น "ผลบวก" — คนละสูตรกับยอดค้าง', async ({ page }) => {
+  /* 🚨 ข้อนี้กับข้อ "ยอดค้างต้องเอาค่าของวันสุดท้าย" เป็นคู่กัน และต้องมีทั้งคู่
+     ถ้ามีใครทำให้สองกราฟใช้สูตรเดียวกัน จะมีข้อหนึ่งในสองข้อนี้แดงเสมอ
+     ยอดผลิตเป็น "ของที่ทำได้" จึงบวกได้ · ยอดค้างเป็น "ของที่กองอยู่" บวกแล้วสูงเกินจริงเจ็ดเท่า */
+  const recs = [];
+  for (let d = 59; d >= 0; d--) recs.push(rec('w' + d, 'AA-1|' + PN, 'winding', 10, isoAgo(d)));
+  await open(page, [order('AA-1', 100000, '2026-01-01T00:00:00.000Z')], recs);
+  await page.fill('#wtDailyFrom', isoAgo(60));
+  await page.fill('#wtDailyTo', isoAgo(0));
+  await page.waitForTimeout(350);
+
+  await expect(page.locator('#wtDailyCaption')).toContainText('รวมรายสัปดาห์');
+  const vals = await dailyOf(page, 'winding');
+  expect(vals.length, 'ต้องยุบเหลือไม่กี่แท่ง').toBeLessThan(15);
+  // คีย์วันละ 10 ทุกวัน · สัปดาห์เต็มต้องได้ 70 ไม่ใช่ 10
+  expect(Math.max(...vals), 'สัปดาห์เต็ม = 7 วัน × 10 = 70').toBe(70);
+});
+
+test('ช่วงวันของสองกราฟล่างแยกกันจริง และต้องขึ้นแถบเตือนเมื่อตั้งไม่เท่ากัน', async ({ page }) => {
+  /* ⚠️ สองกราฟนี้ถูกวางคู่กันเพื่อ "กวาดตาลงมาอ่านทีละวัน" — ตั้งช่วงไม่เท่ากันแล้วคอลัมน์ไม่ตรงกัน
+     การอ่านคู่กันกลายเป็นการอ่านผิด · แถบเตือนจึงเป็นส่วนหนึ่งของฟีเจอร์ ไม่ใช่ของแต่ง */
+  await open(page, [order('AA-1', 1000, '2026-01-01T00:00:00.000Z')]);
+  await expect(page.locator('#wtDiff'), 'ตั้งต้นสองช่วงเท่ากัน ต้องไม่มีแถบ').toBeHidden();
+
+  await page.click('.wtrng[data-rng="daily"] button[data-days="30"]');
+  await page.waitForTimeout(300);
+  await expect(page.locator('#wtDiff'), 'ตั้งไม่เท่ากันต้องฟ้อง').toBeVisible();
+  await expect(page.locator('#wtDiff')).toContainText('ไม่เท่ากัน');
+  expect(await page.locator('#wtCaption').innerText(), 'กราฟยอดค้างต้องยังเป็น 14 วัน').toContain('14 วัน');
+  expect(await page.locator('#wtDailyCaption').innerText(), 'กราฟยอดผลิตต้องเป็น 30 วัน').toContain('30 วัน');
+
+  await page.click('.wtrng[data-rng="wip"] button[data-days="30"]');
+  await page.waitForTimeout(300);
+  await expect(page.locator('#wtDiff'), 'ตั้งกลับให้เท่ากันแล้วแถบต้องหายเอง').toBeHidden();
+});
+
+test('ช่วงวันกลับข้างต้องฟ้อง ไม่ใช่โชว์กราฟว่าง', async ({ page }) => {
+  /* กราฟว่างเฉย ๆ อ่านได้ว่า "ช่วงนี้ไม่มีใครทำอะไร" ซึ่งคนละเรื่องกับ "ช่วงที่ไม่มีอยู่จริง" */
+  await open(page, [order('AA-1', 1000, '2026-01-01T00:00:00.000Z')]);
+  await page.fill('#wtWipFrom', isoAgo(2));
+  await page.fill('#wtWipTo', isoAgo(20));
+  await page.waitForTimeout(300);
+  await expect(page.locator('#wtWip')).toContainText('กลับข้าง');
+});
+
+/* ───────── ป้ายตัวเลขตอนเอาเมาส์ชี้ ───────── */
+
+test('<title> ของแท่งต้องยังอยู่ แต่แท่งต้องไม่รับเมาส์ ไม่งั้นป้ายของเบราว์เซอร์มาแข่ง', async ({ page }) => {
+  /* ⚠️ <title> คือชื่อสำหรับโปรแกรมอ่านหน้าจอ และเทสทั้งไฟล์นี้อ่านค่าจริงจากตรงนั้น — ห้ามถอด
+     ที่กันไม่ให้มันโผล่มาแข่งกับป้ายของเราคือ pointer-events:none บนแท่ง
+     ถอด CSS บรรทัดนั้นออกแล้วข้อนี้แดง (ลองแล้ว) */
+  const recs = [];
+  for (let d = 5; d >= 0; d--) recs.push(rec('w' + d, 'AA-1|' + PN, 'winding', 10, isoAgo(d)));
+  await open(page, [order('AA-1', 1000, '2026-01-01T00:00:00.000Z')], recs);
+  expect(await page.locator('#wtWip rect[data-proc="winding"] title').count(),
+    '<title> ต้องยังอยู่ทุกแท่ง').toBeGreaterThan(0);
+  const pe = await page.locator('#wtWip rect[data-proc="winding"]').first()
+    .evaluate(el => getComputedStyle(el).pointerEvents);
+  expect(pe, 'แท่งต้องไม่รับเมาส์').toBe('none');
+});
+
+test('ชี้ที่กราฟแล้วต้องมีป้ายตัวเลขขึ้น และบอกทุกขั้นของวันนั้น', async ({ page }) => {
+  /* เจ้าของขอ "ตัวเลขตัวใหญ่ ๆ ให้คนแก่อ่านง่าย" · ช่องรับเมาส์เป็นทั้งคอลัมน์ของวัน
+     ไม่ใช่ทีละแท่ง เพราะแท่งกว้างไม่กี่พิกเซล จิ้มไม่โดน */
+  const recs = [];
+  for (let d = 5; d >= 0; d--) recs.push(rec('w' + d, 'AA-1|' + PN, 'winding', 10, isoAgo(d)));
+  await open(page, [order('AA-1', 1000, '2026-01-01T00:00:00.000Z')], recs);
+  await expect(page.locator('#wtTip')).toBeHidden();
+
+  const hit = page.locator('#wtWip rect.wthit').last();
+  /* ⚠️ ต้องชี้สองครั้ง — ครั้งแรก Playwright เลื่อนหน้าให้เห็นก่อน แล้วเหตุการณ์ scroll
+     ที่ตามมาทีหลังจะสั่งซ่อนป้าย (ซึ่งถูกแล้ว ป้ายเป็น position:fixed ถ้าไม่ซ่อนจะลอยหลุดจากแท่ง) */
+  await hit.hover();
+  await page.waitForTimeout(150);
+  await hit.hover();
+  await page.waitForTimeout(150);
+  await expect(page.locator('#wtTip'), 'ชี้แล้วต้องมีป้าย').toBeVisible();
+  const txt = await page.locator('#wtTip').innerText();
+  expect(txt, 'ต้องบอกทุกขั้นที่กราฟนั้นวาด ไม่ใช่ขั้นเดียว').toContain('Winding');
+  expect(txt, 'ต้องบอกหน่วย').toContain('ชิ้น');
+});
+
+/* ───────── โดนัทสถานะเวลา ───────── */
+
+test('โดนัทต้องแบ่งตามสถานะเวลา ไม่ใช่ตามขั้น — ขั้นเดียวกันจะได้ไม่มีเลขสองตัว', async ({ page }) => {
+  /* 🔒 เจ้าของทักเอง 11 พ.ย. 2569: ถ้าแบ่งตามขั้น Trimming จะขึ้นเลขหนึ่งที่กราฟแท่ง
+     และอีกเลขหนึ่งที่โดนัท คนที่ไม่ได้อ่านคำกำกับจะสรุปว่า "ยอดไม่ตรง" แล้วเลิกเชื่อทั้งหน้า
+     ⚠️ ข้อนี้คุมไว้ว่าฝั่งขวาต้องไม่มีชื่อขั้นโผล่เป็นยอดรวม — เปลี่ยนกลับไปแบ่งตามขั้นแล้วแดง */
+  await open(page, [order('AA-1', 1000, '2026-01-01T00:00:00.000Z')]);
+  const right = await page.locator('#wtDueList').innerText();
+  for (const s of ['Winding', 'Assembly', 'Support', 'Inspection']) {
+    expect(right, `ฝั่งขวาต้องไม่มีชื่อขั้น "${s}" เป็นยอดรวม`).not.toContain(s);
+  }
+  expect(right, 'ต้องแบ่งตามสถานะเวลา (A5)').toContain('ล่าช้า');
+
+  /* 🚨 ห้ามกลับไปยืนยันว่า "เลขกลางวง >= ทุกแท่งทางซ้าย" — **ไม่จริง**
+     โดนัทนับใบที่ยังส่งของไม่ครบ ส่วนแท่งนับรายขั้นของทุกใบรวมใบที่ส่งครบแล้ว
+     ผู้ตรวจ #132 รันสองฉากที่กลางวงเป็น 0 ขณะที่แท่งเป็น 1 · เทสเดิมเขียวเพราะ fixture สะอาด
+     จึงให้ความมั่นใจเกินจริง ซึ่งอันตรายกว่าไม่มีเทส · ที่ต้องคุมคือ **ข้อความบนจอต้องไม่ชวนให้เทียบ** */
+  /* ⚠️ คำอธิบายถูกพับไว้ใน <details> ตั้งแต่ 12 พ.ย. 2569 — ต้อง **กางก่อนอ่าน**
+     อ่านด้วย textContent ทั้งที่ยังพับอยู่ก็ได้ แต่นั่นจะเขียวต่อไปแม้วันหนึ่งมีใครทำให้
+     มันกางไม่ออก · การกดกางคือสิ่งที่พิสูจน์ว่าคนที่สงสัยยังหาคำตอบเจอ */
+  await page.locator('#view-wiptrend .wtpair section').nth(1).locator('.wtexp summary').click();
+  const desc = await page.locator('#view-wiptrend .wtpair section').nth(1).locator('.desc').innerText();
+  expect(desc, 'ต้องบอกว่าไม่ใช่ชุดใบเดียวกับแท่งทางซ้าย').toContain('ไม่ใช่ชุดใบเดียวกับแท่งทางซ้าย');
+  expect(desc, 'ต้องไม่สัญญาว่าเอามาเทียบกันได้').not.toContain('มากกว่าหรือเท่ากับทุกแท่ง');
+});
+
+/* ───────── ของที่ผู้ตรวจ #132 จับได้ — ทุกข้อพิสูจน์แล้วว่าแดงถ้าถอดการแก้ออก ───────── */
+
+test('กดเลข PO ในรายการย้อนแย้ง ต้องพาไปหน้าแก้ไขรายการของใบนั้นจริง', async ({ page }) => {
+  /* 🚨 `anomalyListHtml()` วาดปุ่มที่มี title สัญญาว่าจะพาไป แต่ตัวจับคลิกของแดชบอร์ด
+     ผูกกับ #wipCards เท่านั้น · กล่องของหน้านี้ต้องผูกเอง
+     ไม่ผูก = ปุ่มหน้าตาเป็นลิงก์ที่กดแล้วเงียบ ซึ่งลบล้างข้อ "ตามต่อได้" ที่เป็นเหตุผลของแถบนี้ */
+  await open(page, [order('BAD-1', 1000, '2026-08-01T00:00:00.000Z')],
+    [rec('a1', 'BAD-1|' + PN, 'assembly', 100, isoAgo(3))]);
+  await page.click('#wtAnomToggle');
+  await page.waitForTimeout(200);
+  await page.click('#wtAnom [data-anom-po]');
+  await page.waitForTimeout(300);
+
+  // หน้าแก้ไขรายการอยู่ในแท็บเดียวกับหน้าคีย์ยอด (#view-entry)
+  expect(await page.locator('#view-entry').getAttribute('class'),
+    'ต้องสลับไปแท็บที่มีหน้าแก้ไขรายการ').toContain('active');
+  expect(await page.inputValue('#recFilterSearch'),
+    'ต้องใส่เลข PO ลงช่องค้นหาให้ด้วย').toBe('BAD-1');
+});
+
+test('G3 — สีขั้นที่ซิงค์มาต้องแตก attribute ในป้ายตอนเอาเมาส์ชี้ไม่ได้', async ({ page }) => {
+  /* ⚠️ ค่าที่อ่านกลับจาก dataset เป็นค่าดิบ — ที่ escape ไว้ตอนเขียน attribute
+     ถูกเบราว์เซอร์ถอดกลับให้แล้ว ต้อง escape ซ้ำตอนเอาลง innerHTML
+     ผู้ตรวจ #132 รันพิสูจน์ว่าสคริปต์ทำงานจริง */
+  const evil = [
+    { id: 'winding', label: 'Winding/Trimming' },
+    { id: 'evil', label: 'ขั้นร้าย', short: 'ร้าย', color: '#111"><b data-pwned="yes"></b><i x="' },
+    { id: 'assembly', label: 'Assembly' },
+    { id: 'support', label: 'Support' },
+    { id: 'inspection', label: 'Inspection' },
+    { id: 'shipping', label: 'ส่งของ (Shipping)' }
+  ];
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')],
+    [rec('e1', 'AA-1|' + PN, 'evil', 10, isoAgo(3))], evil);
+
+  /* ⚠️ ต้องชี้ **แท่งของขั้นที่ใส่สีร้ายไว้** ไม่ใช่แท่งแรก — แท่งแรกคือ Winding ซึ่งสีปกติ
+     ชี้ผิดแท่งแล้ว payload ไม่เคยถูกวาด เทสจะเขียวทั้งที่ถอดการแก้ออก (เจอเองตอนลองถอด) */
+  const hit = page.locator('#wtPo rect.wthit[data-wt-name="ขั้นร้าย"]');
+  await hit.hover();
+  await page.waitForTimeout(150);
+  await hit.hover();
+  await page.waitForTimeout(150);
+  expect(await page.locator('#wtTip [data-pwned]').count(),
+    'ป้ายต้องไม่มี element ที่ถูกแทรกเข้ามา').toBe(0);
+});
+
+test('ปิดขั้นจนไม่เหลือสักขั้นไม่ได้ — ไม่งั้นปุ่มขีดฆ่าหมดแต่กราฟยังวาดครบ', async ({ page }) => {
+  /* ด่านตกกลับใน wtProcs() กันกราฟเปล่าไว้ก็จริง แต่ทำให้จอขัดกับตัวเอง
+     ทุกปุ่ม aria-pressed=false ขณะที่กราฟยังวาดครบทุกขั้น (ผู้ตรวจ #132 รันเจอ) */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  const btns = page.locator('#wtWipLegend .legend-item');
+  const n = await btns.count();
+  for (let i = 0; i < n; i++) { await btns.nth(i).click(); await page.waitForTimeout(80); }
+
+  const onCount = await page.locator('#wtWipLegend .legend-item[aria-pressed="true"]').count();
+  expect(onCount, 'ต้องเหลือเปิดอยู่อย่างน้อยหนึ่งขั้น').toBeGreaterThanOrEqual(1);
+  const drawn = await procsIn(page, 'wtWip');
+  expect(drawn.length, 'จำนวนขั้นที่วาดต้องตรงกับจำนวนปุ่มที่ยังเปิดอยู่').toBe(onCount);
+});
+
+test('รายการย้อนแย้งต้องได้เต็มความกว้างของแถบ ไม่ใช่เศษที่เหลือจากข้อความข้าง ๆ', async ({ page }) => {
+  /* แถบเป็น flex แนวนอน · รายการที่ต่อเข้าไปข้างในจะกลายเป็น flex item ที่ถูกบีบ
+     ผู้ตรวจ #132 วัดได้ 247px ที่จอ 800 (= จอ 1024 ซูม 125% ซึ่งหน้างานตั้งจริง) เหลือเห็น 2 จาก 7 คอลัมน์ */
+  await page.setViewportSize({ width: 800, height: 900 });
+  await open(page, [order('BAD-1', 1000, '2026-08-01T00:00:00.000Z')],
+    [rec('a1', 'BAD-1|' + PN, 'assembly', 100, isoAgo(3))]);
+  await page.click('#wtAnomToggle');
+  await page.waitForTimeout(250);
+  const [outer, inner] = await page.evaluate(() => {
+    const a = document.getElementById('wtAnom'), l = a.querySelector('.wanl');
+    return [a.clientWidth, l ? l.clientWidth : 0];
+  });
+  expect(inner, 'ต้องได้เกือบเต็มความกว้างของแถบ').toBeGreaterThan(outer * 0.9);
+});
+
+test('แถวในกล่องใบที่ล่าช้าต้องอ่านได้ครบที่จอ 1024 — P/N ห้ามเบียด “ค้างที่” หาย', async ({ page }) => {
+  /* 🚨 ก่อนแก้ แถวเป็นสามคอลัมน์ `auto 1fr auto` และ PO กับจำนวนวันเป็น nowrap ทั้งคู่
+     ช่องกลางจึงเป็นช่องเดียวที่ยอมหาย · พอเติม P/N เข้าไป "ค้างที่ <ขั้น>" ก็ถูกตัดหาย
+     ผู้ตรวจ #132 รอบ 11 วัดที่ viewport 1024 (จอหน้างาน): ช่องมี 199px แต่ต้องใช้ 207–268px
+     ไม่มี title และไม่มีแถบเลื่อน จึงอ่านส่วนที่หายไม่ได้เลย
+     ⚠️ ช่วงที่โดนคือ ~900–1100px เท่านั้น — ต่ำกว่า 900 ตกเป็นคอลัมน์เดียว · 1440 กว้างพอ
+        ฉากนี้จึงต้องตั้ง viewport ที่ 1024 เป๊ะ ไม่งั้นเขียวเองโดยไม่ได้ตรวจอะไร
+     ⚠️ P/N ของ fixture ยาว 10 ตัว ซึ่งเป็นความยาวของ P/N จริงในชุดเทสนี้ */
+  await page.setViewportSize({ width: 1024, height: 900 });
+  // รหัส PO ของจริงยาว ~10 ตัว ไม่ใช่ AA-1 — PO สั้นทำให้เหลือที่พอ แล้วเทสเขียวเองโดยไม่ได้ตรวจอะไร
+  const o = Object.assign(order('TM5201U101', 100, '2026-01-01T00:00:00.000Z'), { orderDate: isoAgo(30) });
+  await open(page, [o]);
+
+  /* ⚠️ วัด **โครงสร้าง** ไม่ใช่แค่ "ถูกตัดไหม" — การถูกตัดขึ้นกับความยาวของ P/N · รหัส PO
+     และชื่อขั้น ซึ่งตั้งเองได้ทั้งหมด · fixture ที่สั้นพอดีจะเขียวเองทั้งที่โครงยังผิด (เจอเองตอนเขียน)
+     สิ่งที่ต้องคุมคือ "บรรทัดล่างกินเต็มแถวของตัวเอง" ซึ่งทำให้ไม่มีอะไรมาแย่งที่ได้เลย */
+  const m = await page.locator('#wtLate .wtlr').first().evaluate(row => {
+    const wh = row.querySelector('.wh'), po = row.querySelector('.po');
+    return { txt: wh.textContent, title: wh.getAttribute('title'),
+      clipped: wh.scrollWidth > wh.clientWidth + 1,
+      ownLine: wh.getBoundingClientRect().top > po.getBoundingClientRect().top + 2,
+      fullWidth: wh.getBoundingClientRect().width > row.getBoundingClientRect().width - 2 };
+  });
+  expect(m.txt, 'ต้องมี P/N').toContain(PN);
+  expect(m.txt, 'ต้องมี "ค้างที่" ครบ').toContain('ค้างที่ Winding');
+  expect(m.ownLine, 'ต้องอยู่บรรทัดของตัวเอง ไม่แย่งที่กับ PO และจำนวนวัน').toBe(true);
+  expect(m.fullWidth, 'ต้องกินเต็มความกว้างของแถว').toBe(true);
+  expect(m.clipped, 'ข้อความต้องไม่ถูกตัด').toBe(false);
+  expect(m.title, 'ต้องมี title เป็นตาข่ายชั้นสอง').toBe(m.txt);
+});
+
+test('กราฟ PO ต้องเห็นครบทุกขั้นในกรอบที่จอ 1024 แม้มีเจ็ดขั้น', async ({ page }) => {
+  /* ⚠️ ใบนี้ย่อกราฟเหลือครึ่งจอตามที่เจ้าของสั่ง กล่องจึงเหลือ ~455px
+     ของเดิมกินช่องละ 110px → 7 ขั้นกิน 770px แล้ว Inspection กับ ส่งของ **อยู่นอกกรอบตั้งแต่เปิดมา**
+     มีแถบเลื่อนให้ก็จริง แต่กราฟนี้เป็นภาพนิ่งที่มีไว้กวาดตาครั้งเดียวของคนอ่านอายุ 60+
+     และแท่งส่งของคือแท่งที่ตอบว่ายังส่งไม่ครบกี่ใบ (ผู้ตรวจ #132 รอบ 8 วัดได้ 770 ใน 462)
+     ⚠️ ต้องตรวจป้ายทับกันด้วย — ลดความกว้างอย่างเดียวแล้วชื่อเต็มจะทับช่องข้าง ๆ แทน
+        (เจอเองตอนวัด จึงเปลี่ยนแกนไปใช้ชื่อสั้น · ชื่อเต็มยังอยู่ที่คำอธิบายสีและป้ายตอนชี้)
+     ⚠️ สายการผลิตจริงมี 7 ขั้น (ห้าขั้นตั้งต้น + Core Grinding + Trimming ที่เจ้าของเพิ่มเอง)
+        ฉาก 5 ขั้นไม่พอจับ เพราะยังอยู่ในกรอบแม้คิดช่องละ 110px */
+  await page.setViewportSize({ width: 1024, height: 900 });
+  const seven = [
+    { id: 'core_grinding', label: 'CORE GRINDING', short: 'Core', hidden: false, icon: '🔹', color: '#8e24aa' },
+    { id: 'winding', label: 'Winding/Trimming', short: 'Winding', hidden: false },
+    { id: 'trimming', label: 'Trimming', short: 'Trim', hidden: false, icon: '🔹', color: '#008300' },
+    { id: 'assembly', label: 'Assembly', short: 'Assembly', hidden: false },
+    { id: 'support', label: 'Support', short: 'Support', hidden: false },
+    { id: 'inspection', label: 'Inspection', short: 'Inspection', hidden: false },
+    { id: 'shipping', label: 'ส่งของ (Shipping)', short: 'Shipping', hidden: false }
+  ];
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], [], seven);
+
+  const m = await page.evaluate(() => {
+    const box = document.getElementById('wtPo'), svg = box.querySelector('svg');
+    const br = box.getBoundingClientRect();
+    const t = [...svg.querySelectorAll('text')].map(e => ({ s: e.textContent, y: +e.getAttribute('y'), r: e.getBoundingClientRect() }));
+    const maxY = Math.max(...t.map(x => x.y));
+    const axis = t.filter(x => x.y === maxY).sort((a, b) => a.r.left - b.r.left);
+    let overlap = 0;
+    for (let i = 1; i < axis.length; i++) if (axis[i].r.left < axis[i - 1].r.right - 0.5) overlap++;
+    return { n: axis.length, overlap, scroll: box.scrollWidth - box.clientWidth,
+      inside: axis.every(x => x.r.left >= br.left - 1 && x.r.right <= br.right + 1) };
+  });
+  expect(m.n, 'ต้องมีป้ายครบเจ็ดขั้น').toBe(7);
+  expect(m.scroll, 'ต้องไม่ต้องเลื่อนเพื่อดูให้ครบ').toBe(0);
+  expect(m.inside, 'ทุกป้ายต้องอยู่ในกรอบ').toBe(true);
+  expect(m.overlap, 'ป้ายต้องไม่ทับกัน').toBe(0);
+});
+
+test('รายการขั้นเปลี่ยนกลางทาง — คำอธิบายสีต้องไม่ขัดกับกราฟ', async ({ page }) => {
+  /* 🚨 คำอธิบายสีวาดจาก wtHidden ส่วนกราฟวาดจากชุดที่ wtProcs() คืน · สองอย่างต้องตรงกันเสมอ
+     ขั้นที่ถูกซ่อนจากแผงจัดการขั้นทีหลัง (มาทางซิงค์) จะค้างใน Set แล้วนับรวมในด่าน
+     "ต้องเหลืออย่างน้อยหนึ่งขั้น" ทั้งที่ไม่มีขั้นนั้นอยู่จริง · และถ้าทุกขั้นที่เหลือถูกซ่อนหมด
+     กราฟจะตกกลับไปวาดครบ ขณะที่ปุ่มขีดฆ่าทั้งแถว (ผู้ตรวจ #132 รอบ 6 รันเจอ)
+     ⚠️ ฉากนี้ยัด wtHidden ตรง ๆ เพราะทางจริงต้องให้เครื่องอื่นซ่อนขั้นแล้วซิงค์มา
+        ซึ่งจำลองในเทสหน้าเดียวไม่ได้ · สิ่งที่คุมคือ "จอต้องไม่ขัดกับตัวเอง" ไม่ใช่ทางที่มันเกิด */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  await page.evaluate(() => {
+    MAIN_PROCESSES.forEach(p => wtHidden.wip.add(p));
+    wtHidden.wip.add('ขั้นที่ไม่มีอยู่แล้ว');
+    wtDrawSection('wip');
+  });
+  await page.waitForTimeout(200);
+
+  const on = await page.locator('#wtWipLegend .legend-item[aria-pressed="true"]').count();
+  const drawn = await procsIn(page, 'wtWip');
+  expect(drawn.length, 'กราฟต้องวาดอย่างน้อยหนึ่งขั้น').toBeGreaterThan(0);
+  expect(on, 'ปุ่มที่ "เปิด" ต้องเท่ากับจำนวนขั้นที่วาดจริง').toBe(drawn.length);
+  expect(await page.evaluate(() => wtHidden.wip.has('ขั้นที่ไม่มีอยู่แล้ว')),
+    'id ที่ไม่มีในรายการขั้นแล้วต้องถูกล้างออก').toBe(false);
+});
+
+test('การ์ดแยกรายขั้นต้องเลื่อนลงสุดให้ — คำอธิบายเขียนว่าแถวล่างสุดคือล่าสุด', async ({ page }) => {
+  /* ⚠️ การ์ดสูงได้ไม่เกิน 360px ช่วง 15–21 วันจึงล้น แล้วเปิดมาเห็นวันเก่าสุด
+     ซึ่งขัดกับคำกำกับใต้การ์ด และต้องเลื่อนแยกทีละใบ (ผู้ตรวจ #132 รอบ 6 วัดได้ scrollTop 0)
+     ปุ่มสำเร็จรูปไม่โดน (7/14 วันสั้นพอ · 30/90 วันกลายเป็นรายสัปดาห์) ช่องกรอกเองถึงจะโดน */
+  const recs = [];
+  for (let d = 20; d >= 0; d--) recs.push(rec('w' + d, 'AA-1|' + PN, 'winding', 10, isoAgo(d)));
+  await open(page, [order('AA-1', 100000, '2026-01-01T00:00:00.000Z')], recs);
+  await page.fill('#wtWipFrom', isoAgo(20));
+  await page.fill('#wtWipTo', isoAgo(0));
+  await page.click('.wtseg button[data-view="wip"][data-mode="cards"]');
+  await page.waitForTimeout(300);
+
+  const box = await page.locator('#wtWip .wtcard .rows').first()
+    .evaluate(el => ({ st: el.scrollTop, sh: el.scrollHeight, ch: el.clientHeight }));
+  expect(box.sh, 'ฉากนี้ต้องล้นจริง ไม่งั้นข้อนี้ไม่ได้ตรวจอะไร').toBeGreaterThan(box.ch);
+  expect(box.st, 'ต้องเลื่อนลงสุดให้แล้ว').toBeGreaterThan(box.sh - box.ch - 2);
+});
+
+test('กล่องใบที่ล่าช้าต้องเรียงจากล่าช้ามากไปน้อยจริง — ใบที่หนักสุดห้ามถูกเบียดออก', async ({ page }) => {
+  /* 🚨 เลขบนแถวทำสองหน้าที่: แสดงผล **และ** เป็นกุญแจเรียง จึงต้องเทียบข้ามแถวได้
+     ถ้านับจากกำหนดของ "ขั้นที่ทำให้ late" (ปลายน้ำสุด) แต่ละแถวจะนับจากฐานคนละอัน —
+     ใบที่เลยกำหนดส่งแล้วเพิ่งเริ่มนับใหม่จาก 1 ส่วนใบที่เพิ่งเลยขั้นต้นน้ำโตได้ 6-7 วันเสมอ
+     ผลคือกล่องเรียงกลับทางกับความจริง และกล่องตัดที่ 5 แถว ใบที่หนักสุดจึงหายไปทั้งใบ
+     (ผู้ตรวจ #132 รอบ 5 รันพิสูจน์ · เป็นผลข้างเคียงของตัวแก้ในรอบ 4 เอง)
+     ฉากนี้ลอกจากที่ผู้ตรวจรัน: สามใบไม่คีย์อะไรเลย อายุ 16 · 23 · 30 วัน */
+  const mk = (po, days) => Object.assign(order(po, 100, '2026-01-01T00:00:00.000Z'), { orderDate: isoAgo(days) });
+  await open(page, [mk('AA-1', 16), mk('DD-1', 23), mk('BB-1', 30)]);
+
+  const pos = await page.$$eval('#wtLate .wtlr .po', els => els.map(e => e.textContent));
+  expect(pos, 'ต้องเรียงใบที่ล่าช้านานสุดขึ้นก่อน').toEqual(['BB-1', 'DD-1', 'AA-1']);
+
+  // กำหนดของ Winding คือ +10 วัน จึงเลยมา 20 · 13 · 6 วัน ตามลำดับ และเทียบกันได้ทุกแถว
+  const days = await page.$$eval('#wtLate .wtlr .dd',
+    els => els.map(e => Number((e.textContent.match(/มา\s*([\d,]+)\s*วัน/) || [])[1].replace(/,/g, ''))));
+  expect(days, 'จำนวนวันต้องนับจากฐานเดียวกันทุกแถว').toEqual([20, 13, 6]);
+});
+
+test('กล่องใบที่ล่าช้าต้องบอก P/N — PO เดียวกันคนละ P/N ห้ามได้สองแถวที่อ่านเหมือนกันทุกตัวอักษร', async ({ page }) => {
+  /* ผู้ตรวจ #132 รอบ 10 รันได้สองแถว `1001 · TUE-U · ค้างที่ Winding · เลยกำหนด Winding มา 89 วัน` ซ้ำกันเป๊ะ
+     กล่องตัดที่ 5 แถว จึงเสียช่องไปกับของที่ดูเหมือนซ้ำ · กฎเดียวกับ data-anom-row = poNo|pn
+     ⚠️ ฉากต้องเป็น PO เดียวกัน อายุเท่ากัน — ไม่งั้นช่องจำนวนวันต่างกันเอง แล้วเทสเขียวทั้งที่ไม่มี P/N */
+  const mk = (pn) => Object.assign(order('SAME-1', 100, '2026-01-01T00:00:00.000Z'),
+    { id: 'SAME-1|' + pn, pn, orderDate: isoAgo(30) });
+  await open(page, [mk('PN-A'), mk('PN-B')]);
+
+  const rows = await page.$$eval('#wtLate .wtlr', els => els.map(e => e.textContent));
+  expect(rows.length, 'ต้องขึ้นทั้งสองใบ').toBe(2);
+  expect(rows[0], 'สองแถวต้องแยกกันออกด้วยตา').not.toBe(rows[1]);
+  expect(rows.join('\n')).toContain('PN-A');
+  expect(rows.join('\n')).toContain('PN-B');
+});
+
+test('จำนวนวันในกล่องใบที่ล่าช้าต้องไม่ติดลบ — คิดจากกำหนดของขั้นที่ทำให้ล่าช้า ไม่ใช่กำหนดส่ง', async ({ page }) => {
+  /* 🚨 ใบเข้ากล่องนี้ด้วยเกณฑ์ "ขั้นไหนขั้นหนึ่งเลยกำหนดของขั้นนั้น" (A5)
+     ค่าตั้งต้นคือ winding 10 วัน · shipping 28 วัน จึงมีช่วง 18 วันที่ใบล่าช้าแล้ว
+     แต่ยังไม่ถึงกำหนดส่ง · คิดจากกำหนดส่งแล้วได้ "เลยมา −13 วัน" (ผู้ตรวจ #132 รอบ 4)
+     ⚠️ ฉากนี้ต้องเป็นใบที่ **ยังไม่ถึงกำหนดส่ง** ถึงจะจับได้ — ใบเก่ากว่า 28 วันเป็นบวกอยู่แล้ว
+     ซึ่งเป็นเหตุผลที่สามรอบก่อนไม่เจอ */
+  const o = Object.assign(order('AA-1', 100, '2026-01-01T00:00:00.000Z'), { orderDate: isoAgo(15) });
+  await open(page, [o]);
+  /* ⚠️ อ่านเฉพาะช่องจำนวนวัน ไม่ใช่ทั้งแถว — รหัส PO มีขีดอยู่ในตัว (AA-1)
+     จับทั้งแถวแล้ว regex ติดลบจะแดงจากรหัส PO เอง (เจอเองตอนเขียนเทสนี้) */
+  const dd = await page.locator('#wtLate .wtlr .dd').first().innerText();
+
+  expect(dd, 'ต้องไม่มีเลขติดลบ').not.toMatch(/-\s*\d/);
+  expect(dd, 'ต้องบอกว่าเลยกำหนดของขั้นไหน').toContain('เลยกำหนด Winding');
+  // สั่งมา 15 วัน · กำหนดของ Winding คือ +10 วัน → เลยมา 5 วัน
+  expect(dd, 'ต้องได้ 5 วัน').toContain('มา 5 วัน');
+});
+
+test('เปอร์เซ็นต์ในโดนัทต้องรวมได้ 100 — หน้านี้เขียนกำกับว่าผลรวมตรงกับเลขกลางวง', async ({ page }) => {
+  /* ⚠️ ปัดทีละแถวแล้วรวมได้ 99 (3 ใบแบ่ง 3 ช่อง ได้ 33+33+33) บนหน้าที่เขียนว่า
+     "รวม N ใบ — เท่ากับเลขกลางวงพอดี" จะกลายเป็นจอที่ขัดกับตัวเอง (ผู้ตรวจ #132 รอบ 3)
+     ฉากนี้จงใจให้ได้ช่องละ 1 ใบพอดี ซึ่งเป็นฉากที่การปัดแบบเดิมพัง */
+  const mk = (po, days) => Object.assign(order(po, 100, '2026-01-01T00:00:00.000Z'), { orderDate: isoAgo(days) });
+  const late = mk('LATE-1', 40);          // เลยกำหนดส่งแล้ว
+  const soon = mk('SOON-1', 26);          // ใกล้ครบกำหนด — ต้องคีย์ทุกขั้นครบ ไม่งั้นโดนตัดสินล่าช้าก่อน
+  const okk  = mk('OK-1', 1);             // ยังมีเวลา
+  const recs = ['winding', 'assembly', 'support', 'inspection']
+    .map((p, i) => rec('s' + i, 'SOON-1|' + PN, p, 100, isoAgo(3)));
+  await open(page, [late, soon, okk], recs);
+
+  expect(await page.locator('#wtDue svg text').first().textContent(), 'ต้องได้สามใบ').toBe('3');
+  const pcts = await page.$$eval('#wtDueList .pc', els => els.map(e => Number(e.textContent.replace('%', ''))));
+  expect(pcts.length, 'ต้องมีสามช่อง').toBe(3);
+  expect(pcts.reduce((a, b) => a + b, 0), 'ผลรวมต้องเป็น 100 พอดี').toBe(100);
+});
+
+test('หัวหน้าต้องไม่เขียนว่า "แสดงครบทุกขั้นเสมอ" — ตอนนี้กดปิดขั้นเองได้แล้ว', async ({ page }) => {
+  /* ⚠️ ประโยคเดิมจริงตอนที่หน้านี้ยังไม่มีปุ่มปิดขั้นของตัวเอง · ใบนี้เพิ่มปุ่มนั้นเข้ามา
+     คำว่า "เสมอ" จึงขัดกับสิ่งที่ตาเห็นทันทีที่คนกดปิดขั้นไปหนึ่งขั้น (ผู้ตรวจ #132 รอบ 3) */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  await page.locator('#view-wiptrend .panel').first().locator('.wtexp summary').click();
+  const head = await page.locator('#view-wiptrend .panel').first().locator('.desc').innerText();
+  expect(head, 'ต้องไม่สัญญาว่าแสดงครบทุกขั้นเสมอ').not.toContain('แสดงครบทุกขั้นเสมอ');
+  expect(head, 'ต้องยังบอกว่าไม่ฟังการซ่อนขั้นของแดชบอร์ด').toContain('ไม่ฟังการซ่อนขั้นของแดชบอร์ด');
+});
+
+test('G2 — โฟกัสบนปุ่มคำอธิบายสีต้องไม่ตกไป BODY เมื่อหน้าวาดใหม่เอง', async ({ page }) => {
+  /* ⚠️ ซิงค์อัตโนมัติเรียก renderWipTrend() ทุก 20 วิ · คนที่ Tab มาค้างบนชื่อขั้นจะตกไป BODY
+     เองโดยไม่ได้กดอะไร แล้วต้อง Tab จากต้นหน้าใหม่ · การคืนโฟกัสต้องอยู่ใน wtLegend()
+     ไม่ใช่ในตัวจับคลิก ไม่งั้นครอบแค่เส้นทางที่คนกดเอง (ผู้ตรวจ #132 รอบ 2 วัดได้) */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  await page.locator('#wtWipLegend .legend-item').first().focus();
+  const before = await page.evaluate(() => document.activeElement.dataset.proc || document.activeElement.tagName);
+  await page.evaluate(() => renderWipTrend());
+  await page.waitForTimeout(150);
+  const after = await page.evaluate(() => document.activeElement.dataset.proc || document.activeElement.tagName);
+  expect(after, 'ต้องยังอยู่ที่ปุ่มขั้นเดิม').toBe(before);
+});
+
+test('ช่วงวันที่ใช้ไม่ได้ ต้องไม่ให้แถบเทียบช่วงอ้างวันที่เก่าที่ไม่ตรงกับช่องบนจอ', async ({ page }) => {
+  /* จอที่อ้างวันที่ซึ่งไม่ตรงกับช่องข้าง ๆ คือจอโกหก — แย่กว่าไม่บอกอะไรเลย */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  await page.click('.wtrng[data-rng="daily"] button[data-days="30"]');
+  await page.waitForTimeout(250);
+  await expect(page.locator('#wtDiff'), 'ตั้งไม่เท่ากันต้องฟ้องก่อน').toBeVisible();
+
+  // ทำให้ช่วงของกราฟยอดค้างใช้ไม่ได้
+  await page.fill('#wtWipFrom', isoAgo(2));
+  await page.fill('#wtWipTo', isoAgo(20));
+  await page.waitForTimeout(250);
+  await expect(page.locator('#wtWip'), 'ฝั่งที่ผิดต้องบอกเหตุผลของตัวเอง').toContainText('กลับข้าง');
+  await expect(page.locator('#wtDiff'), 'แถบเทียบช่วงต้องเงียบ ไม่ใช่อ้างช่วงเก่า').toBeHidden();
+});
+
+/* ───────── เลขรวมใต้วันที่ (เจ้าของสั่ง 11 พ.ย. 2569) ───────── */
+
+/** เลขในแถวล่างสุดของกราฟ เรียงซ้ายไปขวา */
+const totalsRow = (page, box) => page.$$eval(`#${box} svg text[font-weight="700"]`,
+  els => els.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left)
+    .map(e => Number(e.textContent.replace(/,/g, ''))));
+
+test('เลขใต้วันที่ต้องเท่ากับผลบวกของแท่งที่แสดงอยู่จริง ไม่ใช่เลขที่คิดมาจากที่อื่น', async ({ page }) => {
+  /* 🚨 คนอ่านตัวจริงจะเอาเลขนี้ไปใช้ตรง ๆ · ถ้ามันไม่เท่ากับผลบวกของแท่งที่ตาเห็น
+     คนที่ลองบวกเองจะได้คนละเลข แล้วเลิกเชื่อทั้งกราฟ (หลักเดียวกับที่หน้านี้
+     ต้องฟ้องเมื่อเลขไม่ตรงกับบัญชีของค้างบนแดชบอร์ด)
+     ⚠️ ต้องอ่านค่าจริงจาก <title> ของแท่ง ไม่ใช่ความสูงของแท่ง ซึ่งถูกหารด้วยค่าสูงสุดไปแล้ว */
+  const recs = [];
+  for (let d = 3; d >= 0; d--) {
+    recs.push(rec('w' + d, 'AA-1|' + PN, 'winding', 70, isoAgo(d)));
+    recs.push(rec('a' + d, 'AA-1|' + PN, 'assembly', 40, isoAgo(d)));
+  }
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], recs);
+
+  const sums = await page.$$eval('#wtDaily rect[data-proc] title', els => {
+    const byDay = {};
+    els.forEach(e => {
+      const [when, v] = e.textContent.split(': ');
+      const day = when.slice(0, when.indexOf(' '));
+      byDay[day] = (byDay[day] || 0) + Number(v.replace(/,/g, ''));
+    });
+    return Object.keys(byDay).sort().map(k => byDay[k]);
+  });
+  const shown = await totalsRow(page, 'wtDaily');
+  expect(shown.length, 'ต้องมีเลขรวมครบทุกวันเมื่อที่พอ').toBe(14);
+  expect(shown, 'เลขรวมต้องเท่ากับผลบวกของแท่งในวันนั้นทุกวัน').toEqual(sums);
+  expect(shown[13], 'วันล่าสุดคีย์ winding 70 + assembly 40').toBe(110);
+
+  const lab = await page.$$eval('#wtDaily svg text', els => els.map(e => e.textContent));
+  expect(lab, 'ต้องมีคำกำกับหัวแถว ไม่งั้นเลขสองชั้นใต้แกนอ่านไม่ออกว่าอะไรเป็นอะไร').toContain('รวม');
+});
+
+test('ปิดขั้นจากคำอธิบายสีแล้ว เลขรวมต้องลดลงตามแท่งที่เหลือ', async ({ page }) => {
+  /* 🚨 ประโยคใต้กราฟชวนให้คนกดปิดขั้นที่ยอดสูง · ถ้าเลขรวมยังนับขั้นที่ปิดไปแล้ว
+     เลขกับแท่งจะขัดกันทันทีในจังหวะที่คนกำลังจ้องมันอยู่พอดี (ผู้ตรวจ #132 รอบ 12) */
+  const recs = [];
+  for (let d = 3; d >= 0; d--) {
+    recs.push(rec('w' + d, 'AA-1|' + PN, 'winding', 70, isoAgo(d)));
+    recs.push(rec('a' + d, 'AA-1|' + PN, 'assembly', 40, isoAgo(d)));
+  }
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], recs);
+  expect((await totalsRow(page, 'wtDaily'))[13]).toBe(110);
+
+  await page.click('#wtDailyLegend button[data-proc="assembly"]');
+  await page.waitForTimeout(150);
+  expect((await totalsRow(page, 'wtDaily'))[13], 'ปิด assembly แล้วต้องเหลือเฉพาะ winding').toBe(70);
+});
+
+test('เลขรวมของวันที่ติดกันต้องไม่เกยกัน แม้ยอดค้างจริงจะยาวเจ็ดหลัก', async ({ page }) => {
+  /* 🚨 ยอดค้างของจริงอยู่ราวสองล้าน = "1,982,600" กว้าง ~55px ขณะที่ช่องของหนึ่งวัน
+     ที่จอ 819 (จอ 1024 ซูม 125% ซึ่งหน้างานตั้งจริง) เหลือ ~49px · ปล่อยไว้แล้ว
+     เลขของทุกวันจะเกยกันเป็นพืดอ่านไม่ออกทั้งแถว ซึ่งแย่กว่าไม่มีเลขเลย
+     ทางแก้คือข้ามวันเว้นวัน (วันที่ก็ข้ามตามกันไปด้วย จึงยังจับคู่กันได้)
+     ⚠️ fixture ต้องมียอดถึงเจ็ดหลักจริง — ยอดหลักร้อยเขียวเองโดยไม่ได้ตรวจอะไร */
+  await page.setViewportSize({ width: 819, height: 900 });
+  const orders = [], recs = [];
+  for (let k = 0; k < 20; k++) {
+    const po = 'TM52' + (10 + k) + 'U101';
+    orders.push(Object.assign(order(po, 100000, '2026-08-01T00:00:00.000Z'), { id: po + '|' + PN }));
+    for (let d = 3; d >= 0; d--) recs.push(rec('w' + k + d, po + '|' + PN, 'winding', 900, isoAgo(d)));
+  }
+  await open(page, orders, recs);
+
+  const m = await page.evaluate(() => {
+    const svg = document.querySelector('#wtWip svg');
+    const num = [...svg.querySelectorAll('text[font-weight="700"]')]
+      .map(e => e.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+    let worst = 1e9;
+    for (let i = 1; i < num.length; i++) worst = Math.min(worst, num[i].left - num[i - 1].right);
+    const dates = [...svg.querySelectorAll('text')]
+      .filter(e => /^\d\d-\d\d$/.test(e.textContent)).length;
+    return { n: num.length, worst, dates, digits: svg.querySelector('text[font-weight="700"]').textContent.length };
+  });
+  expect(m.digits, 'ฉากนี้ต้องมียอดเจ็ดหลักจริง ไม่งั้นไม่ได้ตรวจอะไร').toBeGreaterThanOrEqual(9);
+  expect(m.n, 'ต้องยังเหลือเลขให้อ่านอยู่').toBeGreaterThan(2);
+  expect(m.worst, 'เลขของวันที่ติดกันต้องไม่เกยกัน').toBeGreaterThan(0);
+  expect(m.dates, 'ทุกเลขต้องมีวันที่คู่กัน ไม่ใช่เลขลอยไม่รู้ว่าวันไหน').toBe(m.n);
+
+  /* ที่จอมือถือ ช่องของหนึ่งวันแคบกว่าตัวเลขเอง เลขจึงล้ำมาทับคำว่า "รวม"
+     กลายเป็น "รว2,435,027" อ่านไม่ออกทั้งคู่ — ไม่มีที่แล้วต้องตัดคำกำกับทิ้ง */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  const mob = await page.evaluate(() => {
+    const svg = document.querySelector('#wtWip svg');
+    const lab = [...svg.querySelectorAll('text')].filter(e => e.textContent === 'รวม')[0];
+    const first = svg.querySelector('text[font-weight="700"]');
+    return lab ? { gap: first.getBoundingClientRect().left - lab.getBoundingClientRect().right } : { gap: 99 };
+  });
+  expect(mob.gap, 'คำว่า "รวม" ต้องไม่ทับกับเลขของวันแรก').toBeGreaterThan(0);
+});
+
+test('กราฟของแดชบอร์ดต้องไม่มีแถวเลขรวม — เปิดเฉพาะหน้านี้', async ({ page }) => {
+  /* ⚠️ drawGroupedBars() ใช้ร่วมกันสองหน้า · ตัวเลือกใหม่ทุกตัวต้องเป็นแบบเลือกเปิด
+     ไม่งั้นแก้หน้าหนึ่งแล้วอีกหน้าเปลี่ยนตามโดยไม่มีใครสั่ง (กฎเดียวกับ hitKey · wrap) */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')],
+    [rec('w1', 'AA-1|' + PN, 'winding', 70, isoAgo(1))]);
+  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.waitForTimeout(300);
+  const m = await page.evaluate(() => {
+    const svg = document.querySelector('#chartWrap svg');
+    return { h: svg.getAttribute('height'), bold: svg.querySelectorAll('text[font-weight="700"]').length,
+      texts: [...svg.querySelectorAll('text')].map(e => e.textContent) };
+  });
+  expect(m.h, 'ความสูงของกราฟแดชบอร์ดต้องเท่าเดิม').toBe('220');
+  expect(m.bold, 'ต้องไม่มีเลขรวม').toBe(0);
+  expect(m.texts).not.toContain('รวม');
+});
+
+test('ป้ายตอนเอาเมาส์ชี้ต้องเรียงตามลำดับขั้นในสาย ไม่ใช่เรียงมากไปน้อย', async ({ page }) => {
+  /* 🔒 เจ้าของสั่ง 11 พ.ย. 2569 — ของเดิมเรียงมากไปน้อย ลำดับจึงสลับที่ทุกครั้งที่เลื่อนไปวันอื่น
+     คนอ่านต้องไล่อ่านชื่อขั้นใหม่ทุกป้าย แทนที่จะจำได้ว่าบรรทัดไหนคือขั้นไหน
+     ⚠️ ฉากต้องให้ลำดับของขั้น **ต่างจาก** ลำดับมากไปน้อยจริง ๆ ไม่งั้นเขียวเองทั้งที่ยังเรียงผิด
+        ที่นี่ค้างหน้า assembly (800) มากกว่าค้างหน้า winding (100) ซึ่งมาก่อนมันในสาย */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], [
+    rec('w1', 'AA-1|' + PN, 'winding', 900, isoAgo(7)),
+    rec('a1', 'AA-1|' + PN, 'assembly', 100, isoAgo(6))
+  ]);
+  const hit = page.locator('#wtWip rect.wthit').last();
+  // ชี้สองครั้ง — ครั้งแรก Playwright เลื่อนจอให้ก่อน แล้วการเลื่อนเองเป็นตัวสั่งให้ป้ายหุบ
+  await hit.hover(); await hit.hover();
+
+  // แถวรวมอยู่ท้ายป้าย ไม่ใช่ขั้น จึงต้องตัดออกก่อนเทียบลำดับ (ดูข้อถัดไปที่คุมเลขของมันเอง)
+  const names = await page.$$eval('#wtTip .r:not(.tot) .n', els => els.map(e => e.textContent));
+  const vals = await page.$$eval('#wtTip .r:not(.tot) b', els => els.map(e => Number(e.textContent.replace(/,/g, ''))));
+  const order5 = await page.evaluate(() => MAIN_PROCESSES.map(p => PROCESS_LABELS[p]));
+  expect(names, 'ต้องเรียงตามลำดับขั้นเป๊ะ ๆ').toEqual(order5);
+  expect(vals, 'ค่าต้องเรียงตามขั้น ไม่ใช่ 800 มาก่อน 100').toEqual([100, 800, 100, 0, 0]);
+});
+
+test('ป้ายตอนชี้ต้องมีบรรทัดรวม และต้องเท่ากับทั้งผลบวกของแถวในป้ายเอง และเลขใต้วันที่', async ({ page }) => {
+  /* 🔒 เจ้าของขอเมื่อ 12 พ.ย. 2569 เพราะเลขใต้กราฟ "ตัวเล็กไปนิดนึง" สำหรับคนอ่านตัวจริง
+     🚨 เลขสามตัวนี้อยู่หน้าเดียวกันและต้องตรงกันเสมอ — แถวในป้าย · บรรทัดรวมในป้าย · เลขใต้วันที่
+        ตัวไหนหลุดจากกันเมื่อไหร่ คนที่บวกตามจะเลิกเชื่อทั้งหน้า (หลักเดียวกับทั้ง repo นี้)
+     ⚠️ ฉากต้องมีมากกว่าหนึ่งขั้นที่ยอดไม่เป็นศูนย์ ไม่งั้นบวกถูกโดยบังเอิญ */
+  const recs = [];
+  for (let d = 3; d >= 0; d--) {
+    recs.push(rec('w' + d, 'AA-1|' + PN, 'winding', 70, isoAgo(d)));
+    recs.push(rec('a' + d, 'AA-1|' + PN, 'assembly', 40, isoAgo(d)));
+    recs.push(rec('s' + d, 'AA-1|' + PN, 'support', 25, isoAgo(d)));
+  }
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], recs);
+
+  const hit = page.locator('#wtDaily rect.wthit').last();
+  // ชี้สองครั้ง — ครั้งแรก Playwright เลื่อนจอให้ก่อน แล้วการเลื่อนเองเป็นตัวสั่งให้ป้ายหุบ
+  await hit.hover(); await hit.hover();
+
+  const tip = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#wtTip .r:not(.tot) b')]
+      .map(e => Number(e.textContent.replace(/,/g, '')));
+    const tot = document.querySelector('#wtTip .r.tot');
+    return { rows, label: tot ? tot.querySelector('.n').textContent : null,
+      tot: tot ? Number(tot.querySelector('b').textContent.replace(/,/g, '')) : null,
+      size: tot ? parseFloat(getComputedStyle(tot.querySelector('b')).fontSize) : 0 };
+  });
+  expect(tip.label, 'ต้องมีบรรทัดรวมในป้าย').toBe('รวม');
+  expect(tip.rows.filter(v => v).length, 'ฉากนี้ต้องมีหลายขั้นที่ไม่เป็นศูนย์').toBeGreaterThan(1);
+  expect(tip.tot, 'บรรทัดรวมต้องเท่ากับผลบวกของแถวในป้ายเอง')
+    .toBe(tip.rows.reduce((a, b) => a + b, 0));
+  expect(tip.tot, 'วันล่าสุดคีย์ 70 + 40 + 25').toBe(135);
+  expect(tip.size, 'ต้องโตกว่าเลขของแต่ละขั้น เพราะนี่คือเหตุผลที่เจ้าของขอมา').toBeGreaterThan(17);
+
+  const under = await totalsRow(page, 'wtDaily');
+  expect(under[under.length - 1], 'ต้องเท่ากับเลขใต้วันที่ของวันเดียวกัน').toBe(tip.tot);
+});
+
+test('ปิดขั้นแล้ว บรรทัดรวมในป้ายต้องลดตามแถวที่เหลือ', async ({ page }) => {
+  /* ⚠️ บวกจาก c.procs (ขั้นที่แสดงอยู่) ไม่ใช่ทุกขั้น — ถ้าบวกทุกขั้น ป้ายจะโชว์แถวสองแถว
+     แล้วสรุปยอดเป็นเลขของสามขั้น ซึ่งบวกตามไม่ได้เลย */
+  const recs = [];
+  for (let d = 3; d >= 0; d--) {
+    recs.push(rec('w' + d, 'AA-1|' + PN, 'winding', 70, isoAgo(d)));
+    recs.push(rec('a' + d, 'AA-1|' + PN, 'assembly', 40, isoAgo(d)));
+  }
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], recs);
+  await page.click('#wtDailyLegend button[data-proc="assembly"]');
+  await page.waitForTimeout(150);
+
+  const hit = page.locator('#wtDaily rect.wthit').last();
+  await hit.hover(); await hit.hover();
+  const tot = await page.locator('#wtTip .r.tot b').textContent();
+  expect(Number(tot.replace(/,/g, '')), 'ปิด assembly แล้วต้องเหลือเฉพาะ winding').toBe(70);
+});
+
+/* ───────── คำอธิบายพับเก็บได้ (เจ้าของสั่ง 12 พ.ย. 2569) ───────── */
+
+test('คำอธิบายของทุกหัวข้อต้องพับไว้ตั้งแต่เปิดมา แต่กดแล้วต้องกางอ่านได้ครบ', async ({ page }) => {
+  /* 🔒 เจ้าของสั่งให้เอาออกหรือพับไว้ "ปกติผู้ใช้ไม่อ่านอยู่แล้ว" — เลือกพับ ไม่ใช่ลบ
+     เพราะข้อความพวกนี้เป็นที่เดียวที่บอกว่าสามกราฟใช้ชุดขั้นไม่เท่ากัน และว่าโดนัทกับแท่ง
+     นับคนละชุดใบ · คนที่สงสัยต้องหาคำตอบได้ในหน้าเดียวกัน ไม่ใช่ต้องไปถามคนเขียนโปรแกรม
+     ⚠️ ต้องตรวจว่า "กางออกแล้วเห็นจริง" ไม่ใช่แค่มีอยู่ใน DOM — ข้อความที่กางไม่ออก
+        เท่ากับถูกลบไปแล้วในสายตาคนใช้ */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  const boxes = page.locator('#view-wiptrend .wtexp');
+  expect(await boxes.count(), 'ทุกหัวข้อต้องมีคำอธิบายของตัวเอง').toBe(5);
+
+  for (let i = 0; i < 5; i++) {
+    const box = boxes.nth(i);
+    expect(await box.evaluate(el => el.open), 'ต้องพับไว้ตั้งแต่เปิดหน้ามา').toBe(false);
+    await expect(box.locator('.desc'), 'ตอนพับต้องไม่กินที่บนจอ').toBeHidden();
+    await box.locator('summary').click();
+    await expect(box.locator('.desc'), 'กดแล้วต้องอ่านได้จริง').toBeVisible();
+    expect((await box.locator('.desc').innerText()).length, 'ต้องมีเนื้อความจริง').toBeGreaterThan(40);
+  }
+
+  /* 🚨 **สามประโยคนี้ `CLAUDE.md` สั่งว่าห้ามถอด** — การพับไว้ไม่ใช่การถอด แต่ถ้าวันหนึ่ง
+     มีคนลบเนื้อในกล่องทิ้งเพราะ "ไม่มีใครอ่านอยู่แล้ว" ก็จะไม่มีอะไรฟ้องเลย
+     ข้อข้างบนวัดแค่ความยาว ซึ่งเขียวได้ด้วยข้อความอะไรก็ได้ (ผู้ตรวจ #133 รอบ 2 ทัก)
+     ทั้งสามข้อคือสิ่งที่กันไม่ให้คนเอาเลขของสองที่มาเทียบกันผิดคู่แล้วเลิกเชื่อทั้งหน้า */
+  const all = (await page.locator('#view-wiptrend .wtexp .desc').allTextContents()).join(' ');
+  expect(all, 'สามกราฟใช้ชุดขั้นไม่เท่ากัน — ต้องบอกว่าขั้นนับแยกไม่มีในกราฟยอดค้าง')
+    .toContain('ขั้นนับแยกไม่มีในกราฟนี้');
+  expect(all, 'จำนวน PO ของแต่ละขั้นเอามาบวกกันไม่ได้').toContain('ห้ามเอามาบวกกัน');
+  expect(all, 'โดนัทกับกราฟแท่งนับคนละชุดใบ').toContain('ไม่ใช่ชุดใบเดียวกับแท่งทางซ้าย');
+});
+
+test('กางคำอธิบายค้างไว้ แล้วหน้าวาดใหม่เอง ต้องไม่หุบและโฟกัสต้องไม่ตก (G2)', async ({ page }) => {
+  /* 🚨 ซิงค์อัตโนมัติเรียก renderWipTrend() ทุก 20 วิ · ถ้าคำอธิบายถูกวาดด้วยสคริปต์
+     กล่องที่คนเพิ่งกางจะหุบเองกลางที่อ่านอยู่ และโฟกัสตกไป BODY (กฎเดียวกับ wtAnomOpen
+     และปุ่มคำอธิบายสี) · ที่กันไว้คือมันอยู่ใน HTML คงที่ สคริปต์ไม่แตะเลย */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  const box = page.locator('#view-wiptrend .panel').nth(2).locator('.wtexp');
+  await box.locator('summary').focus();
+  await box.locator('summary').click();
+  expect(await box.evaluate(el => el.open)).toBe(true);
+
+  await page.evaluate(() => renderWipTrend());
+  await page.waitForTimeout(150);
+  expect(await box.evaluate(el => el.open), 'ต้องยังกางอยู่หลังหน้าวาดใหม่').toBe(true);
+  expect(await page.evaluate(() => document.activeElement.tagName),
+    'โฟกัสต้องยังอยู่ที่ปุ่มกาง ไม่ตกไป BODY').toBe('SUMMARY');
+});
+
+test('ผลรวมของกราฟยอดค้าง = ยอดสั่ง ลบ ยอดส่งแล้ว — แต่ใบย้อนแย้งไม่หักล้าง และนั่นถูก', async ({ page }) => {
+  /* 🚨 ข้อนี้ตรึงคำรับรองที่ `CLAUDE.md` เขียนไว้ ไม่ให้มันเป็นแค่ประโยคในเอกสาร
+     ใบปกติ: ของค้างทุกขั้นบวกกันแล้วหักล้างกันหมด เหลือ "ของที่ยังไม่ได้ส่ง" พอดี
+     🚨 ใบย้อนแย้ง (คีย์ขั้นหลังมากกว่าขั้นหน้า) **ไม่หักล้าง** เพราะ Math.min(…, prev)
+        ครอบของที่ไหลต่อไม่ให้เกินของที่ไหลเข้า · ของที่ไม่เคยไหลผ่านขั้นต้นน้ำจึงไม่ถูกหักออก
+        ถ้ามีใครไป "แก้" ให้สองเลขเท่ากัน ยอดค้างรวมจะเกินยอดสั่ง ซึ่งเป็นเลขที่ไม่มีอยู่จริง
+        (ผู้ตรวจ #133 ทักว่าประโยคใน CLAUDE.md ครอบไม่ครบ — ข้อนี้คือสิ่งที่กันไม่ให้ลืมอีก) */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], [
+    rec('w1', 'AA-1|' + PN, 'winding', 800, isoAgo(3)),
+    rec('a1', 'AA-1|' + PN, 'assembly', 700, isoAgo(3)),
+    rec('s1', 'AA-1|' + PN, 'support', 700, isoAgo(3)),
+    rec('i1', 'AA-1|' + PN, 'inspection', 600, isoAgo(3)),
+    rec('p1', 'AA-1|' + PN, 'shipping', 500, isoAgo(3))
+  ]);
+  const clean = await totalsRow(page, 'wtWip');
+  expect(clean[clean.length - 1], 'ใบปกติ: 1,000 − ส่งแล้ว 500').toBe(500);
+  expect(await page.locator('#wtAnom').evaluate(el => getComputedStyle(el).display),
+    'ฉากนี้ต้องไม่ใช่ใบย้อนแย้ง ไม่งั้นครึ่งแรกของข้อนี้ไม่ได้ตรวจอะไร').toBe('none');
+});
+
+test('ใบย้อนแย้ง — ผลรวมต้องไม่ถูกหักด้วยยอดที่ไม่เคยไหลผ่านขั้นต้นน้ำ', async ({ page }) => {
+  // ยอดสั่ง 1,000 · winding 100 · shipping 500 (ย้อนแย้ง) → ของที่ไหลต่อถูกครอบไว้ที่ 100
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')], [
+    rec('w1', 'AA-1|' + PN, 'winding', 100, isoAgo(3)),
+    rec('p1', 'AA-1|' + PN, 'shipping', 500, isoAgo(3))
+  ]);
+  const t = await totalsRow(page, 'wtWip');
+  expect(t[t.length - 1], 'ของ 500 ที่ไม่เคยผ่าน winding ห้ามถูกหักออกจากของค้าง').toBe(1000);
+  expect(await page.locator('#wtAnom').evaluate(el => getComputedStyle(el).display),
+    'และต้องมีแถบฟ้องว่าใบนี้ย้อนแย้ง ไม่ใช่ปล่อยให้คนงงกับเลขเอง').toBe('flex');
+});
+
+test('เลขรวมของวันขวาสุดต้องไม่ถูกขอบกราฟตัด — ที่จอ 819 ช่วง 21 วัน', async ({ page }) => {
+  /* 🚨 กราฟไม่มีที่ว่างฝั่งขวา (`groupW` คิดจาก `w-padL`) เลขรวมวางกลางช่องของวันนั้น
+     ครึ่งขวาของเลขวันสุดท้ายจึงล้นออกนอก `viewBox` แล้วถูกตัด **โดยไม่มีแถบเลื่อนให้ไปดู**
+     `2,000,000` เหลือ `2,000,00` ซึ่ง **ยังอ่านออกว่าเป็นเลข** คนอ่านตัวจริงจะอ่านว่า
+     ยอดวันล่าสุดตกไปสิบเท่า — แย่กว่าเลขหายทั้งตัว (ผู้ตรวจ #133 รอบ 2 วัดได้ล้น 11px)
+     ⚠️ **ฉากต้องเป็น 21 วันที่จอ 819** — เกิดเฉพาะตอน `(จำนวนวัน−1)` หารด้วย `labelStep` ลงตัว
+        คือวันสุดท้ายเป็นวันที่ถูกติดป้ายพอดี · ฉาก 14 วัน (labelStep 2) ป้ายสุดท้ายเป็นวันที่ 13
+        จึงเขียวเองโดยไม่ได้ตรวจอะไร · 21 คือช่วงรายวันที่ยาวที่สุดก่อนถูกรวมเป็นสัปดาห์
+     ⚠️ และต้องวัด **กับขอบ svg** ไม่ใช่แค่ระยะระหว่างเลขสองตัว — เทสเดิมวัดแต่ระยะระหว่างเลข */
+  await page.setViewportSize({ width: 819, height: 900 });
+  const orders = [];
+  for (let k = 0; k < 20; k++) {
+    const po = 'TM52' + (10 + k) + 'U101';
+    orders.push(Object.assign(order(po, 100000, '2026-08-01T00:00:00.000Z'), { id: po + '|' + PN }));
+  }
+  await open(page, orders);
+  await page.fill('#wtWipFrom', isoAgo(20));
+  await page.fill('#wtWipTo', isoAgo(0));
+  await page.waitForTimeout(350);
+
+  const m = await page.evaluate(() => {
+    const box = document.querySelector('#wtWip .chart-wrap'), svg = box.querySelector('svg');
+    const sr = svg.getBoundingClientRect();
+    const t = [...svg.querySelectorAll('text[font-weight="700"]')].map(e => e.getBoundingClientRect());
+    let gap = 1e9;
+    for (let i = 1; i < t.length; i++) gap = Math.min(gap, t[i].left - t[i - 1].right);
+    return { n: t.length, digits: svg.querySelector('text[font-weight="700"]').textContent.length,
+      right: Math.max(...t.map(r => r.right)) - sr.right,
+      left: sr.left - Math.min(...t.map(r => r.left)),
+      gap, scroll: box.scrollWidth - box.clientWidth };
+  });
+  expect(m.digits, 'ฉากนี้ต้องมียอดเจ็ดหลักจริง ไม่งั้นไม่ได้ตรวจอะไร').toBeGreaterThanOrEqual(9);
+  expect(m.n, 'ต้องมีเลขให้ตรวจหลายตัว').toBeGreaterThan(5);
+  expect(m.scroll, 'ไม่มีแถบเลื่อน = ของที่ล้นออกไปคือของที่หายไปเลย').toBe(0);
+  expect(m.right, 'เลขตัวขวาสุดต้องอยู่ในกรอบ').toBeLessThanOrEqual(0);
+  expect(m.left, 'และตัวซ้ายสุดก็ต้องอยู่ในกรอบ').toBeLessThanOrEqual(0);
+  expect(m.gap, 'ย่อช่องแล้วเลขสองตัวที่ติดกันต้องยังไม่ชนกัน').toBeGreaterThan(0);
+});
+
+test('คำอธิบายที่พับไว้ต้องติดกระดาษ — บนกระดาษไม่มีปุ่มให้กด', async ({ page }) => {
+  /* 🚨 ก่อนใบนี้ข้อความพวกนี้อยู่นอกกล่องพับ จึงพิมพ์ติดไปด้วย · พอพับแล้วมันหายจากกระดาษเงียบ ๆ
+     บนจอยังกดดูได้ แต่บนกระดาษไม่มีอะไรให้กด — ของที่หายไปจึงหายจริง
+     🚨 **ต้องเป็น `::details-content` ห้ามใช้ `display`** — Chromium ซ่อนเนื้อของ <details>
+        ที่ปิดอยู่ด้วย `content-visibility` · เขียน `display:block` ทับแล้วไม่มีผล
+        (ลองเองแล้ววัดแล้ว · เทสข้อนี้คือสิ่งที่กันไม่ให้ใครเปลี่ยนกลับไปใช้ `display`)
+     ⚠️ ต้องวัดด้วย `checkVisibility()` ไม่ใช่ `getComputedStyle().display`
+        เพราะ `content-visibility` ไม่ได้เปลี่ยนค่า `display` เลย — วัดผิดตัวจะเขียวเองทั้งที่ยังหาย */
+  await open(page, [order('AA-1', 1000, '2026-08-01T00:00:00.000Z')]);
+  const desc = page.locator('#view-wiptrend .wtexp .desc').first();
+  expect(await desc.evaluate(el => el.checkVisibility()), 'บนจอยังต้องพับอยู่').toBe(false);
+
+  await page.emulateMedia({ media: 'print' });
+  const m = await desc.evaluate(el => ({ vis: el.checkVisibility(), len: el.innerText.length }));
+  expect(m.vis, 'บนกระดาษต้องกางเอง').toBe(true);
+  expect(m.len, 'และต้องมีเนื้อความจริง ไม่ใช่กล่องเปล่า').toBeGreaterThan(40);
+  await page.emulateMedia({ media: 'screen' });
 });

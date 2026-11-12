@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-10.6">
+<meta name="app-version" content="2026-11-13.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -132,7 +132,13 @@
   /* ⚠️ คลาสของตัวเอง ห้ามใช้ .wanom ซ้ำ — เทสของแดชบอร์ดใช้ locator('.wanom') แบบ strict
      กล่องที่สองที่ใช้คลาสเดียวกันทำให้เทสเดิมแดงทันที · หน้าตาเหมือนกันแต่คนละชื่อ
      ⚠️ ซ่อนด้วย display ไม่ใช่ attribute hidden — กฎ display ชนะ [hidden] เสมอ */
-  .wtanom{display:none;gap:8px;margin-top:10px;font-size:13px;color:var(--text-dim);line-height:1.5;}
+  /* ⚠️ ต้อง wrap และให้รายการกินเต็มบรรทัดของตัวเอง — แถบนี้เป็น flex แนวนอน
+     รายการที่ต่อเข้าไปข้างในจึงกลายเป็น flex item ที่เหลือพื้นที่แค่เศษจากข้อความข้าง ๆ
+     ผู้ตรวจ #132 วัดได้: กริดต้องการ 732px แต่ได้ 345px ที่จอ 1024 และ 247px ที่ 800px
+     (= จอ 1024 ซูม 125% ซึ่งเครื่องหน้างานตั้งจริง) เหลือเห็น 2 จาก 7 คอลัมน์
+     แดชบอร์ดวาง .wanl เป็นพี่น้องถัดจากแถบ จึงไม่เจอปัญหานี้ */
+  .wtanom{display:none;gap:8px;margin-top:10px;font-size:13px;color:var(--text-dim);line-height:1.5;flex-wrap:wrap;}
+  .wtanom > .wanl{flex:1 0 100%;}
   .wanom b, .wtanom b{color:var(--red);font-weight:700;}
   .wanom-t{background:none;border:1px solid var(--border);border-radius:6px;padding:2px 10px;font:inherit;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap;align-self:flex-start;}
   .wanom-t:hover{background:var(--gray-light);}
@@ -263,6 +269,17 @@
     .wanr{break-inside:avoid;}
     .wanl{overflow:visible;}
     .wanom-t{display:none;}
+    /* ⚠️ กระดาษไม่มีปุ่มให้กด — คำอธิบายที่พับไว้ต้องกางเองตอนพิมพ์ ไม่งั้นข้อความที่เคย
+       พิมพ์ติดไปด้วยก่อน 12 พ.ย. 2569 จะหายจากกระดาษเงียบ ๆ
+       🚨 **ต้องเป็น `::details-content` ห้ามใช้ `display`** — Chromium ซ่อนเนื้อของ <details>
+          ที่ปิดอยู่ด้วย `content-visibility` ไม่ใช่ `display` · เขียน `.desc{display:block}`
+          แล้วไม่มีผลเลย (ลองแล้ววัดแล้วทั้งสองทาง · ผู้ตรวจ #133 รอบ 4 ชี้ทางที่ถูกให้)
+       ⚠️ `::details-content` เป็นของใหม่ (Chrome 131+) เบราว์เซอร์เก่ากว่านั้นไม่รู้จักและข้ามไป
+          = กลับไปเป็นแบบเดิมคือไม่ติดกระดาษ ไม่ใช่พังอย่างอื่น · เครื่องหน้างานเป็น Chrome
+       ⚠️ หัวกล่อง (summary) ปล่อยให้ติดไปด้วย ทำหน้าที่เป็นหัวข้อย่อยบนกระดาษ
+          ตัดแต่ลูกศร ▾ ทิ้ง เพราะบนกระดาษไม่มีอะไรให้กด */
+    details.wtexp::details-content{content-visibility:visible !important;}
+    .wtexp > summary::after{content:"" !important;}
     .wlh{break-after:avoid;}
     /* บนจอตารางอยู่ในกรอบสูง 70vh แล้วเลื่อนดู ถ้าไม่ปลดล็อกจะพิมพ์ได้แค่แถวที่มองเห็น */
     .table-wrap{overflow:visible;max-height:none;}
@@ -281,6 +298,110 @@
   }
   /* ระหว่างรอโหลดข้อมูล (openState) ห้ามกด — ของที่พิมพ์ช่วงนั้นไม่ถูกบันทึก แล้วจะถูกค่าจริงทับเงียบ ๆ */
   html:not([data-state-ready]) main{pointer-events:none;opacity:.4;}
+  /* ---------- แท็บยอดค้างรายวัน ---------- */
+  .wtsub{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--gray-light);
+    border:1px solid var(--border);border-radius:10px;padding:10px 13px;margin-top:4px;}
+  .wtsub label{font-size:12.5px;font-weight:700;}
+  .wtpair{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start;}
+  .wtpair > section{min-width:0;}
+  @media (max-width:900px){ .wtpair{grid-template-columns:1fr;} }
+  .wtrng{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:10px;}
+  .wtrng .wtrl{font-size:12.5px;font-weight:700;}
+  .wtrng .wtsep{color:var(--text-dim);}
+  .wtrng .wtcap{margin-left:auto;}
+  .wtrng input[type=date]{min-width:0;}
+  .wtrng button[aria-pressed="true"]{background:var(--primary);color:#fff;border-color:var(--primary);}
+  /* ช่วงวันของสองกราฟล่างต่างกัน = กวาดตาอ่านคู่กันทีละวันไม่ได้อีก ต้องฟ้อง ไม่ใช่ปล่อยเงียบ */
+  /* ⚠️ ต้องมี [hidden] คู่กับ display:flex — flex ชนะกฎ [hidden] ของเบราว์เซอร์
+     ไม่มีบรรทัดนี้แถบจะโผล่ตลอดเวลา รวมตอนที่สองช่วงเท่ากัน (กับดักเดียวกับ .wtanom)
+     เทส "ตั้งต้นสองช่วงเท่ากัน ต้องไม่มีแถบ" จับข้อนี้ */
+  .wtdiff[hidden]{display:none;}
+  .wtdiff{display:flex;gap:8px;align-items:flex-start;background:var(--amber-light);
+    border:1px solid #fcd34d;border-radius:9px;padding:8px 12px;font-size:12.5px;margin-bottom:10px;}
+  .wtseg{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden;margin-bottom:10px;}
+  .wtseg button{border:none;background:var(--panel);color:var(--text-dim);font:inherit;font-size:13px;
+    font-weight:600;padding:7px 14px;cursor:pointer;}
+  .wtseg button + button{border-left:1px solid var(--border);}
+  .wtseg button[aria-pressed="true"]{background:var(--primary);color:#fff;}
+  .wtseg button:focus-visible{outline:2px solid var(--primary);outline-offset:-2px;}
+  .wtdonut{display:flex;gap:16px;align-items:center;flex-wrap:wrap;}
+  .wtdonut > div:last-child{flex:1 1 220px;min-width:0;display:grid;gap:2px;}
+  .wtdr{display:grid;grid-template-columns:11px 1fr auto auto;gap:8px;align-items:center;font-size:12.5px;padding:2px 0;}
+  .wtdr i{width:11px;height:11px;border-radius:3px;}
+  .wtdr .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .wtdr .qt{font-weight:700;text-align:right;}
+  .wtdr .pc{color:var(--text-dim);text-align:right;min-width:42px;}
+  .wtlate{margin-top:14px;border-top:1px solid var(--border);padding-top:10px;}
+  .wtlh{font-size:12.5px;font-weight:700;margin-bottom:6px;}
+  /* ⚠️ สองบรรทัดต่อแถว ไม่ใช่สามคอลัมน์ — บรรทัดบนคือ PO กับจำนวนวัน (ทั้งคู่ nowrap)
+     บรรทัดล่างคือ P/N · หน่วย · ค้างที่ ซึ่งกินเต็มความกว้างของตัวเอง
+     ของเดิมช่องกลางเป็นช่องเดียวที่ยอมหาย พอเติม P/N เข้าไป "ค้างที่ <ขั้น>" ก็ถูกตัดหาย
+     ที่จอ 1024 ซึ่งเป็นจอหน้างาน (ผู้ตรวจ #132 รอบ 11 วัดได้ ช่องมี 199px แต่ต้องใช้ 207–268px)
+     กล่องไม่มี max-height จึงมีที่ในแนวตั้งอยู่แล้ว · ความยาว P/N กับชื่อขั้นตั้งเองได้
+     การแย่งที่กันในบรรทัดเดียวจึงไม่มีทางพอแน่นอน */
+  .wtlr{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:baseline;
+    padding:4px 0;border-bottom:1px dashed var(--border);font-size:12.5px;}
+  .wtlr:last-child{border-bottom:none;}
+  .wtlr .po{font-weight:700;white-space:nowrap;}
+  .wtlr .wh{grid-column:1/-1;color:var(--text-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wtlr .dd{font-weight:700;color:var(--red);white-space:nowrap;text-align:right;}
+  .wtcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px;}
+  .wtcard{border:1px solid var(--border);border-radius:10px;padding:12px 14px;min-width:0;}
+  .wtcard .ch{display:flex;align-items:center;gap:7px;margin-bottom:2px;}
+  .wtcard .ch i{width:12px;height:12px;border-radius:3px;flex:0 0 auto;}
+  .wtcard .ch .nm{font-weight:700;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .wtcard .ch .pk{margin-left:auto;font-size:11.5px;color:var(--text-dim);white-space:nowrap;}
+  .wtcard .rows{max-height:360px;overflow-y:auto;}
+  .wtrow{display:grid;grid-template-columns:42px 1fr auto;gap:8px;align-items:center;padding:2px 0;}
+  .wtrow .dy{font-size:11.5px;color:var(--text-dim);text-align:right;}
+  .wtrow .tr{display:block;background:var(--gray-light);border-radius:3px;height:18px;overflow:hidden;min-width:0;}
+  .wtrow .fl{display:block;height:100%;border-radius:3px;min-width:2px;}
+  .wtrow .vl{font-size:12.5px;font-weight:700;text-align:right;white-space:nowrap;}
+  .wtrow.last .dy{color:var(--text);font-weight:700;}
+  /* ยอด 0 ต้องไม่เหลือขีดสีโผล่จาก min-width — 0 กับ "น้อยมาก" ต้องต่างกันด้วยตา */
+  .wtrow.zero .vl{color:var(--text-dim);font-weight:400;}
+  .wtrow.zero .fl{min-width:0;}
+  .wtnote{font-size:11.5px;color:var(--text-dim);margin-top:8px;}
+  /* คำอธิบายของแต่ละหัวข้อ พับเก็บไว้ (เจ้าของสั่ง 12 พ.ย. 2569 — "ปกติผู้ใช้ไม่อ่านอยู่แล้ว")
+     ⚠️ **พับ ไม่ใช่ลบ** — ข้อความพวกนี้เป็นที่เดียวที่บอกว่าสามกราฟใช้ชุดขั้นไม่เท่ากัน
+        และบอกว่าโดนัทกับกราฟแท่งนับคนละชุดใบ · คนที่สงสัยต้องหาคำตอบได้ในหน้าเดียวกัน
+        ไม่ใช่ต้องไปถามคนเขียนโปรแกรม
+     ⚠️ ใช้ <details> ของเบราว์เซอร์เอง ไม่ใช่สคริปต์ — กดด้วยแป้นพิมพ์ได้
+        และ Ctrl+F ของเบราว์เซอร์ยังหาเจอทั้งที่ปิดอยู่ (Chrome เปิดให้เอง)
+     ⚠️ อยู่ใน HTML คงที่เท่านั้น ห้ามให้สคริปต์วาดใหม่ — ซิงค์อัตโนมัติเรียก renderWipTrend()
+        ทุก 20 วิ ถ้าวาดใหม่ กล่องที่คนเพิ่งกางจะหุบเอง และโฟกัสตกไป BODY (G2) */
+  .wtexp{margin:-6px 0 12px;}
+  .wtexp > summary{display:inline-flex;align-items:center;gap:5px;cursor:pointer;
+    font-size:11.5px;color:var(--text-dim);list-style:none;padding:2px 0;}
+  .wtexp > summary::-webkit-details-marker{display:none;}
+  .wtexp > summary::after{content:"▾";font-size:9px;}
+  .wtexp[open] > summary::after{content:"▴";}
+  .wtexp > summary:hover{color:var(--text);}
+  .wtexp > summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:3px;}
+  .wtexp .desc{margin:6px 0 0;}
+  /* ⚠️ แท่งข้อมูลไม่รับเมาส์ เพื่อไม่ให้เบราว์เซอร์เอา <title> ของมันขึ้นมาแข่งกับป้ายของเรา
+     <title> ยังอยู่ใน DOM เพราะเป็นชื่อสำหรับโปรแกรมอ่านหน้าจอ และเทสอ่านค่าจริงจากตรงนั้น */
+  #wtPo svg rect, #wtWip svg rect, #wtDaily svg rect{pointer-events:none;}
+  #wtPo svg rect.wthit, #wtWip svg rect.wthit, #wtDaily svg rect.wthit{pointer-events:all;fill:transparent;}
+  #wtPo svg rect.wthit:hover, #wtWip svg rect.wthit:hover, #wtDaily svg rect.wthit:hover{
+    fill:var(--primary);fill-opacity:.07;}
+  /* ป้ายตัวเลขตัวใหญ่ตอนเอาเมาส์ชี้ — <title> ของ SVG รอเป็นวินาที ตัวเล็ก และปรับขนาดไม่ได้ */
+  .wttip{position:fixed;z-index:60;pointer-events:none;background:var(--panel);color:var(--text);
+    border:1px solid var(--border);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);
+    padding:10px 13px;max-width:280px;}
+  .wttip .th{font-size:11.5px;color:var(--text-dim);margin-bottom:5px;white-space:nowrap;}
+  .wttip .big{font-size:30px;font-weight:700;line-height:1.1;}
+  .wttip .unit{font-size:12.5px;color:var(--text-dim);margin-left:5px;}
+  .wttip .r{display:grid;grid-template-columns:11px 1fr auto;gap:5px 9px;align-items:center;padding:2px 0;}
+  .wttip .r i{width:11px;height:11px;border-radius:3px;}
+  .wttip .r .n{font-size:12.5px;color:var(--text-dim);white-space:nowrap;}
+  .wttip .r b{font-size:17px;text-align:right;}
+  .wttip .r.dim{opacity:.5;}
+  /* แถวรวมของป้าย — เจ้าของขอเมื่อ 12 พ.ย. 2569 เพราะเลขใต้กราฟตัวเล็กไปสำหรับคนอ่านตัวจริง
+     ต้องเป็นผลบวกของ **แถวที่อยู่ในป้ายใบนี้เอง** ไม่ใช่ของทุกขั้น ไม่งั้นบวกตามแล้วไม่ตรง */
+  .wttip .r.tot{border-top:1px solid var(--border);margin-top:5px;padding-top:5px;}
+  .wttip .r.tot .n{color:var(--text);font-weight:700;}
+  .wttip .r.tot b{font-size:22px;}
 </style>
 </head>
 <body>
@@ -782,39 +903,128 @@
 <section id="view-wiptrend" class="view">
   <div class="panel">
     <h2>ยอดค้างรายวัน</h2>
-    <div class="desc"><b>กราฟแรกเป็นภาพนิ่งของวันนี้</b> แกนนอนเป็นขั้น ไม่ใช่วัน · <b>สองกราฟล่างเป็นเส้นเวลา</b> ใช้วันเดียวกัน สีเดียวกัน แท่งแบบเดียวกัน จึงกวาดตาลงมาทีละวันแล้วอ่านคู่กันได้ ·
-      <b>ช่วงวันและ Sub-Name ใช้ตัวเดียวกับกราฟในแท็บ Dashboard</b> — เปลี่ยนที่นั่น ·
+    <details class="wtexp"><summary>หน้านี้อ่านยังไง</summary>
+    <div class="desc"><b>กราฟคู่บนเป็นภาพนิ่งของวันนี้</b> แกนนอนเป็นขั้น ไม่ใช่วัน และไม่ขึ้นกับช่วงวันที่เลือก ·
+      <b>สองชุดล่างเป็นเส้นเวลา แต่ละชุดมีช่วงวันของตัวเอง</b> ·
+      <b>Sub-Name ข้างล่างคุมทั้งหน้า</b> ไม่ใช่ตัวของแท็บ Dashboard ·
       ไม่ฟังตัวกรองสัปดาห์ สถานะ และคำค้น เหมือนกราฟของแดชบอร์ด ·
-      คำอธิบายสีข้างล่างกดซ่อนขั้นไม่ได้ หน้านี้แสดงครบทุกขั้นเสมอ แม้จะซ่อนไว้ที่แดชบอร์ด</div>
-    <div class="legend"><div class="legend-items" id="wtLegend"></div>
-      <span id="wtCaption" class="small muted" style="margin-left:auto;"></span></div>
+      <b>ไม่ฟังการซ่อนขั้นของแดชบอร์ด</b> — หน้านี้เริ่มจากครบทุกขั้นเสมอ
+      แล้วกดปิดเองได้ที่คำอธิบายสีของ<b>สองกราฟล่าง</b> (คำอธิบายสีของกราฟ PO เป็นป้ายเฉย ๆ กดไม่ได้)</div>
+    </details>
+    <div class="wtsub">
+      <label for="wtSubFilter">Sub-Name</label>
+      <!-- ป้ายต้องเป็น "ทั้งหมด" ให้ตรงกับที่ fillSelect() เขียนทับทันทีที่มีใบสั่ง
+           ไม่งั้นบรรทัดนี้เป็นโค้ดตายที่อ่านแล้วเข้าใจผิดว่าจอขึ้นคำนี้ -->
+      <select id="wtSubFilter"><option value="">ทั้งหมด</option></select>
+      <span class="small muted" id="wtSubNote"></span>
+    </div>
     <!-- แถบฟ้องใบย้อนแย้งของหน้านี้ · คลาส .wtanom ของตัวเอง ห้ามใช้ .wanom ซ้ำ
-         เทสของแดชบอร์ดใช้ locator('.wanom') แบบ strict กล่องที่สองทำให้เทสเดิมแดง
-         สองแถบจึงหน้าตาไม่เหมือนกันเป๊ะ (อันเก่าขึ้น ⚠ อันใหม่ขึ้น badge) และนั่นไม่เป็นไร -->
+         เทสของแดชบอร์ดใช้ locator('.wanom') แบบ strict กล่องที่สองทำให้เทสเดิมแดง -->
     <div class="wtanom" id="wtAnom"></div>
   </div>
 
   <div class="panel">
-    <h3>จำนวน PO ที่ยังทำขั้นนั้นไม่เสร็จ</h3>
-    <div class="desc">ภาพนิ่งวันนี้ · หน่วยเป็นใบ · ใช้เกณฑ์เดียวกับช่อง “ซ่อนที่เสร็จ Process นี้แล้ว”
-      ของหน้าคีย์ยอดรายวัน จึงตรงกับจำนวนแถวบนหน้านั้นเมื่อไม่ได้กรองสัปดาห์ หน่วย หรือคำค้นไว้ ·
-      <b>เลขนี้มากขึ้นเรื่อย ๆ ตามลำดับของสาย</b> เพราะใบที่ยังทำขั้นก่อนหน้าไม่เสร็จ ก็ยังทำขั้นหลังไม่เสร็จด้วย ·
-      <b>ห้ามเอามาบวกกัน</b></div>
-    <div class="chart-wrap" id="wtPo"></div>
+    <div class="wtpair">
+      <section>
+        <h3>จำนวน PO ที่ยังทำขั้นนั้นไม่เสร็จ</h3>
+        <details class="wtexp"><summary>เกณฑ์ของกราฟนี้</summary>
+        <div class="desc">ภาพนิ่งวันนี้ · หน่วยเป็นใบ · ใช้เกณฑ์เดียวกับช่อง “ซ่อนที่เสร็จ Process นี้แล้ว”
+          ของหน้าคีย์ยอดรายวัน จึงตรงกับจำนวนแถวบนหน้านั้นเมื่อไม่ได้กรองสัปดาห์ หน่วย หรือคำค้นไว้ ·
+          <b>ใบเดียวนับได้หลายขั้น</b> เพราะใบที่ยังทำขั้นก่อนหน้าไม่เสร็จ ก็ยังทำขั้นหลังไม่เสร็จด้วย ·
+          <b>ห้ามเอามาบวกกัน</b></div>
+        </details>
+        <div class="legend"><div class="legend-items" id="wtPoLegend"></div></div>
+        <div class="chart-wrap" id="wtPo"></div>
+      </section>
+      <section>
+        <!-- ⚠️ ห้ามเขียน "แบ่งตามกำหนดส่ง" — ช่อง "ล่าช้า" ใช้เกณฑ์ "ขั้นไหนขั้นหนึ่งเลยกำหนดของขั้นนั้น" (A5)
+             ไม่ใช่กำหนดส่งตัวเดียว · คำนั้นแคบกว่าของที่นับจริง (ผู้ตรวจ #132 รอบ 4-5) -->
+        <h3>ใบที่ยังไม่เสร็จ แบ่งตามสถานะเวลา</h3>
+        <!-- ⚠️ หัวกล่องต้องบอกทั้งสองเรื่องที่อยู่ข้างใน — วงกลมกับกล่องใบที่ล่าช้า
+             คนที่สงสัยว่า "จำนวนวันนับจากอะไร" ต้องเดาว่าคำตอบอยู่ในกล่องที่ชื่อว่าเกณฑ์ของวง
+             ถ้าหัวกล่องพูดถึงแต่วง (ผู้ตรวจ #133 รอบ 2 ทัก) -->
+        <details class="wtexp"><summary>เกณฑ์ของวงนี้ · ของกล่องใบที่ล่าช้า · ทำไมเทียบกับกราฟซ้ายมือไม่ได้</summary>
+        <div class="desc"><b>ไม่ได้แบ่งตามขั้น</b> จึงไม่มีเลขตัวไหนให้เอาไปเทียบกับกราฟซ้ายมือ ·
+          ใบละช่องเดียว บวกกันได้เท่าเลขกลางวง ·
+          ⚠️ <b>ไม่ใช่ชุดใบเดียวกับแท่งทางซ้าย</b> — ที่นี่นับเฉพาะใบที่ยัง<b>ส่งของไม่ครบ</b>
+          ส่วนแท่งทางซ้ายนับราย<b>ขั้น</b> จึงรวมใบที่ส่งครบแล้วแต่ยังคีย์ขั้นก่อนหน้าไม่ครบไว้ด้วย ·
+          <b>สองฝั่งเอามาเทียบกันตรง ๆ ไม่ได้ แต่ละฝั่งตอบคนละคำถาม</b> ·
+          ใช้เกณฑ์ล่าช้าเดียวกับที่ทั้งระบบใช้อยู่ (A4 · A5)<br>
+          <b>กล่อง “ใบที่ล่าช้านานที่สุด”</b> ใช้เกณฑ์เดียวกับป้าย “ล่าช้า” ที่ใช้อยู่ทั้งระบบ (A5) ·
+          <b>จำนวนวันนับจากกำหนดแรกที่เลยมาแล้ว ไม่ใช่กำหนดส่ง</b> จึงเทียบข้ามแถวได้ และใช้เรียงลำดับกล่องนี้ ·
+          “ค้างที่” คือขั้นแรกในสายที่ยอดยังไม่ถึงยอดสั่ง <b>จึงเป็นคนละขั้นกับที่เขียนว่าเลยกำหนดได้</b></div>
+        </details>
+        <div class="wtdonut">
+          <div id="wtDue"></div>
+          <div id="wtDueList"></div>
+        </div>
+        <div class="wtlate">
+          <div class="wtlh">ใบที่ล่าช้านานที่สุด</div>
+          <div id="wtLate"></div>
+        </div>
+      </section>
+    </div>
   </div>
 
   <div class="panel">
     <h3>ยอดค้างรายวัน</h3>
+    <details class="wtexp"><summary>เกณฑ์ของกราฟนี้ · วิธีอ่านสองมุมมอง</summary>
     <div class="desc">ของที่ค้างอยู่หน้าแต่ละขั้น ณ สิ้นแต่ละวัน · หน่วยเป็นชิ้น ·
       <b>ขั้นนับแยกไม่มีในกราฟนี้</b> เพราะของค้างคิดจาก “ขั้นก่อนหน้า ลบ ขั้นนี้”
-      ซึ่งขั้นนับแยกไม่มีขั้นก่อนหน้า และไม่ได้ส่งต่อให้ขั้นไหน</div>
-    <div class="chart-wrap" id="wtWip"></div>
+      ซึ่งขั้นนับแยกไม่มีขั้นก่อนหน้า และไม่ได้ส่งต่อให้ขั้นไหน<br>
+      <b>มุมมองรวมทุกขั้น</b> ทุกขั้นใช้สเกลเดียวกัน จึงเทียบความสูงข้ามขั้นได้ ·
+      ขั้นที่ยอดสูงมากจะกดขั้นอื่นให้เตี้ยติดพื้น <b>กดชื่อขั้นในคำอธิบายสีเพื่อปิด แล้วสเกลจะคิดใหม่</b> ·
+      เลขใต้วันที่คือผลรวมของขั้นที่แสดงอยู่ในวันนั้น เลขเดียวกับบรรทัด “รวม” ในป้ายตอนเอาเมาส์ชี้<br>
+      <b>มุมมองแยกรายขั้น</b> แต่ละการ์ดมีสเกลของตัวเอง — <b>ความยาวแท่งเทียบข้ามการ์ดไม่ได้ ให้อ่านที่ตัวเลข</b> ·
+      แถวล่างสุดคือล่าสุด</div>
+    </details>
+    <div class="wtrng" data-rng="wip">
+      <span class="wtrl">ช่วงวัน</span>
+      <button type="button" class="btn-mini" data-days="7">7 วัน</button>
+      <button type="button" class="btn-mini" data-days="14">14 วัน</button>
+      <button type="button" class="btn-mini" data-days="30">30 วัน</button>
+      <button type="button" class="btn-mini" data-days="90">90 วัน</button>
+      <input type="date" id="wtWipFrom" aria-label="ยอดค้างรายวัน จากวันที่">
+      <span class="wtsep">–</span>
+      <input type="date" id="wtWipTo" aria-label="ยอดค้างรายวัน ถึงวันที่">
+      <span class="small muted wtcap" id="wtCaption"></span>
+    </div>
+    <div class="wtdiff" id="wtDiff" hidden></div>
+    <div class="wtseg" role="group" aria-label="มุมมองยอดค้างรายวัน">
+      <button type="button" data-view="wip" data-mode="group" aria-pressed="true">รวมทุกขั้น</button>
+      <button type="button" data-view="wip" data-mode="cards" aria-pressed="false">แยกรายขั้น</button>
+    </div>
+    <div class="legend"><div class="legend-items" id="wtWipLegend"></div></div>
+    <div id="wtWip"></div>
   </div>
 
   <div class="panel">
     <h3>ยอดผลิตรายวัน</h3>
-    <div class="desc">ยอดที่คีย์ได้ในแต่ละวัน · หน่วยเป็นชิ้น · กราฟเดียวกับในแท็บ Dashboard เอามาวางไว้ให้อ่านคู่กัน</div>
-    <div class="chart-wrap" id="wtDaily"></div>
+    <details class="wtexp"><summary>เกณฑ์ของกราฟนี้ · วิธีอ่านสองมุมมอง</summary>
+    <div class="desc">ยอดที่คีย์ได้ในแต่ละวัน · หน่วยเป็นชิ้น · กราฟเดียวกับในแท็บ Dashboard เอามาวางไว้ให้อ่านคู่กัน<br>
+      <b>มุมมองรวมทุกขั้น</b> ทุกขั้นใช้สเกลเดียวกัน จึงเทียบความสูงข้ามขั้นได้ ·
+      ขั้นที่ยอดสูงมากจะกดขั้นอื่นให้เตี้ยติดพื้น <b>กดชื่อขั้นในคำอธิบายสีเพื่อปิด แล้วสเกลจะคิดใหม่</b> ·
+      เลขใต้วันที่คือผลรวมของขั้นที่แสดงอยู่ในวันนั้น เลขเดียวกับบรรทัด “รวม” ในป้ายตอนเอาเมาส์ชี้<br>
+      <b>มุมมองแยกรายขั้น</b> แต่ละการ์ดมีสเกลของตัวเอง — <b>ความยาวแท่งเทียบข้ามการ์ดไม่ได้ ให้อ่านที่ตัวเลข</b> ·
+      แถวล่างสุดคือล่าสุด</div>
+    </details>
+    <div class="wtrng" data-rng="daily">
+      <span class="wtrl">ช่วงวัน</span>
+      <button type="button" class="btn-mini" data-days="7">7 วัน</button>
+      <button type="button" class="btn-mini" data-days="14">14 วัน</button>
+      <button type="button" class="btn-mini" data-days="30">30 วัน</button>
+      <button type="button" class="btn-mini" data-days="90">90 วัน</button>
+      <input type="date" id="wtDailyFrom" aria-label="ยอดผลิตรายวัน จากวันที่">
+      <span class="wtsep">–</span>
+      <input type="date" id="wtDailyTo" aria-label="ยอดผลิตรายวัน ถึงวันที่">
+      <span class="small muted wtcap" id="wtDailyCaption"></span>
+    </div>
+    <div class="wtseg" role="group" aria-label="มุมมองยอดผลิตรายวัน">
+      <button type="button" data-view="daily" data-mode="group" aria-pressed="true">รวมทุกขั้น</button>
+      <button type="button" data-view="daily" data-mode="cards" aria-pressed="false">แยกรายขั้น</button>
+    </div>
+    <div class="legend"><div class="legend-items" id="wtDailyLegend"></div></div>
+    <div id="wtDaily"></div>
   </div>
 </section>
 
@@ -966,6 +1176,9 @@
   </div>
 </section>
 
+<!-- ⚠️ ห้ามใส่ aria-live/role=status — กล่องนี้ถูกเขียนทับทุก pointermove โปรแกรมอ่านหน้าจอจะพูดรัว
+     ค่าของแท่งอ่านได้จาก <title> ของแท่งอยู่แล้ว ซึ่งเป็นชื่อที่ถูกต้องตามมาตรฐาน (ผู้ตรวจ #132 รอบ 2) -->
+<div class="wttip" id="wtTip" hidden></div>
 </main>
 
 <div class="modal-overlay" id="mergeModal">
@@ -993,6 +1206,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-10.6"></script>
+<script src="app.js?v=2026-11-13.2"></script>
 </body>
 </html>
