@@ -235,6 +235,17 @@
     .wanr{break-inside:avoid;}
     .wanl{overflow:visible;}
     .wanom-t{display:none;}
+    /* ⚠️ กระดาษไม่มีปุ่มให้กด — คำอธิบายที่พับไว้ต้องกางเองตอนพิมพ์ ไม่งั้นข้อความที่เคย
+       พิมพ์ติดไปด้วยก่อน 12 พ.ย. 2569 จะหายจากกระดาษเงียบ ๆ
+       🚨 **ต้องเป็น `::details-content` ห้ามใช้ `display`** — Chromium ซ่อนเนื้อของ <details>
+          ที่ปิดอยู่ด้วย `content-visibility` ไม่ใช่ `display` · เขียน `.desc{display:block}`
+          แล้วไม่มีผลเลย (ลองแล้ววัดแล้วทั้งสองทาง · ผู้ตรวจ #133 รอบ 4 ชี้ทางที่ถูกให้)
+       ⚠️ `::details-content` เป็นของใหม่ (Chrome 131+) เบราว์เซอร์เก่ากว่านั้นไม่รู้จักและข้ามไป
+          = กลับไปเป็นแบบเดิมคือไม่ติดกระดาษ ไม่ใช่พังอย่างอื่น · เครื่องหน้างานเป็น Chrome
+       ⚠️ หัวกล่อง (summary) ปล่อยให้ติดไปด้วย ทำหน้าที่เป็นหัวข้อย่อยบนกระดาษ
+          ตัดแต่ลูกศร ▾ ทิ้ง เพราะบนกระดาษไม่มีอะไรให้กด */
+    details.wtexp::details-content{content-visibility:visible !important;}
+    .wtexp > summary::after{content:"" !important;}
     /* บนจอตารางอยู่ในกรอบสูง 70vh แล้วเลื่อนดู ถ้าไม่ปลดล็อกจะพิมพ์ได้แค่แถวที่มองเห็น */
     .table-wrap{overflow:visible;max-height:none;}
     table{font-size:10.5px;}
