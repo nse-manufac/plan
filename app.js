@@ -5915,7 +5915,7 @@ document.getElementById('processTable').addEventListener('click', e=>{
   if(renameId){
     const l = prompt('ชื่อขั้น — ขึ้นบนปุ่มเลือกขั้นและหัวคอลัมน์สะสม (ไม่เกิน 40 ตัว)', p.label);
     if(l === null || !l.trim()) return;
-    const s = prompt('ชื่อสั้น — หัวตาราง Dashboard สถานะล่าช้า รายงาน (ไม่เกิน 20 ตัว)', p.short);
+    const s = prompt('ชื่อสั้น — แกนของกราฟ PO สถานะล่าช้า รายงาน (ไม่เกิน 20 ตัว)', p.short);
     if(s === null) return;
     const label = l.trim(), short = s.trim() || label;
     if(label.length > 40 || short.length > 20){ toast('ชื่อขั้นยาวไม่เกิน 40 ตัว · ชื่อสั้นไม่เกิน 20 ตัว'); return; }

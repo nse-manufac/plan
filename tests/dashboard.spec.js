@@ -80,10 +80,20 @@ test('ซอร์สต้องไม่เหลือซากของห�
     .replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '))
     .replace(/<!--[\s\S]*?-->/g, m => m.replace(/[^\n]/g, ' '))
     .replace(/(^|[^:"'`])\/\/[^\n]*/g, (m, p) => p);
+  /* 🚨 **คำที่คนอ่านเห็น ก็ต้องกวาดจากซอร์สด้วย ไม่ใช่กวาดแต่จากจอ**
+     ข้อถัดไปอ่าน `innerText` ซึ่ง **ไม่รวมข้อความใน `prompt()` · `confirm()` · `toast()` · `title=`**
+     ประโยคพวกนั้นคนอ่านเห็นเหมือนกัน แต่เห็นตอนกดเท่านั้น จึงรอดสายตาทั้งคนและเทส
+     (ผู้ตรวจ #134 รอบ 2 เจอ `prompt('ชื่อสั้น — หัวตาราง Dashboard …')` ที่รอดมาแบบนี้
+      ทั้งที่หัว commit ของรอบก่อนเขียนว่ากัน "ทั้งคลาสของปัญหานี้" — มันกันแค่ครึ่งเดียว) */
+  const DEAD_WORDS = ['Dashboard', 'แดชบอร์ด'];
   const hits = [];
   for (const { file, text } of appSources()) {
     strip(text).split(/\r?\n/).forEach((line, i) => {
       for (const name of DEAD) if (line.includes(name)) hits.push(`${file}:${i + 1} ${name}`);
+      /* ⚠️ `<title>` กับ `<h1>` เขียนว่า "Production & WIP Dashboard" โดยตั้งใจ — เป็นชื่อโปรแกรม
+         ที่พนักงานคุ้นและบุ๊กมาร์กไว้ ไม่ใช่การชี้ไปที่แท็บ · เจ้าของตัดสินให้คงไว้ */
+      if (/<title>|<h1>/.test(line)) return;
+      for (const w of DEAD_WORDS) if (line.includes(w)) hits.push(`${file}:${i + 1} คำว่า "${w}"`);
     });
   }
   expect(hits, 'ของพวกนี้ถูกลบไปพร้อมแท็บแล้ว เหลืออยู่ = มีคนเอากลับมาครึ่งเดียว').toEqual([]);
