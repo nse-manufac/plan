@@ -72,7 +72,11 @@ test('ซอร์สต้องไม่เหลือซากของห�
     'chartRangeCaption', 'dashSubFilter', 'dashWeekFilter', 'dashStatusFilter', 'dashWipFilter',
     'dashHideDone', 'dashPresets', 'btnPrintDash', 'printHeader', 'printMeta',
     'renderWipCards', 'renderDashTable', 'renderDashScoped', 'dashFilteredRows', 'dashRangeRecords',
-    'renderChartLegend', 'getChartRange', 'chartHiddenProcs', 'fillPrintHeader', 'buildCumSplitMap'];
+    'renderChartLegend', 'getChartRange', 'chartHiddenProcs', 'fillPrintHeader', 'buildCumSplitMap',
+    /* ⚠️ สามตัวนี้ไม่ใช่ id บนจอ แต่เป็นคำที่แสดงผลของหัวคอลัมน์ · ตัวกรอง "ค้างอยู่ที่ขั้น"
+       และแถวบัญชีของค้าง ซึ่งหายไปพร้อมแท็บเดียวกัน · ค้างอยู่สามรอบกว่าจะมีใครเก็บ
+       (ผู้ตรวจ #134 รอบ 4) — ใส่ไว้ที่นี่เพื่อไม่ให้มีใครเติมกลับมาแบบไม่มีใครเรียก */
+    'processHeadHtml', 'headHtml', "'waitCard'"];
   /* ⚠️ ต้องลบคอมเมนต์ออกทั้งก้อน ไม่ใช่ดูแค่ตัวอักษรหน้าบรรทัด — คอมเมนต์ก้อนของ repo นี้
      ขึ้นบรรทัดต่อไปโดยไม่มี `*` นำ การดูแค่ตัวแรกจึงจับประวัติที่ตั้งใจเก็บไว้เป็นของจริง
      (เจอเองตอนรันครั้งแรก) · แทนที่ด้วยช่องว่างเพื่อให้เลขบรรทัดยังตรงของจริง */

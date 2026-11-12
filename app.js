@@ -234,7 +234,7 @@ const NOTE_CLEARED = 'เคลียร์แล้ว';
  *   short          ชื่อสั้น · แกนของกราฟ PO · สถานะล่าช้า · รายงาน Excel
  *   defaultOffset  วันกำหนดส่งตั้งต้นนับจากวันสั่ง · null = ยังไม่กำหนด ไม่ตัดสินล่าช้า (A4)
  *   offsetInputId  id ของช่องกรอกวันในหน้าตั้งค่า — ห้าขั้นเดิมคง id เดิมไว้ ขั้นใหม่ได้ off-<id>
- *   headHtml/text  คำเฉพาะของขั้นนั้น (มีแค่ขั้นส่งของ) · ขั้นอื่นประกอบจากชื่อสั้นใน ptext()
+ *   text           คำเฉพาะของขั้นนั้น (มีแค่ขั้นส่งของ) · ขั้นอื่นประกอบจากชื่อสั้นใน ptext()
  *
  * ⚠️ inspection กับ shipping ต้องอยู่ท้ายสุดเสมอ และห้ามเปลี่ยน id
  *    หน้า FG (inspection − shipping) ใบส่งของ แผงเทียบ Call In สถานะส่งครบ ผูกกับสอง id นี้ตรง ๆ
@@ -248,12 +248,15 @@ const DEFAULT_PROCESSES = [
   {id:'support',    label:'Support',           short:'Support',    icon:'🧩', color:'#1baf7a', defaultOffset:null, offsetInputId:'offSup'},
   {id:'inspection', label:'Inspection',        short:'Inspection', icon:'🔍', color:'#dfa800', defaultOffset:24,   offsetInputId:'offI'},
   {id:'shipping',   label:'ส่งของ (Shipping)', short:'Shipping',   icon:'🚚', color:'#d6409f', defaultOffset:28,   offsetInputId:'offS',
-    headHtml:'ส่งของ<br>(Shipping)',
     /* ⚠️ เจ้าของสั่งเปลี่ยนชื่อ 7 พ.ย. 2026 — เลขนี้คือของที่ผ่าน Inspection แล้วแต่ยังไม่ส่ง
      *    ซึ่งเป็นนิยามเดียวกับหน้ายอดคงคลัง FG · ชื่อเดิม "WIP รอส่งของ" อ่านไม่ออกว่าเป็นของในคลัง
      *    ⚠️ แต่ **ตัวเลขสองที่ไม่เท่ากันได้** — แถวในบัญชีครอบที่ยอดสั่งต่อใบและไม่ติดลบ
      *       หน้า FG โชว์ยอดดิบ (ตั้งใจ ดู fgRows) · ชื่อเหมือนกันแล้วยิ่งต้องเขียนกำกับไว้ */
-    text:{late:'เกินกำหนดส่งของ', wait:'รอส่งของ', waitCard:'ยอด FG คงคลัง',
+    /* ⚠️ เคยมี `headHtml` · `wait` · `waitCard` อยู่ตรงนี้ด้วย — ทั้งสามใช้เฉพาะหัวคอลัมน์
+     *    ตัวกรอง "ค้างอยู่ที่ขั้น" และแถวบัญชีของค้าง ซึ่งถูกลบไปพร้อมแท็บ Dashboard
+     *    เมื่อ 12 พ.ย. 2569 · ลบออกด้วยกันเพื่อไม่ให้เหลือคำที่ไม่มีใครแสดง (ผู้ตรวจ #134 รอบ 4)
+     *    `waitExport` ยังอยู่ เพราะรายงาน Excel ยังใช้ */
+    text:{late:'เกินกำหนดส่งของ',
           waitExport:'ยอด FG คงคลัง', deadlineExport:'กำหนดส่งของ', offset:'กำหนดส่งของ (+วัน)'}}
 ];
 /* ⚠️ อ็อบเจกต์ข้างล่างเป็นตัวเดิมตลอดอายุหน้า — applyProcessList() ล้างแล้วเติมค่าลงตัวเดิม
@@ -309,7 +312,7 @@ function validProcessList(list){
 }
 
 /** รวมรายการขั้นที่ซิงค์มา (null = ยังไม่เคยมีใครแก้) เข้ากับห้าขั้นตั้งต้น — คืนรายการเต็มรวมขั้นที่ซ่อน
- *  ⚠️ ขั้นตั้งต้นเอาคำเฉพาะ (headHtml · text · offsetInputId · ไอคอน · สี) จากโค้ดเสมอ ที่ซิงค์มาเปลี่ยนได้แค่ชื่อกับซ่อน
+ *  ⚠️ ขั้นตั้งต้นเอาคำเฉพาะ (text · offsetInputId · ไอคอน · สี) จากโค้ดเสมอ ที่ซิงค์มาเปลี่ยนได้แค่ชื่อกับซ่อน
  *  ⚠️ inspection กับ shipping ล็อก — เปลี่ยนชื่อหรือซ่อนไม่ได้ แม้ข้อมูลที่ซิงค์มาจะบอกให้ทำ */
 function composeProcesses(stored){
   if(!validProcessList(stored)) return DEFAULT_PROCESSES.map(d=>Object.assign({}, d, {hidden:false}));
@@ -358,19 +361,12 @@ function ptext(id, kind){
   if(d.text && d.text[kind]) return d.text[kind];
   switch(kind){
     case 'late': return 'ล่าช้า ' + d.short;
-    case 'wait': return 'ค้างหน้า ' + d.short;
-    case 'waitCard': return 'WIP ค้างหน้า ' + d.short;
     case 'waitExport': return 'WIP หน้า ' + d.short;
     case 'deadlineExport': return 'Deadline ' + d.short;
     case 'cumExport': return 'สะสม ' + d.short;
     case 'offset': return d.label + ' (+วัน)';
     default: return d.label;
   }
-}
-/** หัวคอลัมน์ขั้นในตาราง Dashboard เป็น HTML — ขั้นส่งของใช้สองบรรทัดตามเดิม */
-function processHeadHtml(id){
-  const d = PROCESS_BY_ID[id];
-  return (d && d.headHtml) || escapeHtml(d ? d.short : id);
 }
 /** คู่ขั้นที่ยอดสะสมย้อนแย้งของใบเดียว — ขั้นถัดไปมากกว่าขั้นก่อนหน้า ซึ่งเป็นไปไม่ได้
  *  ⚠️ **เกณฑ์ของความย้อนแย้งอยู่ที่นี่ที่เดียว** hasOrderAnomaly() เรียกตัวนี้ ไม่ได้เขียนเงื่อนไขเอง
