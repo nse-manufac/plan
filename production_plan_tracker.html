@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-12.1">
+<meta name="app-version" content="2026-11-12.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -105,32 +105,9 @@
   tr.dn-group td{background:transparent;}
   tr.row-voided{opacity:.5;}
   tr.row-voided td{background:var(--gray-light);}
-  /* หัวตัวเลขรวม + บัญชีของค้างรายขั้น (แทนการ์ด 7 ใบ)
-     แถบสัดส่วนของทุกขั้นเริ่มที่เส้นเดียวกัน จึงเทียบด้วยตาได้ว่าขั้นไหนกองหนักกว่า
-     ซึ่งแถบที่อยู่ในกรอบการ์ดใครกรอบมันทำไม่ได้ */
-  #wipCards{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:18px;box-shadow:var(--shadow);}
-  .wh{display:flex;flex-wrap:wrap;gap:10px 44px;align-items:flex-end;padding-bottom:14px;border-bottom:1px solid var(--border);}
-  .wh .k{font-size:15px;font-weight:600;color:var(--text-dim);}
-  .wh .v{font-size:30px;font-weight:800;line-height:1.2;font-variant-numeric:tabular-nums;}
-  .wh .v small{font-size:15px;font-weight:500;color:var(--text-dim);margin-left:8px;}
-  .wh .v small b{font-size:17px;font-weight:700;color:var(--text);}
-  .wh .sub .v{font-size:22px;color:var(--text-dim);}
-  .wlt{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:16px 0 10px;}
-  .wlt b{font-size:19px;font-weight:600;}
-  .wlt span{font-size:12px;color:var(--text-dim);}
-  .wlh,.wlr{display:grid;grid-template-columns:13px 20px minmax(130px,1fr) 112px 84px minmax(80px,.62fr) 76px;align-items:center;gap:0 14px;}
-  .wlh{padding-bottom:8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-dim);}
-  .wlr{padding:12px 0;border-bottom:1px solid var(--border);}
-  .wlh .r,.wlr .q{text-align:right;font-variant-numeric:tabular-nums;}
-  .wlr .t{width:13px;height:13px;border-radius:3px;}
-  .wlr .n{font-size:12.5px;color:var(--text-dim);}
-  .wlr .nm{font-size:17px;font-weight:600;}
-  .wlr .q{font-size:21px;font-weight:700;}
-  .wlr .b{height:8px;border-radius:2px;background:var(--gray-light);overflow:hidden;}
-  .wlr .b span{display:block;height:100%;border-radius:2px;}
-  .wanom{display:flex;gap:8px;margin-top:14px;font-size:13px;color:var(--text-dim);line-height:1.5;}
-  /* ⚠️ คลาสของตัวเอง ห้ามใช้ .wanom ซ้ำ — เทสของแดชบอร์ดใช้ locator('.wanom') แบบ strict
-     กล่องที่สองที่ใช้คลาสเดียวกันทำให้เทสเดิมแดงทันที · หน้าตาเหมือนกันแต่คนละชื่อ
+  /* ⚠️ แถบย้อนแย้งของหน้ายอดค้างรายวัน · เคยมีฝาแฝดชื่อ .wanom ของแดชบอร์ด
+     ซึ่งถูกลบไปพร้อมแท็บนั้นเมื่อ 12 พ.ย. 2569 · **ชื่อ .wanom ว่างแล้วก็อย่าเอากลับมาใช้**
+     ของเก่าที่ยังอยู่คือ .wanl / .wanh / .wanr (รายการใบย้อนแย้ง) ซึ่งหน้านี้ยังใช้อยู่
      ⚠️ ซ่อนด้วย display ไม่ใช่ attribute hidden — กฎ display ชนะ [hidden] เสมอ */
   /* ⚠️ ต้อง wrap และให้รายการกินเต็มบรรทัดของตัวเอง — แถบนี้เป็น flex แนวนอน
      รายการที่ต่อเข้าไปข้างในจึงกลายเป็น flex item ที่เหลือพื้นที่แค่เศษจากข้อความข้าง ๆ
@@ -139,7 +116,7 @@
      แดชบอร์ดวาง .wanl เป็นพี่น้องถัดจากแถบ จึงไม่เจอปัญหานี้ */
   .wtanom{display:none;gap:8px;margin-top:10px;font-size:13px;color:var(--text-dim);line-height:1.5;flex-wrap:wrap;}
   .wtanom > .wanl{flex:1 0 100%;}
-  .wanom b, .wtanom b{color:var(--red);font-weight:700;}
+  .wtanom b{color:var(--red);font-weight:700;}
   .wanom-t{background:none;border:1px solid var(--border);border-radius:6px;padding:2px 10px;font:inherit;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap;align-self:flex-start;}
   .wanom-t:hover{background:var(--gray-light);}
   .wanl{margin-top:10px;border:1px solid var(--border);border-radius:8px;overflow-x:auto;}
@@ -151,10 +128,6 @@
   .wanr u{text-decoration:none;white-space:nowrap;}
   .wanr u.hi{font-weight:600;}
   .wanr b{color:var(--red);font-weight:700;}
-  .progress{width:90px;height:8px;background:var(--gray-light);border-radius:5px;overflow:hidden;display:inline-block;vertical-align:middle;}
-  .progress .seg-on{height:100%;background:var(--primary);float:left;}
-  .progress .seg-late{height:100%;background:#f59e0b;float:left;}
-  .progress.done .seg-on{background:var(--green);}
   .row-input{width:70px;padding:5px 6px;text-align:center;}
 
   /* ── หน้าบันทึกยอดรายวัน — ตัวใหญ่อ่านง่าย (เจ้าของขอเมื่อ 9 ก.ย. 2026 เพื่อให้คนสายตายาวอ่านได้) ──
@@ -197,9 +170,7 @@
   #dayProcBtns{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
   #dayProcBtns .day-n{font-weight:700;font-size:15px;}
   #dayProcBtns .day-n.zero{font-weight:400;opacity:.55;}
-  #dayTable tfoot td, #dashTable tfoot td{font-weight:700;background:var(--gray-light);position:sticky;bottom:0;z-index:1;}
-  #dashTable .rq{font-size:15px;font-weight:700;}
-  #dashTable .rq.none{font-weight:400;color:var(--text-dim);}
+  #dayTable tfoot td{font-weight:700;background:var(--gray-light);position:sticky;bottom:0;z-index:1;}
   #entryTable .ship-today{font-size:19px;font-weight:700;width:130px;display:inline-block;
     box-sizing:border-box;padding:10px 8px;}
   /* บนมือถือบีบ "ระยะห่าง" คืน แต่ไม่แตะขนาดตัวอักษร
@@ -258,19 +229,17 @@
     header.topbar, nav.tabs, .filters, .toast, .no-print{display:none !important;}
     .print-only{display:block;}
     main{max-width:none;padding:0;}
-    .panel, #wipCards{border:none;box-shadow:none;padding:0;margin-bottom:12px;}
+    .panel{border:none;box-shadow:none;padding:0;margin-bottom:12px;}
     /* หน้ากระดาษผ่ากลางแถวได้ แล้วเลขกับแถบของขั้นเดียวกันไปคนละหน้า
        หัวตารางก็ต้องไม่หลุดไปนอนท้ายหน้าเดี่ยว ๆ โดยไม่มีแถวไหนตาม */
-    .wlr{break-inside:avoid;}
     .wanr{break-inside:avoid;}
     .wanl{overflow:visible;}
     .wanom-t{display:none;}
-    .wlh{break-after:avoid;}
     /* บนจอตารางอยู่ในกรอบสูง 70vh แล้วเลื่อนดู ถ้าไม่ปลดล็อกจะพิมพ์ได้แค่แถวที่มองเห็น */
     .table-wrap{overflow:visible;max-height:none;}
     table{font-size:10.5px;}
     table th{position:static;}
-    #dayTable tfoot td, #dashTable tfoot td{position:static;}
+    #dayTable tfoot td{position:static;}
     thead{display:table-header-group;}          /* หัวตารางซ้ำทุกหน้า */
     tr{break-inside:avoid;}
     /* แท็บบันทึกยอดรายวัน: พิมพ์เฉพาะตารางรายการที่บันทึกแล้ว ฟอร์มคีย์ยอดไม่ต้องติดไปบนกระดาษ */
@@ -328,7 +297,10 @@
     padding:4px 0;border-bottom:1px dashed var(--border);font-size:12.5px;}
   .wtlr:last-child{border-bottom:none;}
   .wtlr .po{font-weight:700;white-space:nowrap;}
-  .wtlr .wh{grid-column:1/-1;color:var(--text-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  /* ⚠️ `display:block` ต้องเขียนไว้ตรงนี้เอง — เมื่อก่อนมันพึ่งกฎกลาง `.wh{display:flex}`
+     ของแดชบอร์ดโดยบังเอิญ ซึ่งถูกลบไปพร้อมแท็บนั้น 12 พ.ย. 2569 · ปล่อยเป็น inline
+     แล้ว text-overflow:ellipsis ไม่ทำงาน และบรรทัดนี้จะไม่กินเต็มแถว */
+  .wtlr .wh{display:block;grid-column:1/-1;color:var(--text-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .wtlr .dd{font-weight:700;color:var(--red);white-space:nowrap;text-align:right;}
   .wtcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px;}
   .wtcard{border:1px solid var(--border);border-radius:10px;padding:12px 14px;min-width:0;}
@@ -413,7 +385,6 @@
   <button class="tab-btn" data-tab="daily">📅 ยอดรายวันทุกขั้น</button>
   <button class="tab-btn" data-tab="delivery">🚚 ใบส่งสินค้า</button>
   <button class="tab-btn" data-tab="fg">📦 ยอดคงคลัง FG</button>
-  <button class="tab-btn" data-tab="dashboard">📊 Dashboard</button>
   <button class="tab-btn" data-tab="wiptrend">📉 ยอดค้างรายวัน</button>
   <button class="tab-btn" data-tab="data">🗂️ ข้อมูล &amp; แชร์</button>
 </nav>
@@ -771,117 +742,6 @@
   </div>
 </section>
 
-<!-- ================= TAB: DASHBOARD ================= -->
-<section id="view-dashboard" class="view">
-  <div class="row no-print" style="justify-content:flex-end;margin-bottom:12px;">
-    <button class="btn" id="btnPrintDash" title="สั่งพิมพ์ หรือเลือก &quot;บันทึกเป็น PDF&quot; ในช่องเครื่องพิมพ์">🖨️ พิมพ์ / บันทึก PDF</button>
-  </div>
-  <!-- หัวกระดาษ: เห็นเฉพาะตอนพิมพ์ บอกว่ากระดาษแผ่นนี้คือข้อมูลชุดไหน พิมพ์เมื่อไหร่ รุ่นอะไร -->
-  <div class="print-only" id="printHeader">
-    <h2 style="margin:0 0 4px;">สถานะแผนงานผลิต</h2>
-    <div class="small muted" id="printMeta"></div>
-  </div>
-  <div class="small muted" id="wipScopeNote" style="margin-bottom:8px;"></div>
-  <div id="wipCards"></div>
-
-  <div class="panel">
-    <h2>ยอดผลิตรายวัน (Throughput)</h2>
-    <div class="row no-print" style="margin-bottom:10px;">
-      <div class="field">
-        <label>ช่วงเวลา</label>
-        <select id="chartRange">
-          <option value="7">7 วันล่าสุด</option>
-          <option value="14" selected>14 วันล่าสุด</option>
-          <option value="21">21 วันล่าสุด</option>
-          <option value="30">30 วันล่าสุด</option>
-          <option value="60">60 วันล่าสุด</option>
-          <option value="90">90 วันล่าสุด</option>
-          <option value="custom">กำหนดเอง...</option>
-        </select>
-      </div>
-      <div class="field chart-custom-field" id="chartFromField" style="display:none;">
-        <label>จากวันที่</label>
-        <input type="date" id="chartFrom">
-      </div>
-      <div class="field chart-custom-field" id="chartToField" style="display:none;">
-        <label>ถึงวันที่</label>
-        <input type="date" id="chartTo">
-      </div>
-    </div>
-    <div class="legend">
-      <div class="legend-items" id="chartLegend"></div>
-      <span id="chartRangeCaption" class="small muted" style="margin-left:auto;"></span>
-    </div>
-    <div class="chart-wrap" id="chartWrap"></div>
-  </div>
-
-  <div class="panel">
-    <h2>ความคืบหน้าราย P/N</h2>
-    <div class="desc">หนึ่งแถว = หนึ่ง P/N ต่อหนึ่งหน่วย (รวมทุกใบของ P/N นั้น) ·
-      <b>เลขตัวใหญ่ในช่องของแต่ละขั้น = ยอดที่คีย์ในช่วงวันที่เลือก</b> ·
-      บรรทัดล่างกับแถบ = <b>ยอดสะสมทั้งหมดเทียบยอดสั่งรวม ไม่ขึ้นกับช่วงวัน</b> ·
-      ช่วงวันไม่ตัดแถวทิ้งเอง — ยกเว้นช่องติ๊ก &quot;ซ่อนงานที่ส่งของครบแล้ว&quot; ข้างล่าง
-      ซึ่งคืนใบที่มียอดในช่วงให้ · <b>ชุดใบที่นับจึงขยับตามช่วงวัน</b>
-      (ดูได้ที่จำนวนใบกับยอดแผนรวมข้างบน) · <b>ส่วนบัญชีของค้างเป็นยอดสะสม ไม่ใช่ยอดของช่วงวัน</b> ·
-      &quot;—&quot; = ช่วงนั้นไม่มียอดของขั้นนี้
-      ในใบที่ผ่านตัวกรองอยู่ (แถวรวมท้ายตารางบอกว่านับกี่ใบ)</div>
-    <div class="row filters">
-      <div class="field">
-        <label>ยอดในช่วง — จากวันที่</label>
-        <input type="date" id="dashFrom">
-      </div>
-      <div class="field">
-        <label>ถึงวันที่</label>
-        <input type="date" id="dashTo">
-      </div>
-      <div class="field">
-        <label>&nbsp;</label>
-        <div id="dashPresets" style="display:flex;gap:6px;">
-          <button type="button" class="btn small" data-range="today">วันนี้</button>
-          <button type="button" class="btn small" data-range="7">7 วันล่าสุด</button>
-          <button type="button" class="btn small" data-range="month">เดือนนี้</button>
-          <button type="button" class="btn small" data-range="all">ทั้งหมด</button>
-        </div>
-      </div>
-      <div class="field">
-        <label>สัปดาห์</label>
-        <select id="dashWeekFilter"><option value="">ทั้งหมด</option></select>
-      </div>
-      <div class="field">
-        <label>Sub-Name</label>
-        <select id="dashSubFilter"><option value="">ทั้งหมด</option></select>
-      </div>
-      <div class="field">
-        <label>สถานะ</label>
-        <select id="dashStatusFilter">
-          <option value="">ทั้งหมด</option>
-          <option value="late">ล่าช้า/เกินกำหนด</option>
-          <option value="soon">ใกล้ถึงกำหนด (≤3 วัน)</option>
-          <option value="ok">กำลังดำเนินการ (ปกติ)</option>
-          <option value="done">เสร็จแล้ว</option>
-          <option value="baddate">วันที่สั่งผิด</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>ค้างอยู่ที่ขั้น</label>
-        <select id="dashWipFilter"><!-- วาดจากรายการขั้น (renderProcessControls) --></select>
-      </div>
-      <div class="field">
-        <label>ค้นหา PO/P/N</label>
-        <input type="text" id="dashSearch" placeholder="พิมพ์ PO หรือ P/N">
-      </div>
-      <div class="field">
-        <label>&nbsp;</label>
-        <label style="font-weight:500;" title="ใบที่ส่งครบแล้ว แต่มียอดคีย์อยู่ในช่วงวันที่เลือก จะยังขึ้นอยู่ ไม่ถูกซ่อน"><input type="checkbox" id="dashHideDone" checked>
-          ซ่อนงานที่ส่งของครบแล้ว <span class="hint">(เว้นใบที่มียอดในช่วง)</span></label>
-      </div>
-    </div>
-    <div class="table-wrap">
-      <table id="dashTable"></table>
-    </div>
-  </div>
-</section>
-
 <!-- ================= TAB: ยอดค้างรายวัน ================= -->
 <!-- แท็บแยกโดยตั้งใจ (เจ้าของสั่ง 9 พ.ย. 2026) — ของเดิมบนแดชบอร์ดไม่ถูกแตะเลย
      เลือกได้แล้วค่อยปิดอันที่ไม่เอาทิ้งทั้งแท็บ -->
@@ -1045,7 +905,7 @@
       <div class="field"><label>ชื่อสั้น</label><input type="text" id="newProcShort" maxlength="20" placeholder="หัวตาราง · ว่างไว้ใช้ชื่อขั้น"></div>
       <div class="field"><label>ตำแหน่ง</label><select id="newProcAfter"></select></div>
       <div class="field"><label>ชนิดของขั้น</label>
-        <label style="font-weight:500;" title="ขั้นที่ยอดไม่เกี่ยวกับสายหลัก เช่นงานซ่อม งานนอกแผน — คีย์ยอดเก็บไว้ดูย้อนหลังได้ แต่ไม่ถูกนับเป็นขั้นก่อนหน้าของใคร ไม่มีแถวในบัญชีของค้าง และไม่ถูกตัดสินล่าช้า">
+        <label style="font-weight:500;" title="ขั้นที่ยอดไม่เกี่ยวกับสายหลัก เช่นงานซ่อม งานนอกแผน — คีย์ยอดเก็บไว้ดูย้อนหลังได้ แต่ไม่ถูกนับเป็นขั้นก่อนหน้าของใคร ไม่มีแท่งในกราฟยอดค้างรายวัน และไม่ถูกตัดสินล่าช้า">
           <input type="checkbox" id="newProcStandalone"> นับแยก ไม่อยู่ในสายการผลิต</label></div>
       <div class="field"><label>&nbsp;</label><button class="btn success" id="btnProcessAdd">เพิ่มขั้น</button></div>
     </div>
@@ -1188,6 +1048,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-12.1"></script>
+<script src="app.js?v=2026-11-12.2"></script>
 </body>
 </html>

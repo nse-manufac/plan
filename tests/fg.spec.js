@@ -403,15 +403,18 @@ test('นั่งค้างหน้า FG แล้วซิงค์ดึ�
     'ข้อมูลที่ซิงค์ดึงเข้ามาต้องขึ้นบนหน้านี้ทันที ไม่ใช่รอจนสลับแท็บ').toBe('2,500');
 });
 
-// ── Dashboard: คอลัมน์ Shipping ─────────────────────────────────────
-//
-// 2 ก.ย. 2026 (#50) เคยเปลี่ยนคอลัมน์นี้เป็น FG คงเหลือ · เจ้าของสั่งกลับเป็นยอดส่งเมื่อ 12 ก.ย. 2026
-// ยอด FG คงเหลือยังดูได้ที่หน้ายอดคงคลัง FG
-//
-// ⚠️ computeStatus · ตัวกรองซ่อนงานที่ส่งครบ · การ์ดสรุปด้านบน ใช้ยอดส่งมาตลอด
-//    เทสสองข้อล่างคือด่านที่จะจับได้ถ้ามีคนเผลอเอา FG ไปใช้แทน
+/* ── ยอดส่งสะสม: ของที่คีย์ผิดต้องไม่ถูกกลบ ─────────────────────────
+ *
+ * 2 ก.ย. 2026 (#50) เคยเปลี่ยนคอลัมน์ Shipping ของแดชบอร์ดเป็น FG คงเหลือ
+ * เจ้าของสั่งกลับเป็นยอดส่งเมื่อ 12 ก.ย. 2026 · **แท็บแดชบอร์ดถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569**
+ * เทสสามข้อที่อ่านตารางกับการ์ดของหน้านั้นจึงถูกตัดไปพร้อมกัน (ไม่มีจอให้อ่านแล้ว)
+ *
+ * ⚠️ ข้อที่เหลือไว้คือข้อที่ยังมีความหมาย — **ส่งเกินที่ผ่าน Inspection ต้องฟ้อง ไม่ใช่กลบ**
+ *    ตอนเป็นคอลัมน์ FG ช่องนั้นเคยโชว์ติดลบ · ตอนนี้ฟ้องที่แถบข้อมูลย้อนแย้งของหน้ายอดค้างรายวัน
+ *    ซึ่งเป็นที่เดียวที่เหลืออยู่ · `computeStatus` กับหน้าใบส่งสินค้ายังใช้ยอดส่งเหมือนเดิม
+ */
 
-async function openDash(page, orders, records = []) {
+async function openWt(page, orders, records = []) {
   await page.addInitScript(([k, o, r]) => localStorage.setItem(k, JSON.stringify({
     version: 1, deviceName: 't',
     deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
@@ -420,63 +423,23 @@ async function openDash(page, orders, records = []) {
   })), [K_STATE, orders, records]);
   await page.goto(APP);
   await waitReady(page);
-  await page.click('.tab-btn[data-tab="dashboard"]');
-  await page.waitForTimeout(250);
+  await page.click('.tab-btn[data-tab="wiptrend"]');
+  await page.waitForTimeout(300);
 }
-/* แดชบอร์ดรวมเป็นราย P/N แล้ว (เจ้าของสั่ง 5 พ.ย. 2026) — ไม่มีเลข PO ให้เกาะ
-   อ่านค่าจาก attribute ไม่ใช่ข้อความในช่อง เพราะช่อง P/N มีป้าย ⚠ ผิดลำดับ ปนได้ */
-const dashPnRow = (page, pn) =>
-  page.locator('#dashTable tbody tr').filter({ has: page.locator(`td[data-pn="${pn}"]`) }).innerText();
 
-test('Dashboard คอลัมน์ Shipping โชว์ยอดส่งสะสมเทียบ Order Qty ไม่ใช่ FG คงเหลือ', async ({ page }) => {
-  // ผ่าน Inspection 3,000 · ส่งไปแล้ว 1,200 → ถ้ายังเป็น FG คงเหลือจะเห็น 1,800
-  await openDash(page, [order('PO-D1', PN_A, 5000)], [
-    rec('r1', 'PO-D1|' + PN_A, 'inspection', 3000),
-    rec('r2', 'PO-D1|' + PN_A, 'shipping', 1200, '2026-08-22')
-  ]);
-  // Item No. · P/N · Sub-Name · ใบ · ยอดสั่งรวม แล้วจึงเป็นห้าขั้น → Shipping อยู่ที่ 9
-  // ⚠️ ผูกกับแถวของ P/N นี้ ไม่ใช่ td ลำดับที่ 9 ของทุกแถวรวมกัน — เติมใบที่สองทีหลังจะอ่านผิดแถวเงียบ ๆ
-  const cell = await page.locator('#dashTable tbody tr')
-    .filter({ has: page.locator(`td[data-pn="${PN_A}"]`) }).locator('td').nth(9).innerText();
-  expect(cell, 'ยอดส่ง / Order Qty').toContain('1,200/5,000');
-  expect(cell, 'ต้องไม่ใช่ FG คงเหลือ').not.toContain('1,800');
-  await expect(page.locator('#dashTable thead')).toContainText('Shipping');
-  await expect(page.locator('#dashTable thead')).not.toContainText('FG คงเหลือ');
-});
-
-test('ตัวกรอง "ซ่อนงานที่ส่งของครบแล้ว" ต้องยังทำงานเหมือนเดิม', async ({ page }) => {
-  // ใบนี้ส่งครบแล้วแต่ FG เป็น 0 — ถ้าใครเผลอเอา FG ไปใช้ตัดสินแทนยอดส่ง ตัวกรองจะพัง
-  // ⚠️ สอง P/N ไม่ซ้ำกัน — แดชบอร์ดรวมแถวตาม P/N แล้ว ถ้าใช้ P/N เดียวกันทั้งคู่
-  //    แถวจะไม่หายไปแม้ตัวกรองทำงานถูก (เหลืออีกใบอยู่ในกลุ่มเดียวกัน) แล้วเทสจะแดงทั้งที่โค้ดถูก
-  await openDash(page, [order('PO-D1', PN_A, 5000), order('PO-D2', PN_B, 5000)], [
-    rec('r1', 'PO-D1|' + PN_A, 'inspection', 5000),
-    rec('r2', 'PO-D1|' + PN_A, 'shipping', 5000, '2026-08-22')
-  ]);
-  await page.locator('#dashHideDone').check();
-  await page.waitForTimeout(200);
-  const pns = await page.locator('#dashTable tbody td[data-pn]').evaluateAll(es => es.map(e => e.dataset.pn));
-  expect(pns, 'ใบที่ส่งครบแล้วต้องถูกซ่อน · ใบที่ยังไม่ส่งต้องยังอยู่').toEqual([PN_B]);
-});
-
-test('การ์ดสรุปด้านบนต้องยังนับยอดที่ส่งไปแล้วเหมือนเดิม', async ({ page }) => {
-  await openDash(page, [order('PO-D1', PN_A, 5000)], [
-    rec('r1', 'PO-D1|' + PN_A, 'inspection', 3000),
-    rec('r2', 'PO-D1|' + PN_A, 'shipping', 1200, '2026-08-22')
-  ]);
-  const cards = await page.locator('#wipCards').innerText();
-  expect(cards, 'หัวเลข "ส่งไปแล้ว" ต้องยังมีและยังนับถูก').toContain('1,200');
-  expect(cards, 'และการ์ด "ยอด FG คงคลัง" ยังเป็น 1,800 เหมือนเดิม').toContain('1,800');
-});
-
-test('ส่งเกินที่ผ่าน Inspection — Dashboard ต้องโชว์ยอดส่งตามจริงและขึ้นป้ายผิดลำดับ', async ({ page }) => {
-  // ของที่คีย์ผิดต้องเห็น ห้ามถูกกลบ — ตอนเป็นคอลัมน์ FG ช่องนี้เคยโชว์ติดลบ ตอนนี้เตือนด้วยป้ายผิดลำดับ
-  await openDash(page, [order('PO-D1', PN_A, 5000)], [
+test('ส่งเกินที่ผ่าน Inspection — ต้องมีที่ฟ้อง ไม่ใช่ถูกกลบให้เท่า Inspection', async ({ page }) => {
+  await openWt(page, [order('PO-D1', PN_A, 5000)], [
     rec('r1', 'PO-D1|' + PN_A, 'inspection', 400),
     rec('r2', 'PO-D1|' + PN_A, 'shipping', 900, '2026-08-22')
   ]);
-  const r = await dashPnRow(page, PN_A);
-  expect(r, 'ยอดส่งตามจริง ไม่ครอบให้เท่า Inspection').toContain('900/5,000');
-  expect(r, 'และบอกว่ายอดย้อนแย้งกัน').toContain('ผิดลำดับ');
+  const bar = await page.locator('#wtAnom').innerText();
+  expect(bar, 'ต้องฟ้องว่าใบนี้ยอดย้อนแย้ง').toContain('ข้อมูลย้อนแย้ง');
+
+  await page.click('#wtAnomToggle');
+  await page.waitForTimeout(250);
+  const row = await page.locator('#wtAnom .wanr').first().innerText();
+  expect(row, 'ต้องบอกคู่ขั้นที่เพี้ยนพร้อมยอดจริง ไม่ใช่ยอดที่ถูกครอบ').toContain('900');
+  expect(row, 'และบอกว่าขั้นก่อนหน้าอยู่ที่เท่าไหร่').toContain('400');
 });
 
 test('G2 — พิมพ์ค้นหาแล้วโฟกัสต้องไม่หลุด', async ({ page }) => {
@@ -508,7 +471,8 @@ test('G1 — ป้ายช่องที่ดึงจาก subName ต้�
   expect(await page.locator('#view-delivery .desc').first().innerText(),
     'G1 — ประโยคที่ผู้ใช้อ่านต้องยังเป็นภาษาไทย').toContain('หน่วย');
 
-  await page.click('.tab-btn[data-tab="dashboard"]');
+  await page.click('.tab-btn[data-tab="wiptrend"]');
   await page.waitForTimeout(150);
-  expect(await labelOf('dashSubFilter'), 'Dashboard คือหน้าที่เรียกถูกอยู่แล้ว').toBe('Sub-Name');
+  // แท็บแดชบอร์ดเคยอยู่ในรายการนี้ด้วย ถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569
+  expect(await labelOf('wtSubFilter'), 'หน้ายอดค้างรายวัน').toBe('Sub-Name');
 });

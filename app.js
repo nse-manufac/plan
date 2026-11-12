@@ -231,7 +231,7 @@ const NOTE_CLEARED = 'เคลียร์แล้ว';
  *
  *   id             ค่าที่เก็บใน record.process · ห้ามเปลี่ยนเด็ดขาด (A2) — ยอดเก่าจะหลุดจากขั้นนั้นทั้งหมด
  *   label          ชื่อเต็ม · ปุ่มเลือกขั้น หัวคอลัมน์สะสม กราฟ
- *   short          ชื่อสั้น · หัวตาราง Dashboard สถานะล่าช้า บัญชีของค้าง รายงาน Excel
+ *   short          ชื่อสั้น · แกนของกราฟ PO · สถานะล่าช้า · รายงาน Excel
  *   defaultOffset  วันกำหนดส่งตั้งต้นนับจากวันสั่ง · null = ยังไม่กำหนด ไม่ตัดสินล่าช้า (A4)
  *   offsetInputId  id ของช่องกรอกวันในหน้าตั้งค่า — ห้าขั้นเดิมคง id เดิมไว้ ขั้นใหม่ได้ off-<id>
  *   headHtml/text  คำเฉพาะของขั้นนั้น (มีแค่ขั้นส่งของ) · ขั้นอื่นประกอบจากชื่อสั้นใน ptext()
@@ -240,7 +240,7 @@ const NOTE_CLEARED = 'เคลียร์แล้ว';
  *    หน้า FG (inspection − shipping) ใบส่งของ แผงเทียบ Call In สถานะส่งครบ ผูกกับสอง id นี้ตรง ๆ
  *
  * ⚠️ สีของแต่ละขั้นเก็บที่นี่ที่เดียว แต่ถูกอ่านสี่ที่ — แท่งกราฟ · คำอธิบายสีเหนือกราฟ ·
- *    สีเหลี่ยมหน้าแถวบัญชีของค้าง · แถบสัดส่วนของแถวนั้น (สองที่หลังมาจาก #123)
+ *    สีเหลี่ยมหน้าแถวของคำอธิบายสี · การ์ดของมุมมองแยกรายขั้น
  *    เดิมสีถูกเขียนไว้สองที่ แก้ที่เดียวแล้วอีกที่ค้างไว้ = คำอธิบายชี้ผิดแท่ง โดยไม่มีอะไรฟ้อง */
 const DEFAULT_PROCESSES = [
   {id:'winding',    label:'Winding/Trimming',  short:'Winding',    icon:'🌀', color:'#2a78d6', defaultOffset:10,   offsetInputId:'offW'},
@@ -269,9 +269,8 @@ const DEFAULT_PROCESSES = [
  *    แต่ไม่ได้ไหลมาจากขั้นไหนและไม่ได้ไหลไปขั้นไหน
  *
  *    **ที่ไหนที่แปลว่า "สายการผลิต" ต้องใช้ MAIN_PROCESSES ไม่ใช่ PROCESSES**
- *    คือ ขั้นก่อนหน้า · ตัวจับข้อมูลย้อนแย้ง · บัญชีของค้างรายขั้น · คอลัมน์ WIP ในรายงาน ·
- *    ตัวกรอง "ค้างอยู่ที่ขั้น" · ลูปตัดสินล่าช้าใน computeStatus ·
- *    การครอบยอดกับป้าย "⚠ คีย์เกินยอดสั่ง" ในตารางแดชบอร์ด (เกณฑ์คือ orderQty) ·
+ *    คือ ขั้นก่อนหน้า · ตัวจับข้อมูลย้อนแย้ง · กราฟยอดค้างรายวัน · คอลัมน์ WIP ในรายงาน ·
+ *    ลูปตัดสินล่าช้าใน computeStatus ·
  *    ขั้นตั้งต้น/ขั้นที่ตกกลับของสองหน้าที่เลือกขั้น (currentProcess · dayProcess) · #processFlow
  *    ⚠️ รายการนี้เคยขาดสามข้อหลัง (ผู้ตรวจ #123 รอบ 15) — รายการที่ขาดอ่านได้ว่า "ที่อื่นไม่เกี่ยว"
  *    เอา PROCESSES ไปใช้ตรงนั้นแล้วขั้นนับแยกจะกลายเป็นขั้นก่อนหน้าของขั้นถัดไป
@@ -2030,25 +2029,6 @@ function buildCarryIndex(records, onDate){
   }
   return idx;
 }
-/** เหมือน buildCumMap แต่แยกยอดสะสมออกเป็น "ทันกำหนด" (บันทึกในหรือก่อนวัน deadline ของขั้นนั้น)
- *  กับ "เกินกำหนด" (บันทึกหลังวัน deadline) — ใช้วาดแถบ progress 2 สีในตาราง Dashboard
- *  ต้องใช้ orderById เพราะ deadline คำนวณจาก orderDate ของแต่ละ order เอง ไม่ใช่ค่าคงที่ */
-function buildCumSplitMap(records, orderById){
-  const map = {}; const dlCache = {};
-  for(const r of records){
-    if(r.voided) continue;
-    const order = orderById[r.orderId];
-    if(!order) continue;
-    if(!map[r.orderId]) map[r.orderId] = Object.fromEntries(PROCESSES.map(p=>[p, {onTime:0, late:0}]));
-    const bucket = map[r.orderId][r.process];
-    if(!bucket) continue;
-    if(!dlCache[r.orderId]) dlCache[r.orderId] = computeDeadlines(order);
-    const dl = dlCache[r.orderId][r.process];
-    const qty = Number(r.qty)||0;
-    if(!dl || r.date <= dl) bucket.onTime += qty; else bucket.late += qty;
-  }
-  return map;
-}
 function computeDeadlines(order){
   const off = state.deadlineOffsets;
   // ยังไม่ตั้งค่า (null) หรือขั้นที่เพิ่งเพิ่มและยังไม่มีค่า (undefined) = ยังไม่มีกำหนดวัน
@@ -2992,23 +2972,13 @@ function renderDayTable(){
     + `<td>${total!=null ? numFmt(total) : '—'}</td><td colspan="2"></td></tr></tfoot>`;
 }
 
-/* ---------- Render: Dashboard tab ---------- */
-
-/** Sub-Name ที่หน้า Dashboard กรองอยู่ · '' = ทุกหน่วย
- *
- *  ⚠️ ทั้งหน้าต้องใช้ค่าตัวเดียวกัน — หัวเลขกับบัญชีของค้าง · กราฟ · ตาราง (เจ้าของสั่งเมื่อ 8 ก.ย. 2026)
- *     ของเดิมกรองแค่ตาราง หัวเลขกับกราฟจึงเป็นยอดรวมทุกหน่วยเงียบ ๆ
- *     คนอ่านที่เลือกหน่วยไว้แล้วเอาหัวเลขไปเทียบกับตาราง จะสรุปว่ายอดไม่ตรงทั้งที่ทั้งคู่ถูก */
-function dashSubName(){
-  const el = document.getElementById('dashSubFilter');
-  return el ? el.value : '';
-}
-
-/* เปิด/ปิดรายการใบย้อนแย้งใต้แถบเตือน — ของเครื่องนี้ ไม่เก็บลง state
- * กฎเดียวกับช่วงวันของแดชบอร์ด: เก็บลง state = เพิ่มฟิลด์ที่ต้องซิงค์ (E1-E4) ซึ่งไม่ได้ขอ
- * แต่ต้องอยู่นอกฟังก์ชัน เพราะ renderWipCards() ถูกเรียกใหม่ทุกครั้งที่เปลี่ยนตัวกรอง
- * ถ้าเก็บไว้ในฟังก์ชัน รายการจะหุบเองทุกครั้งที่คนขยับตัวกรอง */
-let anomOpen = false;
+/* ---------- ของที่ใช้ร่วมกัน: รายการใบย้อนแย้ง · ยอดรายวัน · กราฟแท่งกลุ่ม ----------
+ * เดิมบล็อกนี้ชื่อ "Render: Dashboard tab" · แท็บนั้นถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569
+ * ที่เหลือในบล็อกนี้คือของที่หน้าอื่นยังใช้อยู่ — อย่าลบตามไปโดยคิดว่าเป็นของแดชบอร์ด
+ * · รายการใบย้อนแย้ง (lastKeyedOf · anomalyListHtml · openRecordsForPo) → แถบ #wtAnom
+ * · ยอดรายวันกับการรวมรายสัปดาห์ (buildDailyTotals · bucketWeekly) → กราฟยอดผลิตรายวัน
+ * · drawGroupedBars → สองกราฟล่างของหน้ายอดค้างรายวัน
+ */
 
 /** วันล่าสุดที่มีคนคีย์ยอดของ (ใบ, ขั้น) ที่ขอมา — เดินผ่านสมุดรอบเดียว
  *  รับกุญแจที่ต้องการมาก่อน จึงไม่ต้องทำดัชนีทั้งสมุดให้ใบที่ไม่ได้ถาม
@@ -3084,119 +3054,16 @@ function openRecordsForPo(po){
   search.value = po;
   document.querySelector('.tab-btn[data-tab="entry"]').click();
   document.getElementById('recordEditorTable').scrollIntoView({ behavior:'smooth', block:'center' });
-  /* ⚠️ ปุ่มที่เพิ่งกดถูกซ่อนไปพร้อมแท็บแดชบอร์ด โฟกัสจึงตกไป BODY (G2 · ผู้ตรวจ #127 รันพิสูจน์)
+  /* ⚠️ ปุ่มที่เพิ่งกดถูกซ่อนไปพร้อมแท็บที่คนกดมา โฟกัสจึงตกไป BODY (G2 · ผู้ตรวจ #127 รันพิสูจน์)
      คนไล่ด้วยแป้นพิมพ์ต้อง Tab จากต้นหน้าใหม่ · ส่งไปที่ช่องค้นหาซึ่งเป็นที่ที่เขากำลังจะทำงานต่อ
      กฎเดียวกับปุ่มกางรายการ · #dayProcBtns · pendingFocusOrderId */
   search.focus();
 }
 
-function renderWipCards(){
-  const rows = dashFilteredRows();
-  const subF = dashSubName();
-  const note = document.getElementById('wipScopeNote');
-  // ⚠️ ข้อความนี้คือสิ่งเดียวที่บอกว่าหัวเลขกับบัญชีของค้างนับใบไหน — ต้องตรงกับชุดที่นับจริง จึงบอกจำนวนใบด้วย
-  if(note) note.textContent = `นับเฉพาะใบที่ผ่านตัวกรองบนหน้านี้ · ${numFmt(rows.length)} ใบ` + (subF ? ' · ' + subF : '');
-  let totalQty=0;
-  const anom = [];   // ใบย้อนแย้ง + คู่ขั้นที่เพี้ยน — ชุดเดียวกับหัวเลขและบัญชี (กฎ #119)
-  const sum = emptyCum();
-  rows.forEach(({o, c})=>{
-    const q = Number(o.orderQty) || 0;   // ⚠️ เหมือนในตาราง — `0 + '100'` ได้ `'0100'` ไม่ใช่ 100
-    totalQty += q;
-    const bad = orderAnomalyPairs(c);
-    if(bad.length) anom.push({ o, bad });
-    PROCESSES.forEach(p=>{ sum[p] += Math.min(c[p]||0, q); });
-  });
-  const shipped = sum.shipping, left = Math.max(0, totalQty - shipped);
 
-  /* แถวของค้าง = ยอดขั้นก่อนหน้า − ยอดขั้นนั้น · ขั้นแรกเทียบกับยอดสั่ง = "ยังไม่เริ่มผลิต"
-     สูตรเดิมทุกตัว ไม่ได้เปลี่ยนเกณฑ์ เปลี่ยนแค่การ์ดเป็นแถว · ขั้นนับแยกไม่อยู่ในสาย จึงไม่มีแถว (A3/A5) */
-  const stages = MAIN_PROCESSES.map((p, i)=>({
-    key: i===0 ? 'notStarted' : p, color: PROCESS_COLORS[p], n: 0,
-    label: i===0 ? 'ยังไม่เริ่มผลิต' : ptext(p, 'waitCard'),
-    // ขั้นสุดท้ายชื่อซ้ำกับหน้ายอดคงคลัง FG แต่เลขคนละเกณฑ์ ต้องเขียนกำกับไม่ให้คนเทียบแล้วสับสน
-    note: i===MAIN_PROCESSES.length-1
-      ? 'ของที่ผ่าน Inspection แล้วแต่ยังไม่ส่ง · ครอบที่ยอดสั่งต่อใบและไม่ติดลบ จึงอาจไม่เท่ากับ "FG คงเหลือ" ในหน้ายอดคงคลัง FG ที่โชว์ยอดดิบ' : '',
-    qty: Math.max(0, (i===0 ? totalQty : sum[MAIN_PROCESSES[i-1]]) - sum[p])
-  }));
-  /* ⚙ จำนวน PO นับด้วย wipQtyAtStage() ซึ่งเป็นสูตรเดียวกับตัวกรอง "ค้างอยู่ที่ขั้น"
-     กดกรองแล้วจึงได้จำนวน **ใบ** เท่าเลขนี้เสมอ · ต่างจากคอลัมน์ชิ้นที่ครอบ 0 ที่ยอดรวม (สูตรเดิม)
-     ⚠️ **ไม่ใช่จำนวนแถว** — ตารางรวมเป็นราย P/N สองใบของ P/N เดียวกันเหลือแถวเดียว
-     อย่าเปลี่ยนไปนับแถวให้เท่ากัน เลขที่ใช้ได้จะเสียไป (CLAUDE.md · ผู้ตรวจ #123) */
-  rows.forEach(({o, c})=>stages.forEach(s=>{ if(wipQtyAtStage(o, c, s.key) > 0) s.n++; }));
-
-  const pctOf = v => left ? v/left*100 : 0;
-  const head = (k, v, u, sub) => `<div${sub?' class="sub"':''}><div class="k">${k}</div><div class="v">${v}<small>${u}</small></div></div>`;
-  let html = `<div class="wh">`
-    + head('ยอดแผนรวม', numFmt(totalQty), `ชิ้น · <b>${numFmt(rows.length)}</b> PO`)
-    + head('ส่งไปแล้ว', numFmt(shipped), `ชิ้น · <b>${totalQty? Math.round(shipped/totalQty*100):0}%</b>`)
-    + head('ยังไม่ได้ส่ง', numFmt(left), 'ชิ้น', true) + `</div>`;
-  if(anom.length){
-    html += `<div class="wanom">⚠<span><b>ข้อมูลย้อนแย้ง ${numFmt(anom.length)} PO</b> — สะสมขั้นถัดไปมากกว่าขั้นก่อนหน้า ซึ่งเป็นไปไม่ได้ ตัวเลขค้างรายขั้นของ PO เหล่านี้จึงยังเชื่อไม่ได้</span>`
-      + `<button type="button" class="wanom-t" id="wanomToggle" aria-expanded="${anomOpen}">${anomOpen ? 'ซ่อนรายการ ▴' : 'ดูรายการ ▾'}</button></div>`
-      + (anomOpen ? anomalyListHtml(anom) : '');
-  }
-  html += `<div class="wlt"><b>ของที่ยังไม่ได้ส่ง — ค้างอยู่ขั้นไหน</b>`
-    + `<span>หน่วยเป็นชิ้น · เปอร์เซ็นต์คิดจาก ${numFmt(left)} ชิ้นที่ยังไม่ได้ส่ง</span></div>`
-    + `<div class="wlh"><span></span><span></span><span>ขั้นที่ค้าง</span><span class="r">ชิ้นที่ค้าง</span><span class="r">PO</span><span></span><span class="r">สัดส่วน</span></div>`
-    + stages.map((s, i)=>`<div class="wlr"><i class="t" style="background:${escapeHtml(s.color)}"></i><div class="n">${i+1}</div>`
-      + `<div class="nm" title="${escapeHtml(s.note)}">${escapeHtml(s.label)}</div>`
-      + `<div class="q">${numFmt(s.qty)}</div><div class="q">${numFmt(s.n)}</div>`
-      + `<div class="b"><span style="width:${pctOf(s.qty).toFixed(1)}%;background:${escapeHtml(s.color)}"></span></div>`
-      + `<div class="q">${pctOf(s.qty).toFixed(1)}%</div></div>`).join('');
-  /* ⚠️ ปุ่มกางถูกวาดใหม่ทั้งปุ่มทุกครั้งที่เปลี่ยนตัวกรอง — ไม่คืนโฟกัสแล้วคนที่ไล่ด้วยแป้นพิมพ์
-     ตกไป BODY แล้วต้องเริ่มจากต้นหน้าใหม่ (กฎเดียวกับ #dayProcBtns และ pendingFocusOrderId) */
-  const act = document.activeElement;
-  const wasToggle = !!(act && act.id === 'wanomToggle');
-  const wasPo = act && act.dataset ? act.dataset.anomPo : null;
-  const box = document.getElementById('wipCards');
-  box.innerHTML = html;
-  const tg = document.getElementById('wanomToggle');
-  if(tg) tg.addEventListener('click', ()=>{ anomOpen = !anomOpen; renderWipCards(); });
-  box.querySelectorAll('[data-anom-po]').forEach(el=>{
-    el.addEventListener('click', ()=> openRecordsForPo(el.dataset.anomPo));
-  });
-  /* ⚠️ ปุ่มในแถวก็ต้องคืนโฟกัส ไม่ใช่แค่ปุ่มกาง — ซิงค์อัตโนมัติวาดหน้าใหม่ทุก 20 วิ
-     คนที่ Tab มาค้างบนปุ่มเลข PO จะตกไป BODY เองโดยไม่ได้กดอะไร (ผู้ตรวจ #127 รอบ 5)
-     CSS.escape เพราะรหัส PO ซิงค์ข้ามเครื่องได้ และไม่ได้กรองอักขระ (G3) */
-  if(wasToggle){ if(tg) tg.focus(); }
-  else if(wasPo){
-    const back = box.querySelector(`[data-anom-po="${CSS.escape(wasPo)}"]`);
-    if(back) back.focus();
-  }
-}
-
-/** ยอดที่ค้างอยู่หน้าขั้น stage ของใบสั่งซื้อใบเดียว — **หักทีละใบ**
- *  ⚠️ คนละสูตรกับคอลัมน์ "ชิ้นที่ค้าง" ของบัญชีของค้าง ซึ่งหักที่ยอดรวม — ห้ามรวบเป็นสูตรเดียว
- *     คอลัมน์ "ใบ" กับตัวกรอง "ค้างอยู่ที่ขั้น" ใช้ตัวนี้ จึงได้จำนวนใบเท่ากันเสมอ
- *     (เหตุผลเต็มอยู่ที่คำกำกับใน renderWipCards)
- *  ต้องครอบ Math.min(สะสม, orderQty) เหมือนคอลัมน์ชิ้น ไม่งั้นใบที่คีย์เกิน Order Qty จะเพี้ยน
- *  stage 'notStarted' = ยังไม่เข้าขั้นแรก */
-function wipQtyAtStage(order, cum, stage){
-  const capped = p => Math.min(cum[p]||0, order.orderQty);
-  if(stage === 'notStarted') return Math.max(0, order.orderQty - capped(MAIN_PROCESSES[0]));
-  const prev = PREV_PROCESS[stage];
-  if(!prev) return 0;
-  return Math.max(0, capped(prev) - capped(stage));
-}
 
 const MAX_CHART_DAYS = 366;
 
-/** อ่านช่วงวันที่ที่กราฟจะแสดง จาก dropdown/ช่องวันที่กำหนดเอง
- *  คืน {startISO, endISO} เมื่อใช้ได้, {error} เมื่อผิดเงื่อนไข, null เมื่อยังกรอกไม่ครบ (โหมด custom) */
-function getChartRange(){
-  const mode = document.getElementById('chartRange').value;
-  if(mode !== 'custom'){
-    const days = parseInt(mode,10) || 14;
-    const endISO = todayISO();
-    return {startISO: addDaysISO(endISO, -(days-1)), endISO};
-  }
-  const startISO = document.getElementById('chartFrom').value;
-  const endISO = document.getElementById('chartTo').value;
-  if(!startISO || !endISO) return null;
-  if(startISO > endISO) return {error:'วันที่เริ่มต้องไม่เกินวันที่สิ้นสุด'};
-  if(daysBetween(startISO, endISO)+1 > MAX_CHART_DAYS) return {error:`ช่วงเวลายาวเกินไป (สูงสุด ${MAX_CHART_DAYS} วัน)`};
-  return {startISO, endISO};
-}
 
 /** สร้าง label รายวัน + ยอดรวมต่อ process ต่อวัน ระหว่าง startISO–endISO (รวมทั้งสองปลาย)
  *  ไล่ด้วย addDaysISO/daysBetween (คำนวณบนสตริงล้วน) แทน new Date()+setDate() แบบเดิม
@@ -3226,33 +3093,8 @@ function buildDailyTotals(startISO, endISO, subName){
   return {labels, data};
 }
 
-/** ขั้นที่ถูกกดซ่อนไว้ในกราฟ · เก็บรวมกับช่วงเวลาใน chartPref (เครื่องนี้เท่านั้น)
- *  กรองชื่อที่ไม่รู้จักทิ้ง เพราะค่านี้อาจมาจากไฟล์ที่นำเข้าหรือรุ่นเก่าที่ชื่อขั้นไม่ตรงกัน */
-function chartHiddenProcs(){
-  const raw = state.chartPref && state.chartPref.hidden;
-  const list = Array.isArray(raw) ? raw : [];
-  return new Set(list.filter(x=>PROCESSES.indexOf(x) >= 0));
-}
 
-/** ขั้นที่กราฟกำลังวาดจริง
- *  ⚠️ ซ่อนครบทุกขั้นแล้วถือว่าไม่ซ่อนอะไรเลย — กราฟเปล่าที่ไม่มีอะไรอธิบายว่าทำไมถึงเปล่า
- *     จะถูกอ่านว่า "ช่วงนี้ไม่มียอดเลย" ซึ่งไม่จริง ปุ่มกันไว้ชั้นหนึ่งแล้ว นี่คือด่านที่สอง */
-function chartProcesses(){
-  const hidden = chartHiddenProcs();
-  const vis = PROCESSES.filter(x=>!hidden.has(x));
-  return vis.length ? vis : PROCESSES.slice();
-}
 
-/** คำอธิบายสีเหนือกราฟ — กดเพื่อซ่อน/แสดงทีละขั้น */
-function renderChartLegend(){
-  const hidden = chartHiddenProcs();
-  document.getElementById('chartLegend').innerHTML = PROCESSES.map(x=>{
-    const off = hidden.has(x);
-    return `<button type="button" class="legend-item${off?' off':''}" data-proc="${x}"`
-         + ` aria-pressed="${off?'false':'true'}" title="${off?'กดเพื่อแสดงขั้นนี้':'กดเพื่อซ่อนขั้นนี้'}">`
-         + `<i style="background:${PROCESS_COLORS[x]}"></i>${escapeHtml(PROCESS_LABELS[x])}</button>`;
-  }).join('');
-}
 
 /* เกินกี่วันจึงเลิกวาดรายวัน แล้วรวมเป็นรายสัปดาห์ — 21 วันคือช่วงยาวที่สุดที่แท่งยังหนาพออ่าน */
 const CHART_DAILY_MAX = 21;
@@ -3288,7 +3130,8 @@ function bucketWeekly(labels, data){
 
 /** วาดกราฟแท่งกลุ่มลงในกล่องที่ส่งมา — **ที่เดียวที่วาดกราฟแท่งกลุ่มของทั้งแอป**
  *
- *  แยกออกมาจาก renderChart() เมื่อ 9 พ.ย. 2026 ตอนเพิ่มหน้า "ยอดค้างรายวัน"
+ *  แยกออกมาจากกราฟของแดชบอร์ดเมื่อ 9 พ.ย. 2026 ตอนเพิ่มหน้า "ยอดค้างรายวัน"
+ *  (แท็บนั้นถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569 · ตอนนี้เหลือผู้เรียกเดียวคือหน้ายอดค้างรายวัน)
  *  ⚠️ ห้ามก๊อปไปทำชุดที่สอง — สองกราฟที่อยู่หน้าเดียวกันแต่คนละสูตร จะมีวันหน้าตาไม่ตรงกัน
  *     แล้วคนอ่านจะเทียบสองกราฟนั้นด้วยตาไม่ได้ ซึ่งเป็นเหตุผลทั้งหมดที่เอามาวางคู่กัน
  *
@@ -3296,7 +3139,7 @@ function bucketWeekly(labels, data){
  *     และ validProcessList() ไม่ตรวจช่อง color เลย · `#111" onmouseover="…` ปิด attribute
  *     แล้วแทรกของใหม่ได้ (ผู้ตรวจรันพิสูจน์บน #131)
  *     ⚠️ ที่นี่ไม่มีรู CSS เพิ่ม — สีลง `fill` ของ SVG ซึ่งไม่โหลด URL ภายนอก (ผู้ตรวจ #131 รอบ 3 รันยืนยัน)
- *        รู CSS อยู่ที่ที่เขียนสีลง `style` attribute ดู renderWipTrend() และ renderChartLegend()
+ *        รู CSS อยู่ที่ที่เขียนสีลง `style` attribute ดู renderWipTrend() และ wtLegend()
  *
  *  labels = วัน (ISO) · data = {ขั้น: [ค่าแต่ละวัน]} · procs = ขั้นที่จะวาดจริง
  *  opts.spans = ช่วงวันจริงของแต่ละแท่งตอนรวมรายสัปดาห์ · opts.tipPrefix = คำนำหน้าใน tooltip
@@ -3315,7 +3158,9 @@ function drawGroupedBars(wrapEl, labels, data, procs, opts){
   const avail = Math.max(320, Math.floor(wrapEl.clientWidth) || 0);
   const w = Math.max(avail, labels.length*minPerSlot);
   /* ⚠️ แถวตัวเลขรวมใต้วันที่เปิดเฉพาะผู้เรียกที่ส่ง `totals` มา (หน้ายอดค้างรายวัน)
-     กราฟของแดชบอร์ดไม่ส่ง จึงได้ svg สูงเท่าเดิมทุกพิกเซล (กฎเดียวกับ `hitKey` · `wrap`)
+     ⚠️ **ยังเป็นแบบเลือกเปิดอยู่ ทั้งที่ตอนนี้เหลือผู้เรียกเดียว** (แท็บแดชบอร์ดถูกลบ 12 พ.ย. 2569)
+        ใครเอา drawGroupedBars ไปใช้ที่สองต้องได้กราฟเปล่า ๆ ก่อน แล้วค่อยเลือกเปิดเอง
+        ไม่ใช่ได้แถวเลขรวมติดมาโดยไม่ได้สั่ง (กฎเดียวกับ `hitKey` · `wrap`)
      ⚠️ รวมเฉพาะ **ขั้นที่แสดงอยู่** ไม่ใช่ทุกขั้น — ปิดขั้นจากคำอธิบายสีแล้วเลขต้องเท่ากับ
         ผลบวกของแท่งที่ตาเห็น ไม่งั้นคนที่ลองบวกแท่งเองจะได้คนละเลข แล้วเลิกเชื่อทั้งกราฟ
      ⚠️ เพิ่มความสูงของ svg ไม่ใช่กินที่ของกราฟ — ลด plotH แล้วแท่งทั้งแถบเตี้ยลง
@@ -3376,7 +3221,7 @@ function drawGroupedBars(wrapEl, labels, data, procs, opts){
       bars += `<rect data-proc="${key}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" fill="${escapeHtml(color)}" rx="1.5"><title>${when} ${escapeHtml((o.tipPrefix||'') + PROCESS_LABELS[key])}: ${numFmt(val)}</title></rect>`;
     });
     /* ช่องรับเมาส์เป็น "ทั้งวัน" ไม่ใช่ทีละแท่ง — แท่งกว้างไม่กี่พิกเซล จิ้มไม่โดน
-       เปิดเฉพาะผู้เรียกที่ส่ง hitKey มา (หน้ายอดค้างรายวัน) กราฟของแดชบอร์ดไม่เปลี่ยน */
+       เปิดเฉพาะผู้เรียกที่ส่ง hitKey มา (ตอนนี้คือหน้ายอดค้างรายวันหน้าเดียว) */
     if(o.hitKey){
       hits += `<rect class="wthit" data-wt-tip="day" data-wt-key="${o.hitKey}" data-wt-i="${i}"`
            + ` x="${(padL+i*groupW).toFixed(1)}" y="${padT}" width="${groupW.toFixed(1)}" height="${plotH}"/>`;
@@ -3400,44 +3245,11 @@ function drawGroupedBars(wrapEl, labels, data, procs, opts){
   wrapEl.innerHTML = o.wrap ? `<div class="chart-wrap">${svg}</div>` : svg;
 }
 
-function renderChart(){
-  renderChartLegend();
-  const range = getChartRange();
-  const caption = document.getElementById('chartRangeCaption');
-  if(!range){
-    document.getElementById('chartWrap').innerHTML = `<div class="empty-hint">เลือกทั้ง "จากวันที่" และ "ถึงวันที่" เพื่อแสดงกราฟ</div>`;
-    caption.textContent = '';
-    return;
-  }
-  if(range.error){
-    document.getElementById('chartWrap').innerHTML = `<div class="empty-hint">${escapeHtml(range.error)}</div>`;
-    caption.textContent = '';
-    return;
-  }
-  const {startISO, endISO} = range;
-  const subF = dashSubName();
-  const daily = buildDailyTotals(startISO, endISO, subF);
-  /* ช่วงยาววาดรายวันแล้วอ่านไม่ออก — 90 วันคือ 450 แท่ง แท่งละ 2px
-     รวมเป็นรายสัปดาห์แทน เหลือ 13 กลุ่ม เต็มจอพอดีโดยไม่ต้องเลื่อน
-     และตรงกับที่ทั้งระบบคิดเป็น WK อยู่แล้ว */
-  const bucketed = daily.labels.length > CHART_DAILY_MAX;
-  const bucket = bucketed ? bucketWeekly(daily.labels, daily.data) : null;
-  const labels = bucketed ? bucket.labels : daily.labels;
-  const data = bucketed ? bucket.data : daily.data;
-  const spans = bucketed ? bucket.spans : null;
-  caption.textContent = `แสดง ${fmtDateTH(startISO)} – ${fmtDateTH(endISO)} (${daily.labels.length} วัน)`
-    + (bucketed ? ' · รวมรายสัปดาห์ จ–อา' : '')
-    + (subF ? ` · ${subF}` : '');
-
-  drawGroupedBars(document.getElementById('chartWrap'), labels, data, chartProcesses(), {
-    spans, minPerSlot: bucketed ? 46 : 14
-  });
-}
 
 /* ---------- ยอดค้างรายวัน (แท็บใหม่ · เจ้าของสั่ง 9 พ.ย. 2026) ----------
  *
  * คนอ่านตัวจริงขอ "ยอดค้างที่เปลี่ยนไปในแต่ละวัน เหมือนกราฟยอดผลิต"
- * ทั้งหน้านี้เป็นแท็บแยก ของเดิมบนแดชบอร์ดไม่ถูกแตะเลย — เลือกได้แล้วค่อยปิดอันที่ไม่เอาทิ้ง
+ * ทำเป็นแท็บแยกไว้ก่อนเพื่อให้เลือกได้ · เจ้าของเลือกแล้วเมื่อ 12 พ.ย. 2569 และสั่งลบแท็บแดชบอร์ดทิ้งทั้งแท็บ
  *
  * ⚠️ สามกราฟบนหน้านี้ใช้ชุดขั้นไม่เท่ากัน และนั่นถูกแล้ว
  *    · จำนวน PO และ ยอดผลิตรายวัน → PROCESSES (ทุกขั้น) เพราะทุกขั้นมีช่องให้คีย์ยอด
@@ -3476,7 +3288,7 @@ function poNotDoneNow(subName){
  *  ⚠️ **ต้องกรองด้วย importedAt** — ใบที่เพิ่งนำเข้าเมื่อวาน ห้ามไปโผล่เป็นของค้างของเดือนที่แล้ว
  *     ไม่งั้นจอเล่าอดีตด้วยข้อมูลของอนาคต (C1) และกราฟจะกระโดดทั้งเส้นทุกครั้งที่นำเข้าไฟล์ใหม่
  *     ใบที่ไม่มี importedAt (ข้อมูลเก่ามาก) ถือว่ามีมาตั้งแต่ต้น ดีกว่าทำให้มันหายทั้งใบ
- *  ⚠️ **ครอบ Math.min(สะสม, orderQty) ต่อใบ** เหมือนบัญชีของค้าง ไม่งั้นใบที่คีย์เกินยอดสั่ง
+ *  ⚠️ **ครอบ Math.min(สะสม, orderQty) ต่อใบ** ไม่งั้นใบที่คีย์เกินยอดสั่ง
  *     จะดันยอดค้างของขั้นถัดไปให้ติดลบ แล้วแท่งหายไปเฉย ๆ โดยไม่มีอะไรฟ้อง
  *  ⚠️ เดินทีละวันจากยอดก่อนเริ่มช่วง ไม่ใช่คิดใหม่ทั้งก้อนทุกวัน — ที่ 712 ใบ × 90 วัน
  *     แบบหลังคือการไล่ records ทั้งหมด 90 รอบ */
@@ -3524,8 +3336,8 @@ function wipDailySeries(startISO, endISO, subName){
    * ⚠️ **ยังรักษาด่าน C1 ไว้ครบ** — ใบที่เพิ่งนำเข้าและยังไม่เคยคีย์อะไรเลย ไม่มี record
    *    จึงยังใช้ importedAt เหมือนเดิม ไม่โผล่ย้อนหลัง */
   /* ⚠️ ครอบไม่ให้เกินวันนี้ — นาฬิกาของอีกเครื่องล้ำแล้วนำเข้าไฟล์แผน จะได้ importedAt เป็นวันหน้า
-     แล้ว **ใบนั้นหายจากกราฟทั้งแถบรวมวันนี้** ขณะที่หัวเลข "ยังไม่ได้ส่ง" บนแดชบอร์ดยังนับมันอยู่
-     ซึ่งเป็นคู่เลขที่เจ้าของจะเอามาเทียบตอนเลือกว่าจะเก็บหน้าไหน (ผู้ตรวจ #131 รอบ 6 รันวัดได้) */
+     แล้ว **ใบนั้นหายจากกราฟทั้งแถบรวมวันนี้** ทั้งที่ของมันยังค้างอยู่จริง
+     (ผู้ตรวจ #131 รอบ 6 รันวัดได้ ตอนนั้นเทียบกับหัวเลข "ยังไม่ได้ส่ง" ของแดชบอร์ดซึ่งถูกลบไปแล้ว) */
   const today = todayISO();
   const born = orders.map((o,i)=>{
     const imp = localDayOf(o.importedAt);
@@ -3554,7 +3366,7 @@ function wipDailySeries(startISO, endISO, subName){
         /* ⚠️ ของที่ไหลต่อไปขั้นถัดไป ต้องไม่เกินของที่ไหลเข้ามา
            ใบที่ข้อมูลย้อนแย้ง (คีย์ขั้นหลังมากกว่าขั้นหน้า) ถ้าไม่ครอบตรงนี้
            ยอดค้างรวมทุกขั้นจะโตเกินยอดสั่งของใบนั้น ซึ่งเป็นเลขที่ไม่มีอยู่จริง
-           ความย้อนแย้งมีที่ฟ้องของมันเองอยู่แล้วบนแดชบอร์ด (hasOrderAnomaly) */
+           ความย้อนแย้งมีแถบฟ้องของมันเองอยู่บนหน้านี้แล้ว (#wtAnom · hasOrderAnomaly) */
         const done = Math.min(cum[i][sIdx], qty[i], prev);
         tot[sIdx] += prev - done;
         prev = done;
@@ -3598,7 +3410,7 @@ function drawStageBars(wrapEl, procs, values){
      มีแถบเลื่อนให้ก็จริง แต่กราฟนี้เป็นภาพนิ่งที่มีไว้ "กวาดตาครั้งเดียว" ของคนอ่านอายุ 60+
      และแท่งส่งของคือแท่งที่ตอบว่ายังส่งไม่ครบกี่ใบ (ผู้ตรวจ #132 รอบ 8 วัดได้ 770 ใน 462)
      56px/ขั้น → 7 ขั้นกิน 392px พอดีกับกล่องตั้งแต่จุดตัดสองคอลัมน์ (900px) ขึ้นไป
-     ⚠️ ฟังก์ชันนี้ถูกเรียกที่ #wtPo ที่เดียว การลดเลขนี้จึงไม่กระทบกราฟของแดชบอร์ด */
+     ⚠️ ฟังก์ชันนี้ถูกเรียกที่ #wtPo ที่เดียว */
   const w = Math.max(avail, procs.length*56);
   const h = 220, padL=44, padB=30, padT=20;
   const maxVal = Math.max(1, ...procs.map(p=>values[p]||0));
@@ -4038,9 +3850,9 @@ function renderWipTrend(){
     ? `กำลังดูเฉพาะ ${sub} — มีผลกับทุกกราฟและรายการในหน้านี้`
     : 'กำลังดูรวมทุกหน่วย';
 
-  /* ⚠️ ใบที่ยอดสะสมย้อนแย้ง (คีย์ขั้นหลังมากกว่าขั้นหน้า) ทำให้เลขของหน้านี้ไม่ตรงกับ
-     บัญชีของค้างบนแดชบอร์ด — หน้านี้ไล่ต่อเนื่องต่อใบ ส่วนแดชบอร์ดลบที่ยอดรวม
-     ถ้าหน้านี้เงียบ คนที่เอาสองหน้ามาเทียบจะสรุปว่า "ยอดไม่ตรง" ทั้งที่ทั้งคู่ถูกในนิยามของตัวเอง */
+  /* ⚠️ ใบที่ยอดสะสมย้อนแย้ง (คีย์ขั้นหลังมากกว่าขั้นหน้า) ถูกครอบให้ "ของที่ไหลต่อ ≤ ของที่ไหลเข้า"
+     เลขบนหน้านี้ของใบพวกนั้นจึงไม่ใช่ยอดดิบ · ถ้าหน้านี้เงียบ คนที่เอาไปเทียบกับยอดที่คีย์ไว้จริง
+     จะสรุปว่า "ยอดไม่ตรง" ทั้งที่การครอบเป็นสิ่งที่ตั้งใจทำ */
   const cumAll = buildCumMap(state.records);
   const anom = activeOrders()
     .filter(o=>(!sub || o.subName === sub) && hasOrderAnomaly(cumAll[o.id] || emptyCum()))
@@ -4050,22 +3862,22 @@ function renderWipTrend(){
   anomEl.style.display = anom.length ? 'flex' : 'none';
   if(anom.length){
     /* ⚠️ จำว่าโฟกัสค้างอยู่ปุ่มไหนก่อนวาดทับ — ซิงค์อัตโนมัติเรียก renderWipTrend() ทุก 20 วิ
-       คนที่ Tab มาค้างไว้จะตกไป BODY เองโดยไม่ได้กดอะไร (G2 · กฎเดียวกับ renderWipCards) */
+       คนที่ Tab มาค้างไว้จะตกไป BODY เองโดยไม่ได้กดอะไร (G2 · กฎเดียวกับปุ่มคำอธิบายสี) */
     const act = document.activeElement;
     const wasToggle = !!(act && act.id === 'wtAnomToggle');
     const wasPo = act && act.dataset ? act.dataset.anomPo : null;
     anomEl.innerHTML = `<span class="badge amber">ข้อมูลย้อนแย้ง ${numFmt(anom.length)} ใบ</span> `
       + '<span>คีย์ขั้นหลังมากกว่าขั้นหน้า '
       + 'หน้านี้ถือว่า<b>ของที่ไหลต่อไปขั้นถัดไปไม่เกินของที่ไหลเข้ามา</b> '
-      + 'ยอดค้างรวมจึงไม่เกินยอดสั่ง · <b>บัญชีของค้างบนแดชบอร์ดลบที่ยอดรวม จึงได้เลขต่างจากหน้านี้</b> '
-      + 'เฉพาะใบพวกนี้ · ใบที่ไม่ย้อนแย้งตรงกันทุกใบ</span>'
+      + 'ยอดค้างรวมจึงไม่เกินยอดสั่ง · <b>เลขของใบพวกนี้จึงเป็นค่าที่ถูกครอบไว้ ไม่ใช่ยอดดิบที่คีย์มา</b> '
+      + 'ยอดดิบดูได้ที่หน้าแก้ไขรายการ · ใบที่ไม่ย้อนแย้งไม่ถูกครอบเลย</span>'
       + `<button type="button" class="wanom-t" id="wtAnomToggle" aria-expanded="${wtAnomOpen}">`
       + `${wtAnomOpen ? 'ซ่อนรายการ ▴' : 'ดูรายการ ▾'}</button>`
       + (wtAnomOpen ? anomalyListHtml(anom) : '');
     const tg = document.getElementById('wtAnomToggle');
     if(tg) tg.addEventListener('click', ()=>{ wtAnomOpen = !wtAnomOpen; renderWipTrend(); });
     /* 🚨 ปุ่มเลข PO ต้องพาไปหน้าแก้ไขรายการจริง — `anomalyListHtml()` วาดปุ่มที่มี title
-       สัญญาว่าจะพาไป แต่ตัวจับคลิกของแดชบอร์ดผูกกับ #wipCards เท่านั้น กล่องนี้จึงต้องผูกเอง
+       สัญญาว่าจะพาไป แต่ตัวมันเองไม่ได้ผูกตัวจับคลิกให้ กล่องไหนเอาไปใช้ต้องผูกเอง
        ไม่ผูก = ปุ่มหน้าตาเป็นลิงก์ที่กดแล้วเงียบ ซึ่งลบล้างข้อ "ตามต่อได้" ที่เป็นเหตุผลของแถบนี้
        (ผู้ตรวจ #132 รันพิสูจน์ว่ากดแล้วแท็บไม่เปลี่ยนและช่องค้นหายังว่าง) */
     anomEl.querySelectorAll('[data-anom-po]').forEach(el=>{
@@ -4084,14 +3896,15 @@ function renderWipTrend(){
   wtRenderDiff();
 }
 /* ⚠️ ต้องอยู่นอกฟังก์ชัน — แถบถูกวาดใหม่ทั้งก้อนทุกครั้งที่เปลี่ยนตัวกรอง
-   เก็บไว้ข้างในแล้วรายการจะหุบเองทุกครั้งที่คนขยับตัวกรอง (กฎเดียวกับ anomOpen ของแดชบอร์ด)
-   ⚠️ **ตัวแปรของหน้านี้เอง ห้ามใช้ anomOpen ร่วมกับแดชบอร์ด** — กางที่หนึ่งแล้วอีกที่กางตามไม่ได้ */
+   เก็บไว้ข้างในแล้วรายการจะหุบเองทุกครั้งที่คนขยับตัวกรอง
+   ⚠️ **ไม่เก็บลง state** เหมือนตัวกรองอื่นของหน้านี้ (E1–E4) · เปิดโปรแกรมใหม่เริ่มที่หุบเสมอ
+   (เคยมีตัวแปรฝาแฝดชื่อ anomOpen ของแดชบอร์ด ซึ่งถูกลบไปพร้อมแท็บนั้นเมื่อ 12 พ.ย. 2569) */
 let wtAnomOpen = false;
 
 /* ---------- แท็บยอดค้างรายวัน: ผูกปุ่ม ----------
  * ⚠️ ตั้งช่วงวันตั้งต้นลงช่องก่อน แล้วค่อยวาดครั้งแรก — wtReadRange() อ่านจากช่อง
  *    ถ้าช่องยังว่าง การวาดครั้งแรกจะขึ้นข้อความ "เลือกทั้งจากวันที่และถึงวันที่" ทั้งที่ไม่ได้ผิดอะไร
- *    (กฎเดียวกับ setDashRange() ที่ต้องมาก่อน openState()) */
+ *    (กฎเดียวกับที่แดชบอร์ดเคยต้องตั้งช่วงวันก่อน openState() ก่อนถูกลบทั้งแท็บ) */
 wtSetRange('wip', WT_DEFAULT_DAYS);
 wtSetRange('daily', WT_DEFAULT_DAYS);
 wtSyncInputs('wip');
@@ -4120,10 +3933,10 @@ document.getElementById('view-wiptrend').addEventListener('click', e=>{
   const lg = e.target.closest('[data-wt-lg]');
   if(lg){
     const key = lg.dataset.wtLg, p = lg.dataset.proc;
-    /* ⚠️ ห้ามปิดจนไม่เหลือสักขั้น (กฎเดียวกับคำอธิบายสีของแดชบอร์ด)
+    /* ⚠️ ห้ามปิดจนไม่เหลือสักขั้น
        ด่านตกกลับใน wtProcs() กันกราฟเปล่าไว้ก็จริง แต่ทำให้จอขัดกับตัวเอง —
        ทุกปุ่มขีดฆ่าและ aria-pressed=false ขณะที่กราฟยังวาดครบทุกขั้น (ผู้ตรวจ #132 รันเจอ)
-       ต้องเช็กก่อนเพิ่มลง Set เพราะ Set นี้อยู่ถาวร ไม่ใช่ของใหม่ทุกครั้งแบบของแดชบอร์ด */
+       ต้องเช็กก่อนเพิ่มลง Set เพราะ Set นี้อยู่ถาวรตลอดอายุของหน้า ไม่ได้สร้างใหม่ทุกครั้งที่วาด */
     const all = key === 'wip' ? MAIN_PROCESSES : PROCESSES;
     /* ⚠️ นับเฉพาะขั้นที่ยังมีอยู่จริง — wtHidden เก็บ id ไว้ถาวร ขั้นที่ถูกซ่อนจากแผงจัดการขั้น
        ทีหลังจะค้างอยู่ใน Set แล้วทำให้ด่านนี้ปฏิเสธเร็วกว่าที่ควร (ผู้ตรวจ #132 รอบ 2 อ่านโค้ดเจอ) */
@@ -4156,32 +3969,18 @@ document.addEventListener('pointerdown', wtOnPoint);
 window.addEventListener('scroll', wtTipHide, true);
 window.addEventListener('blur', wtTipHide);
 
-function renderDashFilterOptions(){
-  fillSelect('dashWeekFilter', uniqueSorted(activeOrders().map(o=>o.week)));
+/* ชื่อเดิม renderFilterOptions() — เปลี่ยนชื่อเมื่อ 12 พ.ย. 2569 ตอนลบแท็บ Dashboard
+   มันเติมรายชื่อให้ช่องเลือกของสามหน้า (คีย์ยอด · ยอดรายวันทุกขั้น · ยอดค้างรายวัน) ไม่ใช่ของแดชบอร์ดอย่างเดียว */
+function renderFilterOptions(){
   fillSelect('entryWeekFilter', uniqueSorted(activeOrders().map(o=>o.week)));
   // รายชื่อมาจากข้อมูลจริง ไม่ fix ไว้ — โรงงานเพิ่มหน่วยใหม่แล้วต้องโผล่เอง
-  // เหมือนที่หน้า Dashboard กับหน้ายอดคงคลัง FG ทำอยู่
+  // เหมือนที่หน้ายอดคงคลัง FG ทำอยู่
   fillSelect('entrySubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
-  fillSelect('dashSubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
   fillSelect('dayWeekFilter', uniqueSorted(activeOrders().map(o=>o.week)));
   fillSelect('daySubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
   fillSelect('wtSubFilter', uniqueSorted(activeOrders().map(o=>o.subName)));
 }
 
-/** แถบ progress 2 ส่วน: ฟ้า = ยอดที่บันทึกทันหรือก่อนวัน deadline ของขั้นนั้น, เหลือง = บันทึกหลังเลย
- *  deadline ไปแล้ว — เขียวทั้งแถบสงวนไว้เฉพาะกรณีเสร็จครบ "และ" ไม่มีส่วนที่ช้าเลยเท่านั้น (เสร็จครบ
- *  แบบมีส่วนช้าปนอยู่ ยังคงแสดงฟ้า+เหลืองตามจริง ไม่ใช่เขียว) · ยอดแยกทัน/เกินอยู่ใน title ของแถบเท่านั้น ไม่โชว์เป็นตัวหนังสือ — เจ้าของสั่งถอดออก 5 พ.ย. 2026 ("เลขเยอะจะไม่มีใครดู") ห้ามเติมกลับ */
-function progressCell(cum, split, qty, inRange){
-  split = split || {onTime:0, late:0};
-  const done = qty>0 && cum>=qty && split.late===0;
-  const onTimePct = qty>0 ? Math.min(100, split.onTime/qty*100) : 0;
-  const latePct = qty>0 ? Math.min(100-onTimePct, split.late/qty*100) : 0;
-  return `<div class="rq${inRange == null ? ' none' : ''}" title="ยอดที่คีย์ในช่วงวันที่เลือก">${inRange == null ? '—' : numFmt(inRange)}</div>
-    <div class="small">${numFmt(cum)}/${numFmt(qty)}</div>
-    <div class="progress ${done?'done':''}" title="ทันกำหนด ${numFmt(split.onTime)} · เกินกำหนด ${numFmt(split.late)}">
-      <div class="seg-on" style="width:${onTimePct}%"></div><div class="seg-late" style="width:${latePct}%"></div>
-    </div>`;
-}
 
 /* ช่อง Aging — ระบายสีให้กวาดตาเจอใบที่ค้างนานได้ทันที (issue #41)
  * เกณฑ์อ่านจาก deadlineOffsets.shipping เสมอ ห้าม hardcode (A4) และถ้ายังไม่กำหนด (null)
@@ -4201,220 +4000,17 @@ function agingCell(orderDate, ref, statusCode){
   return `<span class="badge green">${txt}</span>`;
 }
 
-/** ใบสั่งที่หน้า Dashboard กำลังพูดถึง — ผ่านตัวกรองทุกช่องบนหน้านี้แล้ว · คืน {o, c, st} ต่อใบ
- *  ⚠️ **บัญชีของค้างกับตารางต้องอ่านชุดเดียวกันจากที่นี่** (เจ้าของสั่ง 5 พ.ย. 2026 · เหตุผลเต็มใน CLAUDE.md §1)
- *     ของเดิมบัญชีของค้างกรองแค่ Sub-Name ส่วนตารางกรองครบทุกช่อง สองเลขจึงต่างกันตั้งแต่เปิดโปรแกรม
- *     เพราะ "ซ่อนงานที่ส่งของครบแล้ว" ติ๊กไว้เป็นค่าตั้งต้น (ผู้ตรวจ #119 วัดได้ 200 กับ 100)
- *  ยอดแยกทันกำหนด/เกินกำหนดไม่คิดที่นี่ — บัญชีของค้างไม่ใช้ · ตารางไปหยิบ buildCumSplitMap เอง */
-function dashFilteredRows(){
-  const allCum = buildCumMap(state.records);
-  const ref = todayISO();
-  const weekF = document.getElementById('dashWeekFilter').value;
-  const subF = document.getElementById('dashSubFilter').value;
-  const statusF = document.getElementById('dashStatusFilter').value;
-  const wipF = document.getElementById('dashWipFilter').value;
-  const search = document.getElementById('dashSearch').value.trim().toLowerCase();
-  const hideDone = document.getElementById('dashHideDone').checked;
 
-  let rows = activeOrders().map(o=>{
-    const c = allCum[o.id] || emptyCum();
-    const st = computeStatus(o, c, computeDeadlines(o), ref);
-    return {o, c, st};
-  });
-  if(weekF) rows = rows.filter(x=>x.o.week===weekF);
-  if(subF) rows = rows.filter(x=>x.o.subName===subF);
-  if(search) rows = rows.filter(x=>String(x.o.poNo).toLowerCase().includes(search) || String(x.o.pn).toLowerCase().includes(search));
-  if(statusF) rows = rows.filter(x=>x.st.code===statusF);
-  if(wipF) rows = rows.filter(x=>wipQtyAtStage(x.o, x.c, wipF) > 0);
-  // ซ่อนงานที่ส่งครบแล้ว — แต่ต้องยอมให้คนที่ "เลือกดูเฉพาะเสร็จแล้ว" เห็นของที่ตัวเองขอดู
-  // ไม่งั้นเลือกสถานะเสร็จแล้วจะได้ตารางว่าง โดยไม่มีอะไรบอกว่าเพราะติ๊กอีกช่องค้างไว้
-  /* ⚠️ **ใบที่มียอดในช่วงวันที่เลือก ไม่ถูกซ่อน แม้ส่งครบแล้ว** (เจ้าของเคาะ 7 พ.ย. 2026)
-   *    ใบที่ส่งครบ *วันนี้* คือใบที่ทำงานเยอะที่สุดของวัน · ซ่อนไปแล้วแถวรวมอ่านว่า
-   *    วันนี้ทำได้ 7 ทั้งที่ทำได้ 107 และสี่ขั้นขึ้นขีดทั้งที่คีย์ครบ (ผู้ตรวจ #120 รันพิสูจน์)
-   *    ตัวกรองนี้มีไว้ซ่อน "งานที่จบแล้วและไม่ขยับอีก" — ใบที่ขยับในช่วงที่กำลังดูไม่ใช่ของนั้น
-   *    ⚠️ record ยอด 0 ก็นับว่า "มียอดในช่วง" (เทียบ `!= null`) — มีคนคีย์ว่าวันนี้ผลิต 0
-   *       คือการขยับ กฎเดียวกับที่ช่องในตารางแยก `0` ออกจาก `—`
-   *    ⚠️ อยู่ใน dashFilteredRows() จุดเดียว บัญชีของค้างจึงนับชุดเดียวกับตารางต่อไป (กฎจาก #119) */
-  if(hideDone && statusF !== 'done'){
-    const act = buildRangeMap(dashRangeRecords());
-    rows = rows.filter(x=> x.st.code !== 'done'
-      || PROCESSES.some(p=> (act[x.o.id] || {})[p] != null));
-  }
-  return rows;
-}
 
-/** ยอดที่คีย์ภายในช่วงวันที่เลือกบนแดชบอร์ด — คืน record ที่อยู่ในช่วง ให้ buildRangeMap รวมต่อ
- *  (ช่องว่าง = ไม่จำกัดด้านนั้น · ว่างทั้งคู่ = "ทั้งหมด") · เทียบสตริง YYYY-MM-DD ตรง ๆ ได้ เพราะ record.date เป็นวันปฏิทินล้วนที่ normalize แล้ว
- *
- *  ⚠️ **ตัวมันเองไม่ตัดแถวและไม่แตะบัญชีของค้าง** — มันคืน record ไม่ใช่ใบ
- *     การตัดแถวตามช่วงวันทำได้ทางเดียวคือใน dashFilteredRows() ซึ่งบัญชีของค้าง ตาราง และแถวรวม
- *     อ่านชุดเดียวกัน (กฎจาก #119) · ทำที่นี่เมื่อไหร่ บัญชีของค้างกับตารางขัดกันทันที
- *     ที่นั่นมีข้อยกเว้นหนึ่งข้อใช้ช่วงวันอยู่จริง — "ซ่อนงานที่ส่งของครบแล้ว" (7 พ.ย. 2026)
- *     **หัวเลข บัญชีของค้าง และ #wipScopeNote จึงขยับตามช่วงวันได้** และนั่นถูกตามกฎ ไม่ใช่การรั่ว
- *
- *  ⚠️ **ยอดในช่วงไม่ครอบที่ orderQty** ต่างจากยอดสะสมในบรรทัดล่างซึ่งครอบ — คนละความหมาย
- *     ยอดสะสม = "เดินไปถึงไหนของใบนี้" จึงไม่เกินยอดสั่งโดยนิยาม
- *     ยอดในช่วง = "ช่วงนี้ทำได้เท่าไหร่" ซึ่งเกินยอดสั่งได้จริง (คีย์เกิน · งานซ่อม) ครอบแล้วจะโกหก
- *
- *  ⚠️ **ไม่เก็บลง state** เหมือนตัวกรองอื่นบนหน้านี้ · เปิดโปรแกรมใหม่เริ่มที่ "วันนี้" ทุกครั้ง
- *     (เจ้าของเลือกค่าตั้งต้นนี้ 5 พ.ย. 2026) · เก็บลง state = เพิ่มฟิลด์ที่ต้องซิงค์ ซึ่งไม่ได้ขอ */
-function dashRangeRecords(){
-  const from = document.getElementById('dashFrom').value;
-  const to = document.getElementById('dashTo').value;
-  if(!from && !to) return state.records;
-  return state.records.filter(r=> (!from || r.date >= from) && (!to || r.date <= to));
-}
 
-/** ยอดในช่วงต่อใบต่อขั้น · **`null` = ช่วงนั้นไม่มี record ของขั้นนั้นเลย** ต่างจาก `0` ที่มีคนคีย์ไว้
- *  ⚠️ **ต้องแยกสองอย่างนี้ และเงื่อนไขต้องเขียน `== null` ห้ามเขียน `!v`** — กฎเดียวกับที่เจ้าของ
- *     เคาะไว้ให้หน้ายอดรายวันทุกขั้น (CLAUDE.md §1) · ยอด 0 เกิดขึ้นเองได้จากการเลือกเหตุผล
- *     ตอนยังไม่มียอด (27 ต.ค. 2026) · รวบเป็นขีดแล้ว "วันนี้หยุดงาน" จะอ่านไม่ต่างจาก
- *     "ยังไม่ได้คีย์" ซึ่งเป็นคนละเรื่องกันคนละขั้ว
- *  ⚠️ ใช้ buildCumMap() แทนไม่ได้ — ตัวนั้นเริ่มจาก emptyCum() จึงคืน 0 ให้ทุกขั้นเสมอ
- *     แล้วขั้นที่ไม่มีใครคีย์จะกลายเป็น "ผลิตศูนย์" ทั้งหน้า */
-function buildRangeMap(records){
-  const map = {};
-  for(const r of records){
-    if(r.voided) continue;                                  // A1 — เหมือน buildCumMap
-    if(!map[r.orderId]) map[r.orderId] = {};
-    const cur = map[r.orderId][r.process];
-    map[r.orderId][r.process] = (cur == null ? 0 : cur) + (Number(r.qty)||0);
-  }
-  return map;
-}
 
-/** ตั้งช่วงวันพร้อมไฮไลต์ปุ่มที่ตรงกับค่านั้น — ไม่วาดจอ ผู้เรียกวาดเอง
- *  (ตอน init ต้องตั้งค่าก่อน state พร้อม จึงยังวาดไม่ได้) */
-function setDashRange(from, to, kind){
-  document.getElementById('dashFrom').value = from;
-  document.getElementById('dashTo').value = to;
-  document.querySelectorAll('#dashPresets button').forEach(b=>
-    b.classList.toggle('primary', b.dataset.range === kind));
-}
 
-/** ปุ่มช่วงวันสำเร็จรูป → [จาก, ถึง]
- *  ⚠️ "ทั้งหมด" = ล้างทั้งสองช่อง ไม่ใช่ใส่วันที่เก่าสุดที่มีข้อมูล — ยอดที่คีย์ย้อนหลัง
- *     ลงวันก่อนนั้นได้ แล้วจะตกช่วงไปเงียบ ๆ ทั้งที่คนกดว่า "ทั้งหมด" */
-function dashPresetRange(kind){
-  const t = todayISO();
-  if(kind === 'all') return ['', ''];
-  if(kind === '7') return [addDaysISO(t, -6), t];
-  if(kind === 'month') return [t.slice(0, 8) + '01', t];
-  return [t, t];
-}
 
-/** ⚠️ ทุกช่องกรองบนหน้านี้ต้องผูกกับตัวนี้ ไม่ใช่กับ renderDashTable ตรง ๆ — ลืมช่องไหน
- *     ช่องนั้นจะทำให้บัญชีของค้างกับตารางขัดกันทันทีที่มีคนเลือก (กราฟมีตัวจับของตัวเองอยู่แล้ว) */
-function renderDashScoped(){ renderWipCards(); renderDashTable(); }
-
-function renderDashTable(){
-  const orderById = {}; state.orders.forEach(o=>orderById[o.id]=o);
-  const splitMap = buildCumSplitMap(state.records, orderById);
-  const rangeMap = buildRangeMap(dashRangeRecords());
-  const rows = dashFilteredRows();
-
-  /* รวมเป็นราย P/N + Sub-Name — เจ้าของสั่ง 5 พ.ย. 2026 ("ข้อมูลเยอะเกินกว่าจะเรียกการมองภาพรวม")
-   *
-   * ⚠️ กุญแจต้องแปลง P/N เป็นข้อความก่อน แบบเดียวกับ `fgRows()` — เครื่องที่รับข้อมูลจากการซิงค์
-   *    ได้ P/N เป็นตัวเลข ส่วนเครื่องที่นำเข้าไฟล์เองได้เป็นข้อความ (บั๊กที่เจอ 1 ก.ย. 2026)
-   *    ไม่แปลงแล้ว P/N เดียวจะแตกเป็นสองแถวบนเครื่องที่ซิงค์มา
-   * ⚠️ จับกลุ่มด้วย P/N **คู่กับ Sub-Name** ตามแบบหน้า FG — P/N เดียวอยู่สองนิติบุคคลได้
-   *    รวมข้ามหน่วยแล้วคอลัมน์ Sub-Name ไม่มีความหมาย และยอดของสองบริษัทจะปนกัน
-   * ⚠️ ตัวกรองคัด "ใบ" ก่อน แล้วจึงรวม — ยอดในแถวจึงเป็นผลรวมของสิ่งที่กรองไว้เท่านั้น
-   *    (เลือกสถานะล่าช้าแล้วยอดสั่งรวมจะเล็กลง ซึ่งถูกต้องตามความหมายนี้)
-   * ⚠️ ครอบยอดสะสม **และ** ยอดแยกทัน/เกิน ที่ orderQty ต่อใบ · คีย์เกินฟ้องด้วยป้าย · **เฉพาะขั้นสายหลัก** (CLAUDE.md §1) */
-  const groups = new Map();
-  rows.forEach(({o, c})=>{
-    const pn = String(o.pn == null ? '' : o.pn), unit = String(o.subName || '');
-    /* ⚠️ ยอดสั่งต้องผ่าน Number() ด้วยเหตุผลเดียวกับที่ P/N ต้องผ่าน String() บรรทัดบน — ค่าที่ซิงค์มา
-     *    เป็นข้อความได้ · `'100' + 100` ได้ `'100100'` (ผู้ตรวจ #119 รันเจอ: ขึ้น 100,100 แทน 200) */
-    const q = Number(o.orderQty) || 0;
-    const key = pn + '|' + unit;
-    let g = groups.get(key);
-    if(!g){ g = {pn, unit, qty:0, n:0, cum:emptyCum(), range:{}, split:{}, anomaly:false, over:false}; groups.set(key, g); }
-    g.qty += q;
-    g.n++;
-    if(hasOrderAnomaly(c)) g.anomaly = true;
-    PROCESSES.forEach(p=>{
-      const sp = (splitMap[o.id] || {})[p] || {}, cap = MAIN_PROCESSES.includes(p) ? q : Infinity;
-      g.cum[p] += Math.min(c[p]||0, cap);
-      const rv = (rangeMap[o.id] || {})[p];
-      if(rv != null) g.range[p] = (g.range[p] == null ? 0 : g.range[p]) + rv;
-      if((c[p]||0) > cap) g.over = true;
-      const on = Math.min(sp.onTime || 0, cap);
-      g.split[p] = g.split[p] || {onTime:0, late:0};
-      g.split[p].onTime += on;
-      g.split[p].late += Math.min(sp.late || 0, cap - on);
-    });
-  });
-  const list = [...groups.values()].sort((a,b)=> a.pn.localeCompare(b.pn) || a.unit.localeCompare(b.unit));
-
-  /* ⚠️ Item No. คือ "ลำดับของแถวที่เห็นอยู่ตอนนี้" ไม่ใช่เลขประจำใบสั่ง
-   *    มีไว้ให้ชี้กันรู้เรื่องตอนคุยหรือตอนถือกระดาษที่พิมพ์ออกมา ("ดูแถวที่ 12")
-   *    จึงต้องนับหลังกรองและเรียงแล้ว = นับตามที่ตาเห็น ไม่ใช่ตามลำดับในข้อมูล
-   *    ⚠️ ห้ามเอาไปใช้เป็นกุญแจอ้างอิงใบสั่ง — กุญแจจริงคือ PO|P/N (ดู INVARIANTS)
-   *       ยิ่งตอนนี้แถวหนึ่งรวมหลายใบ เลขนี้ยิ่งไม่ใช่ตัวแทนของใบไหนเลย */
-  const bodyHtml = list.map((g, idx)=>`<tr>
-      <td class="hint">${idx + 1}</td>
-      <td class="left" data-pn="${escapeHtml(g.pn)}">${escapeHtml(g.pn)}${g.anomaly?' <span class="badge red" title="ยอดสะสมย้อนแย้งกัน">⚠ ผิดลำดับ</span>':''}${g.over?' <span class="badge amber" title="มีใบที่คีย์ยอดสะสมเกินยอดสั่ง — แถบในแถวนี้ครอบไว้ที่ยอดสั่ง ส่วนเกินตรวจได้ที่หน้าแก้ไข/ลบรายการ">⚠ คีย์เกินยอดสั่ง</span>':''}</td>
-      <td class="left">${escapeHtml(g.unit)}</td>
-      <td>${numFmt(g.n)}</td>
-      <td>${numFmt(g.qty)}</td>
-      ${PROCESSES.map(p=>`<td>${progressCell(g.cum[p]||0, g.split[p], g.qty, g.range[p])}</td>`).join('')}
-    </tr>`).join('');
-
-  /* ⚠️ แถวรวมนับชุดที่ผ่านตัวกรองแล้ว จึงต้องเขียนขอบเขตกำกับเหมือน #wipScopeNote (CLAUDE.md §1)
-   * ⚠️ แถวรวมต้องไม่นับช่องขีด — ขั้นที่ช่วงนั้นไม่มีใครคีย์ขึ้น "—" ไม่ใช่ 0 (กฎจาก CLAUDE.md §1)
-   *    กระทบแรงเป็นพิเศษเพราะค่าตั้งต้นคือ "วันนี้" — เช้าที่ยังไม่มีใครคีย์ แถวรวมทั้งแถว
-   *    จะอ่านว่า "วันนี้ทั้งโรงงานทำได้ 0 ทุกขั้น" ทั้งที่ยังไม่มีใครรายงานเข้ามา (ผู้ตรวจ #120) */
-  const footHtml = PROCESSES.map(p=>{
-    const sum = list.reduce((s, g)=> g.range[p] == null ? s : (s == null ? 0 : s) + g.range[p], null);
-    return `<td>${sum == null ? '—' : numFmt(sum)}</td>`;
-  }).join('');
-  document.getElementById('dashTable').innerHTML = `<thead><tr>
-      <th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ ไว้ชี้กันตอนคุยหรือตอนดูกระดาษที่พิมพ์ออกมา — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>
-      <th>P/N</th><th>Sub-Name</th>
-      <th title="จำนวนใบสั่งซื้อของ P/N นี้ที่ผ่านตัวกรองอยู่ตอนนี้">ใบ</th>
-      <th title="ยอดสั่งรวมของใบที่ผ่านตัวกรองอยู่ตอนนี้">ยอดสั่งรวม</th>
-      ${PROCESSES.map(p=>`<th title="เลขตัวใหญ่ = ยอดในช่วงวันที่เลือก · บรรทัดล่าง = ยอดสะสมทั้งหมด/ยอดสั่งรวม">${processHeadHtml(p)}</th>`).join('')}
-    </tr></thead><tbody>${bodyHtml || emptyRow(5 + PROCESSES.length)}</tbody>
-    <tfoot><tr><td class="left" colspan="5">รวมยอดในช่วง ${escapeHtml(dashRangeLabel())} · นับเฉพาะ ${numFmt(rows.length)} ใบที่ผ่านตัวกรอง</td>${footHtml}</tr></tfoot>`;
-}
-
-/** ข้อความบอกช่วงวันที่แถวรวมท้ายตารางกำลังนับ — ต้องมี ไม่งั้นเลขรวมไม่บอกว่าเป็นของช่วงไหน
- *  ช่องเดียวที่ว่างแปลว่า "ไม่จำกัดด้านนั้น" จึงต้องเขียนออกมาเป็นคำ ไม่ใช่เว้นว่าง */
-function dashRangeLabel(){
-  const from = document.getElementById('dashFrom').value;
-  const to = document.getElementById('dashTo').value;
-  if(!from && !to) return '(ทุกวัน)';
-  if(from === to) return fmtDateTH(from);
-  // ช่วงกลับข้าง = ไม่มีวันไหนเข้าเลย · ไม่บอกก็จะอ่านว่า "ช่วงนี้ไม่มีใครทำอะไร" (ผู้ตรวจ #120 ทักสองรอบ)
-  if(from && to && from > to) return fmtDateTH(from) + ' – ' + fmtDateTH(to) + ' ⚠ ช่วงกลับข้าง ไม่มีวันไหนเข้าเลย';
-  return (from ? fmtDateTH(from) : 'เริ่มแรก') + ' – ' + (to ? fmtDateTH(to) : 'ล่าสุด');
-}
 
 /* ---------- Render: Data tab ---------- */
 function loadSettingsIntoForm(){
   document.getElementById('deviceName').value = state.deviceName || '';
   fillOffsetInputs();
-  document.getElementById('chartRange').value = state.chartPref.mode || '14';
-  document.getElementById('chartFrom').value = state.chartPref.from || '';
-  document.getElementById('chartTo').value = state.chartPref.to || '';
-  toggleChartCustomFields();
-}
-function toggleChartCustomFields(){
-  const isCustom = document.getElementById('chartRange').value === 'custom';
-  document.querySelectorAll('.chart-custom-field').forEach(el=>{ el.style.display = isCustom ? '' : 'none'; });
-}
-function saveChartPref(){
-  state.chartPref = {
-    mode: document.getElementById('chartRange').value,
-    from: document.getElementById('chartFrom').value,
-    to: document.getElementById('chartTo').value,
-    // ⚠️ ต้องพกขั้นที่ซ่อนไว้มาด้วย ไม่งั้นแค่เปลี่ยนช่วงเวลา ขั้นที่ปิดไว้ก็เด้งกลับมาทั้งห้า
-    hidden: Array.from(chartHiddenProcs())
-  };
-  saveState();
 }
 
 /* ---------- Merge logic ---------- */
@@ -5841,8 +5437,8 @@ async function weekFromTemplate(zip, map){
 /* เจ้าของสั่งเมื่อ 12 ก.ย. 2026 ให้เพิ่มขั้นการผลิตได้จากในโปรแกรม และซิงค์ไปทุกเครื่อง
  * เครื่องที่ยังเปิดโปรแกรมรุ่นก่อนหน้าค้างไว้จะดึงยอดของขั้นใหม่มาเก็บได้ แต่ไม่รู้จักขั้นนั้น
  *
- * ⚠️ buildCumMap · buildCumSplitMap · buildDailyTotals ข้ามยอดของขั้นที่ไม่รู้จักแบบเงียบ ๆ
- *    บัญชีของค้าง ตาราง กราฟ บนเครื่องนั้นจึงต่ำกว่าเครื่องอื่นโดยไม่มีอะไรฟ้อง — ต้องเตือนให้เห็น
+ * ⚠️ buildCumMap · buildDailyTotals ข้ามยอดของขั้นที่ไม่รู้จักแบบเงียบ ๆ
+ *    กราฟกับตารางบนเครื่องนั้นจึงต่ำกว่าเครื่องอื่นโดยไม่มีอะไรฟ้อง — ต้องเตือนให้เห็น
  *    ห้ามแก้ด้วยการ throw ในตัวคิดยอด เพราะมันวิ่งทุกครั้งที่วาดจอ throw = หน้าขาวทั้งแอป */
 function unknownProcessCounts(records){
   // ขั้นที่ซ่อนก็นับว่ารู้จัก — ยอดของมันไม่ถูกนับโดยตั้งใจ ไม่ใช่ขั้นแปลกหน้า
@@ -5875,12 +5471,9 @@ function renderProcessWarning(){
 function renderAll(){
   renderProcessWarning();
   renderProcessAdmin();
-  renderDashFilterOptions();
+  renderFilterOptions();
   renderImportHistory();
   renderOrderVoidTable();
-  renderWipCards();
-  renderChart();
-  renderDashTable();
   renderEntryTable();
   renderRecordEditor();
   // ถ้านั่งค้างหน้า FG ไว้แล้วซิงค์ดึงข้อมูลใหม่เข้ามา ตัวเลขต้องขยับตาม
@@ -5908,8 +5501,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     const tab = btn.dataset.tab;
     document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
     document.getElementById('view-'+tab).classList.add('active');
-    if(tab==='dashboard'){ renderDashFilterOptions(); renderWipCards(); renderChart(); renderDashTable(); }
-    if(tab==='entry'){ renderDashFilterOptions(); renderEntryTable(); renderRecordEditor(); }
+    if(tab==='entry'){ renderFilterOptions(); renderEntryTable(); renderRecordEditor(); }
     if(tab==='import'){ renderImportHistory(); renderOrderVoidTable(); }
     if(tab==='data'){ loadSettingsIntoForm(); }
     /* renderDnLog() ต้องอยู่ที่นี่ด้วย ไม่ใช่พึ่ง renderAll() ตอนเปิดหน้า —
@@ -5917,11 +5509,11 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
      * ถ้าไม่วาดตอนกดเข้ามา ตารางจะว่างทั้งหัวตาราง อ่านได้ว่า 'ยังไม่ออกใบ' แล้วคนออกกระดาษซ้ำ */
     if(tab==='delivery'){ renderDeliveryNote(); renderDnLog(); }
     if(tab==='fg'){ renderFg(); }
-    if(tab==='daily'){ renderDashFilterOptions(); renderDayTable(); }
+    if(tab==='daily'){ renderFilterOptions(); renderDayTable(); }
     /* ⚠️ ต้องวาดตอนกดเข้าแท็บ — renderAll() ตอนเปิดโปรแกรมวิ่งขณะแท็บ import ยัง active
        กล่องกราฟจึงกว้าง 0 แล้ว drawGroupedBars คิดความกว้างจากกล่อง ได้กราฟแคบติดกัน
        (บทเรียนเดียวกับ renderDnLog ของใบ #103) */
-    if(tab==='wiptrend'){ renderDashFilterOptions(); renderWipTrend(); }
+    if(tab==='wiptrend'){ renderFilterOptions(); renderWipTrend(); }
   });
 });
 
@@ -6087,9 +5679,6 @@ function renderProcessControls(){
     sel.value = keep;
     if(sel.value !== keep) sel.value = '';
   };
-  // ตัวกรองนี้ถามว่า "ค้างอยู่หน้าขั้นไหน" ซึ่งมีความหมายเฉพาะขั้นในสายหลัก
-  refill('dashWipFilter', '<option value="">ทั้งหมด</option><option value="notStarted">ยังไม่เริ่มผลิต</option>'
-    + MAIN_PROCESSES.slice(1).map(p=>`<option value="${p}">${escapeHtml(ptext(p, 'wait'))}</option>`).join(''));
   refill('recFilterProcess', '<option value="">ทั้งหมด</option>'
     + PROCESSES.map(p=>`<option value="${p}">${escapeHtml(PROCESS_LABELS[p])}</option>`).join(''));
 
@@ -6203,7 +5792,7 @@ function renderProcessAdmin(){
         : p.hidden ? '<span class="badge amber">ซ่อนอยู่</span>' : '<span class="badge green">แสดง</span>')
         // ชนิดของขั้นเปลี่ยนทีหลังไม่ได้ จึงต้องเห็นได้ตลอดว่าขั้นไหนไม่ได้อยู่ในสายการผลิต
         // ⚠️ ต้องมีคลาสสีด้วย — `.badge` เปล่า ๆ ไม่มีพื้นหลัง จะออกมาเป็นตัวหนาเล็ก ๆ ไม่เหมือนป้ายอื่น
-        + (p.standalone ? ' <span class="badge gray" title="ยอดไม่เกี่ยวกับสายหลัก ไม่มีแถวในบัญชีของค้าง และไม่ถูกตัดสินล่าช้า">นับแยก</span>' : '');
+        + (p.standalone ? ' <span class="badge gray" title="ยอดไม่เกี่ยวกับสายหลัก ไม่มีแท่งในกราฟยอดค้างรายวัน และไม่ถูกตัดสินล่าช้า">นับแยก</span>' : '');
       const who = p.updatedBy || p.addedBy;
       const audit = who ? `<div class="hint">${escapeHtml((p.updatedBy ? 'แก้ล่าสุดโดย ' : 'เพิ่มโดย ') + who)}</div>` : '';
       const actions = unlocked && !locked
@@ -6293,7 +5882,7 @@ document.getElementById('btnProcessAdd').addEventListener('click', ()=>{
   const where = after === '__first__' ? 'เป็นขั้นแรก' : 'ต่อจาก ' + PROCESS_LABELS[after];
   // ⚠️ ชนิดของขั้นเปลี่ยนทีหลังไม่ได้ (มีแต่เปลี่ยนชื่อกับซ่อน) จึงต้องบอกให้ชัดตั้งแต่ตอนกด
   const kind = standalone
-    ? ' · เป็นขั้นนับแยก ยอดไม่เกี่ยวกับสายหลัก ไม่มีแถวในบัญชีของค้าง และไม่ถูกตัดสินล่าช้า'
+    ? ' · เป็นขั้นนับแยก ยอดไม่เกี่ยวกับสายหลัก ไม่มีแท่งในกราฟยอดค้างรายวัน และไม่ถูกตัดสินล่าช้า'
     : ' · อยู่ในสายการผลิต';
   if(!confirm(`เพิ่มขั้น "${label}" ${where}?${kind}\n— ทุกเครื่องจะเห็นขั้นนี้หลังซิงค์ · ลบทีหลังไม่ได้ ซ่อนได้อย่างเดียว · ชนิดของขั้นเปลี่ยนทีหลังไม่ได้`)) return;
   list.splice(at, 0, {id: 'p' + Date.now().toString(36), label, short, icon: standalone ? '🧰' : '🔹',
@@ -6332,10 +5921,13 @@ document.getElementById('processTable').addEventListener('click', e=>{
   /* ⚠️ ของที่หาย/กลับมาเป็นชุดเดียวกัน สองข้อความจึงใช้รายการเดียวกัน
      "ปุ่มเลือกขั้น" ครอบสองแถบ — หน้าคีย์ยอดรายวัน และ #dayProcBtns ของหน้ายอดรายวันทุกขั้น
      ซึ่งวาดจาก PROCESSES เหมือนกัน · เขียนว่า "ปุ่มคีย์ยอด" แคบกว่าของจริง (ผู้ตรวจ #123 รอบ 11)
-     ⚠️ **ขั้นนับแยกไม่มีแถวในบัญชีของค้างตั้งแต่แรก** (บัญชีสร้างจาก MAIN_PROCESSES)
-     บอกว่าแถวจะหาย/จะกลับมาคือส่งคนไปหาของที่ไม่มี และขัดกับอีกสามที่ที่แอปเขียนไว้เอง
-     (ป้ายนับแยก · คำยืนยันตอนเพิ่มขั้น · title ของช่องติ๊ก) — ผู้ตรวจ #123 รอบ 12 */
-  const list = 'ปุ่มเลือกขั้น · คอลัมน์' + (p.standalone ? '' : ' · แถวในบัญชีของค้าง');
+     ⚠️ **ขั้นนับแยกไม่มีแท่งในกราฟยอดค้างรายวันตั้งแต่แรก** (กราฟนั้นวาดจาก MAIN_PROCESSES)
+     บอกว่าแท่งจะหาย/จะกลับมาคือส่งคนไปหาของที่ไม่มี และขัดกับอีกสามที่ที่แอปเขียนไว้เอง
+     (ป้ายนับแยก · คำยืนยันตอนเพิ่มขั้น · title ของช่องติ๊ก) — ผู้ตรวจ #123 รอบ 12
+     ⚠️ **ข้อความนี้เคยเขียนว่า "คอลัมน์ · แถวในบัญชีของค้าง" ซึ่งเป็นของบนแดชบอร์ด**
+     แท็บนั้นถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569 · ของที่หายจริงตอนนี้คือปุ่มเลือกขั้นกับแท่งในกราฟ */
+  const list = 'ปุ่มเลือกขั้น · แท่งในกราฟยอดผลิตรายวัน'
+    + (p.standalone ? '' : ' · แท่งในกราฟยอดค้างรายวัน');
   const msg = p.hidden ? `เลิกซ่อนขั้น "${p.label}"? ${list} จะกลับมาทุกเครื่อง`
     : `ซ่อนขั้น "${p.label}"? ${list} จะหายไปจากทุกเครื่อง`
       + (n ? ` · ยอดที่คีย์ไว้ ${numFmt(n)} รายการยังอยู่ แต่จะไม่ถูกนับจนกว่าจะเลิกซ่อน` : '');
@@ -6366,32 +5958,6 @@ document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
   toast(`ลบแล้ว ${n} รายการ`);
 });
 
-['dashWeekFilter','dashStatusFilter','dashWipFilter'].forEach(id=>
-  document.getElementById(id).addEventListener('change', renderDashScoped));
-
-/* ⚠️ ช่วงวัน **เปลี่ยนชุดใบที่นับจริง** ตั้งแต่ #122 — ข้อยกเว้นของ
- * "ซ่อนงานที่ส่งของครบแล้ว" อ่านช่วงวันอยู่ใน dashFilteredRows() หัวเลขกับจำนวนใบจึงขยับตาม
- * **การวาดใหม่จึงจำเป็น ห้ามถอด renderDashScoped() ออกจากปุ่มช่วงวัน**
- * ถอดเมื่อไหร่ หัวเลขกับตารางขัดกันทันที ซึ่งเป็นบั๊กที่ #119 ใช้สามรอบแก้
- * (ผู้ตรวจ #123 รอบ 9 รันวัดได้ 1 ใบ → 2 ใบ · คอมเมนต์เดิมเขียนกลับกัน) */
-document.getElementById('dashPresets').addEventListener('click', e=>{
-  const kind = e.target.dataset && e.target.dataset.range;
-  if(!kind) return;
-  const [from, to] = dashPresetRange(kind);
-  setDashRange(from, to, kind);
-  renderDashScoped();
-});
-// พิมพ์วันเองแล้วปุ่มสำเร็จรูปต้องเลิกไฮไลต์ ไม่งั้นจอบอกช่วงหนึ่งแต่นับอีกช่วง
-['dashFrom','dashTo'].forEach(id=>
-  document.getElementById(id).addEventListener('change', ()=>{
-    document.querySelectorAll('#dashPresets button.primary').forEach(b=>b.classList.remove('primary'));
-    renderDashScoped();
-  }));
-// ⚠️ หน่วยคุมทั้งหน้า จึงต้องวาดใหม่ครบทั้งสามส่วน ไม่ใช่แค่ตาราง
-document.getElementById('dashSubFilter').addEventListener('change', ()=>{
-  renderWipCards(); renderChart(); renderDashTable();
-});
-document.getElementById('dashSearch').addEventListener('input', renderDashScoped);
 ['fgUnit','fgHideZero'].forEach(id=>
   document.getElementById(id).addEventListener('change', renderFg));
 // ช่องค้นหาอยู่นอกตาราง การวาดใหม่จึงไม่แย่งโฟกัส พิมพ์รัวได้ (INVARIANTS G2)
@@ -6405,40 +5971,11 @@ document.getElementById('dnDate').addEventListener('change', renderDeliveryNote)
 document.getElementById('dnSearch').addEventListener('input', renderDeliveryNote);
 document.getElementById('dnHideNoDelta').addEventListener('change', renderDeliveryNote);
 document.getElementById('dnUnit').addEventListener('change', renderDeliveryNote);
-document.getElementById('dashHideDone').addEventListener('change', renderDashScoped);
 
-/* พิมพ์ / บันทึก PDF — ใช้ window.print() ของเบราว์เซอร์ล้วน ไม่เพิ่มไลบรารีทำ PDF (INVARIANTS F2)
-   เขียนหัวกระดาษก่อนพิมพ์เสมอ ทั้งตอนกดปุ่มและตอนคนกด Ctrl+P เอง เพราะกระดาษที่ไม่บอกว่า
-   กรองอะไรอยู่ / พิมพ์เมื่อไหร่ / รุ่นไหน จะถูกหยิบไปใช้ผิดใบได้ */
-function fillPrintHeader(){
-  const selText = id=>{ const el=document.getElementById(id); const o=el.options[el.selectedIndex]; return o ? o.textContent : 'ทั้งหมด'; };
-  const parts = [
-    'สัปดาห์: '+selText('dashWeekFilter'),
-    'Sub-Name: '+selText('dashSubFilter'),
-    'ยอดในช่วง: '+dashRangeLabel(),      // ช่องเลือกช่วงไม่พิมพ์ติดไป และช่วงนี้ติ๊กมาให้โดยไม่มีใครเลือก
-    'สถานะ: '+selText('dashStatusFilter'),
-    'ค้างอยู่ที่ขั้น: '+selText('dashWipFilter')
-  ];
-  const search = document.getElementById('dashSearch').value.trim();
-  if(search) parts.push('ค้นหา: '+search);
-  /* กระดาษที่มีกราฟซ่อนขั้นอยู่ ต้องบอกว่าซ่อนอะไร ไม่งั้นคนอ่านจะสรุปว่าขั้นนั้นไม่มียอดเลย
-     เหตุผลเดียวกับที่ต้องบอกว่าซ่อนงานที่ส่งครบแล้ว */
-  const hiddenProcs = Array.from(chartHiddenProcs());
-  if(hiddenProcs.length) parts.push('กราฟซ่อนขั้น: '+hiddenProcs.map(x=>PROCESS_LABELS[x]||x).join(', '));
-  // กระดาษที่ไม่บอกว่าซ่อนอะไรไว้ จะถูกอ่านว่า "งานทั้งหมดมีเท่านี้" ซึ่งไม่จริง
-  // ต้องเขียนข้อยกเว้นด้วย — ใบที่ส่งครบแต่มียอดในช่วงยังอยู่บนกระดาษ ไม่งั้นหัวกระดาษขัดกับตัวกระดาษเอง
-  if(document.getElementById('dashHideDone').checked) parts.push('ซ่อนงานที่ส่งของครบแล้ว (เว้นใบที่มียอดในช่วง)');
-  const now = new Date();
-  const hhmm = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
-  parts.push('พิมพ์เมื่อ '+fmtDateTH(todayISO())+' '+hhmm);
-  parts.push('รุ่น '+(APP_VERSION||'ไม่ทราบ'));
-  document.getElementById('printMeta').textContent = parts.join(' · ');
-}
-document.getElementById('btnPrintDash').addEventListener('click', ()=>{ fillPrintHeader(); window.print(); });
-window.addEventListener('beforeprint', fillPrintHeader);
-
-/* หัวกระดาษของกล่อง "แก้ไข / ลบรายการที่บันทึกแล้ว" — แยกจาก fillPrintHeader ของ Dashboard
-   เพราะคนละตัวกรองและคนละ "ณ วันที่" กัน เอามารวมใบเดียวจะอ่านผิดวัน */
+/* หัวกระดาษของกล่อง "แก้ไข / ลบรายการที่บันทึกแล้ว"
+   ⚠️ เคยมีหัวกระดาษของแดชบอร์ดอีกใบ (`fillPrintHeader`) ซึ่งถูกลบไปพร้อมแท็บนั้นเมื่อ 12 พ.ย. 2569
+   ตัวนี้เป็นคนละตัวกรองและคนละ "ณ วันที่" — ถ้าวันหนึ่งมีหน้าอื่นต้องพิมพ์ ให้ทำหัวของตัวเอง
+   อย่าเอามารวมใบเดียว เพราะกระดาษจะอ่านผิดวัน */
 function fillRecPrintHeader(){
   const selText = id=>{ const el=document.getElementById(id); const o=el.options[el.selectedIndex]; return o ? o.textContent : 'ทั้งหมด'; };
   const dateF = document.getElementById('recFilterDate').value;
@@ -6457,44 +5994,13 @@ function fillRecPrintHeader(){
 }
 document.getElementById('btnPrintRecords').addEventListener('click', ()=>{ fillRecPrintHeader(); window.print(); });
 window.addEventListener('beforeprint', fillRecPrintHeader);
-document.getElementById('chartRange').addEventListener('change', ()=>{
-  toggleChartCustomFields();
-  if(document.getElementById('chartRange').value === 'custom'
-     && !document.getElementById('chartFrom').value && !document.getElementById('chartTo').value){
-    document.getElementById('chartTo').value = todayISO();
-    document.getElementById('chartFrom').value = addDaysISO(todayISO(), -13);
-  }
-  saveChartPref();
-  renderChart();
-});
-document.getElementById('chartFrom').addEventListener('change', ()=>{ saveChartPref(); renderChart(); });
-document.getElementById('chartTo').addEventListener('change', ()=>{ saveChartPref(); renderChart(); });
-
 /* ย่อ/ขยายหน้าต่างแล้ววาดกราฟใหม่ — ความกว้างของกราฟยึดจากกล่องที่มันอยู่ ถ้าไม่วาดใหม่
    กราฟจะค้างขนาดเดิมจนล้นออกนอกจอ (บนมือถือคือตอนหมุนเครื่อง)
    หน่วงไว้ก่อนวาด เพราะเบราว์เซอร์ยิง resize รัวมากระหว่างลาก และข้ามไปถ้าแท็บอื่นเปิดอยู่ */
-/* กดที่คำอธิบายสีเพื่อซ่อน/แสดงขั้นนั้นในกราฟ — ผูกไว้ที่กล่องแม่ เพราะปุ่มถูกวาดใหม่ทุกครั้ง */
-document.getElementById('chartLegend').addEventListener('click', e=>{
-  const btn = e.target.closest('.legend-item');
-  if(!btn) return;
-  const hidden = chartHiddenProcs();
-  if(hidden.has(btn.dataset.proc)) hidden.delete(btn.dataset.proc);
-  else hidden.add(btn.dataset.proc);
-  // ⚠️ ห้ามปิดจนไม่เหลือสักขั้น · กราฟเปล่าจะถูกอ่านว่า "ช่วงนี้ไม่มียอด" ซึ่งไม่จริง
-  if(hidden.size >= PROCESSES.length){ toast('ต้องเหลือไว้อย่างน้อยหนึ่งขั้น'); return; }
-  state.chartPref = Object.assign({}, state.chartPref, {hidden: Array.from(hidden)});
-  saveState();
-  renderChart();
-});
-
 let chartResizeTimer = null;
 window.addEventListener('resize', ()=>{
   clearTimeout(chartResizeTimer);
   chartResizeTimer = setTimeout(()=>{
-    const el = document.getElementById('chartWrap');
-    if(el && el.clientWidth > 0) renderChart();
-    /* หน้ายอดค้างรายวันก็คิดความกว้างจากกล่องเหมือนกัน ไม่วาดใหม่แล้วกราฟค้างขนาดเดิม
-       แล้วต้องเลื่อนจอดูหลังหมุนมือถือ ทั้งที่กราฟของแดชบอร์ดไม่ต้อง (ผู้ตรวจ #131) */
     const wt = document.getElementById('wtWip');
     if(wt && wt.clientWidth > 0
        && document.getElementById('view-wiptrend').classList.contains('active')) renderWipTrend();
@@ -6516,8 +6022,10 @@ document.getElementById('btnSaveSettings').addEventListener('click', ()=>{
   state.deadlineOffsets = offsets;
   saveState();
   toast('บันทึกการตั้งค่าแล้ว');
-  renderWipCards();
-  renderDashTable();
+  /* ⚠️ วันกำหนดของแต่ละขั้นมีผลกับป้ายสถานะและกล่องใบที่ล่าช้าของหน้ายอดค้างรายวัน
+     ต้องวาดใหม่ตอนกดบันทึก ไม่งั้นคนที่เปิดหน้านั้นค้างไว้จะเห็นสีเก่าจนกว่าจะสลับแท็บ */
+  if(document.getElementById('view-wiptrend').classList.contains('active')) renderWipTrend();
+  if(document.getElementById('view-daily').classList.contains('active')) renderDayTable();
   if(syncCfg.url){ gsApi('pushSettings', {deadlineOffsets: state.deadlineOffsets}).catch(()=>{}); }
 });
 
@@ -6817,10 +6325,6 @@ document.getElementById('gsAuto').checked = syncCfg.auto;
 renderSyncBadge();
 if(syncCfg.url && syncCfg.auto){ doSync(); }
 syncIntervalId = setInterval(()=>{ if(syncCfg.url && syncCfg.auto) doSync(); }, 20000);
-/* ช่วงวันของแดชบอร์ดเริ่มที่ "วันนี้" ทุกครั้งที่เปิดโปรแกรม (เจ้าของเลือก 5 พ.ย. 2026)
- * ⚠️ ต้องตั้งก่อน openState() ซึ่งเรียก renderAll() — ไม่งั้นการวาดครั้งแรกอ่านช่องว่าง
- *    แล้วเลขตัวใหญ่จะเป็นยอดรวมทุกวัน ทั้งที่ปุ่ม "วันนี้" ไฮไลต์อยู่ */
-setDashRange(...dashPresetRange('today'), 'today');
 openState();
 
 
