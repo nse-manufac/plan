@@ -1028,7 +1028,12 @@ const dayStatuses = async page => {
   await page.waitForTimeout(150);
   await page.locator('#dayShowAll').setChecked(true);
   await page.waitForTimeout(250);
-  return page.locator('#dayTable tbody tr td:last-child').allInnerTexts();
+  /* ⚠️ อ่านจาก `title` ของช่อง ไม่ใช่ข้อความในช่อง — 13 พ.ย. 2569 เจ้าของสั่งเปลี่ยน
+     คอลัมน์สุดท้ายของหน้านี้จากป้ายสถานะเป็น Aging · สถานะยังถูกคิดและยังลง DOM
+     แต่ไปอยู่ใน `title` แทน · อ่าน innerText ต่อไปจะได้ตัวเลขอายุงาน แล้วทุก
+     `not.toContain('ล่าช้า ...')` จะเขียวเองทันทีโดยไม่ได้ตรวจอะไร (A4 · A5) */
+  return page.locator('#dayTable tbody tr td:last-child')
+    .evaluateAll(tds => tds.map(td => td.title));
 };
 
 function lateOrder(id, daysAgo, qty = 100) {
