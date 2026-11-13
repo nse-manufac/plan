@@ -617,6 +617,56 @@ test('G3 — ชื่อขั้นที่เป็นสคริปต์�
   expect(await page.locator('#dayTable tbody').innerText()).toContain(EVIL);
 });
 
+test('G3 — วันที่สั่งที่เป็นสคริปต์ต้องไม่ทำงานในช่อง Order Date', async ({ page }) => {
+  /* ⚠️ `orderDate` เป็นค่าที่ซิงค์ข้ามเครื่องมาได้ และ **ไม่มีด่านรูปแบบ** —
+     `normalizeDateOnly()` คืนสตริงที่ไม่ตรงรูปแบบกลับไปตามเดิม แล้ว `fmtDateTH()`
+     แค่สลับที่ y/m/d ไม่ได้กรองอักขระเลย · ช่องนี้จึงต้องผ่าน `escapeHtml()`
+     (ผู้ตรวจ #135 รอบ 2 รันพิสูจน์ว่าถอดออกแล้วสคริปต์ทำงานจริง) */
+  const EVIL = '2026-01-<img src=x onerror=window.__od=1>';
+  const o1 = Object.assign(order('PO-1', 4000), { orderDate: EVIL });
+  await openDaily(page, [o1], [rec('r1', 'PO-1', 'winding', 100)]);
+  await expect(page.locator('#dayTable tbody img')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__od)).toBeUndefined();
+  // และต้องยังอ่านค่าดิบออกเป็นตัวหนังสือ ไม่ใช่แถวหายไปทั้งแถว
+  expect(await cellOf(page, 'PO-1', 'orderDate').innerText()).toContain('<img');
+});
+
+test('G3 — ชื่อสั้นของขั้นที่เป็นสคริปต์ ต้องแตก title ของช่อง Aging ไม่ได้', async ({ page }) => {
+  /* `title` ของช่อง Aging เก็บป้ายสถานะ ซึ่งมาจาก `ptext(p,'late')` = 'ล่าช้า ' + short
+     ชื่อสั้นตั้งได้จากแผงจัดการขั้นและซิงค์ข้ามเครื่อง จึงเป็นค่าที่เชื่อไม่ได้ (G3)
+     ⚠️ ต้องให้ใบ **ล่าช้าที่ขั้นที่ใส่ชื่อร้ายไว้จริง** ไม่งั้น payload ไม่เคยถูกวาด แล้วข้อนี้เขียวเอง
+        ทั้งที่ถอด escape ออก (กับดักเดียวกับที่ `wip-trend.spec.js` จดไว้)
+     ⚠️ อายุงานต้องอยู่ระหว่าง 11–16 วัน — เลยกำหนด winding (+10) แต่ยังไม่ถึง assembly (+17)
+        เก่ากว่านั้น `lateStageOf()` จะรายงานขั้นปลายน้ำกว่า (A5) แล้วได้ป้าย `เกินกำหนดส่งของ`
+        ซึ่งเป็นข้อความตายตัวของ shipping ไม่ผ่านชื่อสั้นเลย (เจอเองตอนเขียนข้อนี้) */
+  const EVIL = 'W\" onmouseover=\"window.__tip=1';
+  const ago = n => {
+    const x = new Date(); x.setDate(x.getDate() - n);
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  };
+  const old = Object.assign(order('PO-1', 4000), { orderDate: ago(12) });
+  await openDaily(page, [old], [rec('r1', 'PO-1', 'winding', 1)], D1, [
+    { id: 'winding', label: 'Winding', short: EVIL },
+    { id: 'assembly', label: 'Assembly', short: 'Assembly' },
+    { id: 'support', label: 'Support', short: 'Support' },
+    { id: 'inspection', label: 'Inspection', short: 'Inspection' },
+    { id: 'shipping', label: 'ส่งของ (Shipping)', short: 'Shipping' }
+  ]);
+  const td = cellOf(page, 'PO-1', 'aging');
+  /* ⚠️ ด่านแรกต้องอ่าน **outerHTML** ไม่ใช่ `title` — ถ้า escape หลุด attribute จะงอกจริง
+        แล้ว `title` ถูกตัดสั้นลง การตรวจว่า `title` มี payload ครบจึงแดงด้วยข้อความที่ชี้ผิดทาง
+        ("payload ไม่ถูกวาด") ทั้งที่ของจริงคือรูเปิด · เจอเองตอนรัน mutation */
+  const html = await td.evaluate(el => el.outerHTML);
+  expect(html, 'payload ต้องถูกวาดจริง ไม่งั้นข้อนี้ไม่ได้ตรวจอะไร').toContain('onmouseover');
+  expect(await td.evaluate(el => el.getAttribute('onmouseover')),
+    'ห้ามมี attribute งอกจากชื่อขั้น').toBeNull();
+  expect(await td.getAttribute('title'), 'title ต้องเก็บ payload ไว้ครบเป็นตัวหนังสือ')
+    .toContain('onmouseover="window.__tip=1');
+  await td.hover();
+  await page.waitForTimeout(120);
+  expect(await page.evaluate(() => window.__tip)).toBeUndefined();
+});
+
 test('เลขบนปุ่มต้องแยก "ไม่มีใครคีย์" ออกจาก "คีย์ไว้ว่าผลิต 0" เหมือนที่ตารางแยก', async ({ page }) => {
   // การแยกนี้คือกฎหลักที่ทั้งหน้ายืนอยู่บนมัน — แถบปุ่มจะขัดกับตารางของตัวเองไม่ได้
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 0, D1, { note: 'เครื่องเสีย' })]);
