@@ -69,7 +69,10 @@ const localOrder = page => readSaved(page, K_STATE).then(s => s.orders.find(o =>
 const pushedOrders = net => net.calls.filter(c => c.action === 'pushRows' && c.table === 'Orders');
 /* คอลัมน์ Aging ย้ายไปหน้าคีย์ยอด และป้ายสถานะไปหน้า "ยอดรายวันทุกขั้น"
    ตอนแดชบอร์ดรวมเป็นราย P/N (เจ้าของสั่ง 5 พ.ย. 2026) — แดชบอร์ดไม่มีสองอย่างนี้ให้อ่านแล้ว
-   ⚠️ เช็กที่แดชบอร์ดต่อจะเขียวเองทั้งที่ไม่ได้ตรวจอะไร */
+   (แท็บนั้นถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569)
+   ⚠️ เช็กที่แดชบอร์ดต่อจะเขียวเองทั้งที่ไม่ได้ตรวจอะไร
+   ⚠️ **และตั้งแต่ 13 พ.ย. 2569 ป้ายสถานะบนหน้านั้นก็ถูกแทนด้วยช่อง Aging แล้ว**
+      สถานะย้ายไปอยู่ใน `title` ของช่อง — ดู `dayStatus()` ข้างล่าง */
 async function entryAging(page) {
   await page.click('.tab-btn[data-tab="entry"]');
   await page.waitForTimeout(250);
