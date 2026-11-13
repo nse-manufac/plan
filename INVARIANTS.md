@@ -11,7 +11,7 @@
 ## A. ความถูกต้องของยอด
 
 **A1 — ยอดสะสมนับเฉพาะรายการที่ยังไม่ถูกยกเลิก**
-ทุกฟังก์ชันที่รวมยอด (`buildCumMap` · `buildRecordIndex` · `buildDailyTotals`)
+ทุกฟังก์ชันที่รวมยอด (`buildCumMap` · `buildRecordIndex` · `buildDailyTotals` · `wipDailySeries`)
 ต้อง `continue` ทันทีเมื่อ `r.voided`
 การเพิ่มฟังก์ชันรวมยอดใหม่โดยลืมเช็ก `voided` จะทำให้ยอดที่ยกเลิกไปแล้วกลับมานับซ้ำ
 
