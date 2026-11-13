@@ -68,8 +68,19 @@ test('G3 — เปิดหน้าแล้วค่าวันที่ท�
   await expect(page.locator('#recordEditorTable tbody tr').first()).toContainText(SHOWN);
   /* ⚠️ ตารางที่สองที่ `renderAll()` วาดตอนเปิดหน้าคือตารางคีย์ยอดรายวัน
      (เดิมใช้ตารางของแดชบอร์ด ซึ่งถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569)
-     ค่าวันที่สั่งที่เพี้ยนไปลงช่อง Aging ของตารางนั้น จึงยังเป็นทางที่ค่าเพี้ยนหลุดออกจอได้จริง */
+     ค่าวันที่สั่งที่เพี้ยนไปลงช่อง Aging ของตารางนั้น จึงยังเป็นทางที่ค่าเพี้ยนหลุดออกจอได้จริง
+     🚨 **แต่ `expectNotPwned()` จับทางนี้ไม่ได้ และต้องอ่าน `title` เอง** — payload ของไฟล์นี้
+        ไปลงใน attribute `title` ของ `<span class="badge">` ถอด `escapeHtml()` ออกจาก
+        `agingCell()` แล้วมันแตกออกมาได้แค่ "attribute ของ span ตัวเดิม" ไม่เกิด element ใหม่
+        และ `onerror` บน `<span>` ก็ไม่ยิง → **เทสเขียวทั้งที่ด่านถูกถอดออก**
+        (ผู้ตรวจ #134 รอบ 10 รันพิสูจน์ · ก่อนหน้านี้ข้อนี้มีแค่ `toContainText('TM5267H179')`
+         ซึ่งพิสูจน์แค่ว่าตารางถูกวาด เหมือนขาของแดชบอร์ดเดิม)
+        ด่านจริงคือ **payload ต้องอยู่ใน `title` ครบทั้งก้อนเป็นตัวหนังสือ** — ถ้าไม่ escape
+        เครื่องหมาย `"` ตัวแรกของ payload จะปิด attribute ทิ้ง แล้วค่าที่อ่านกลับมาจะขาด */
   await expect(page.locator('#entryTable tbody tr').first()).toContainText('TM5267H179');
+  const aging = page.locator('#entryTable tbody tr').first().locator('td[data-aging] span.badge');
+  await expect(aging, 'ช่อง Aging ต้องฟ้องว่าวันที่ผิด ไม่ใช่เงียบ').toHaveText('วันที่ผิด');
+  expect(await aging.getAttribute('title'), 'payload ต้องอยู่ใน title ครบเป็นตัวหนังสือ').toContain(EVIL);
 });
 
 test('G3 — ตารางยกเลิกใบสั่ง', async ({ page }) => {

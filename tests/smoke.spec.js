@@ -480,7 +480,7 @@ const ENTRY_SUB_ORDERS = [
     importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false },
   /* ⚠️ ใบที่ค่าที่เก็บไว้ "ขัดกับ" ตัวอักษรใน PO — รหัสมี H แต่ Sub-Name เป็น TUE-U
    *    เป็นสภาพจริงของใบที่นำเข้าก่อน 4 ก.ย. 2026 และยังไม่ได้กดปุ่มคำนวณใหม่
-   *    ตัวกรองต้องใช้ "ค่าที่เก็บไว้" ให้ตรงกับหน้า Dashboard และใบส่งสินค้า
+   *    ตัวกรองต้องใช้ "ค่าที่เก็บไว้" ให้ตรงกับหน้าอื่นที่จับกลุ่มด้วย Sub-Name (ใบส่งสินค้า · FG)
    *    ถ้าไปเดาจากรหัส PO ตรงนี้ ใบเดียวกันจะอยู่คนละกลุ่มในแต่ละหน้า */
   { id: 'D1', week: 'W31', poNo: 'TM5267H901', pn: 'PN-4', subName: 'TUE-U', orderQty: 400,
     orderDate: '2026-08-04', status: 'active',
@@ -537,7 +537,7 @@ async function gotoDaily(page) {
   await page.waitForSelector('#dayTable tbody tr');
 }
 
-/* ── Item No. ที่หน้า Dashboard ────────────────────────────────────────
+/* ── Item No. (เดิมอยู่ที่แท็บแดชบอร์ดซึ่งถูกลบแล้ว) ───────────────────
  *
  * ผู้ใช้ขอ 4 ก.ย. 2026 — ไว้ชี้กันตอนคุยหรือตอนถือกระดาษที่พิมพ์ออกมา ("ดูแถวที่ 12")
  *
@@ -730,7 +730,7 @@ test('A3 — ขั้น support ต้องคีย์ยอดแยกจ�
     'ยอด support เกินขั้นก่อนหน้า (assembly) ต้องขึ้นเตือน').toContainText('⚠');
 });
 
-test('A3 + E2 — state เก่าที่ยังไม่มี deadlineOffsets.support ต้องเปิดได้ และ Dashboard ต้องมีคอลัมน์ Support', async ({ page }) => {
+test('A3 + E2 — state เก่าที่ยังไม่มี deadlineOffsets.support ต้องเปิดได้ และแถบปุ่มขั้นต้องมี Support', async ({ page }) => {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
 
@@ -753,7 +753,7 @@ test('A3 + E2 — state เก่าที่ยังไม่มี deadlineOf
   // ถ้าเผลอตีความ null เป็น orderDate + 0 ทุกใบจะกลายเป็นล่าช้าทันทีตั้งแต่วันสั่ง
   // ⚠️ ต้องอ่านที่หน้า "ยอดรายวันทุกขั้น" — ป้ายสถานะอยู่ที่นั่น เคยเช็กที่ตารางแดชบอร์ด
   //    จึงเป็นจริงเสมอโดยไม่ได้ตรวจอะไรเลย (ผู้ตรวจ #119 รันพิสูจน์)
-  const st = (await dashStatuses(page)).join(' ');
+  const st = (await dayStatuses(page)).join(' ');
   // ⚠️ ต้องมี assertion ฝั่งบวกคู่ไว้ด้วย — ลำพัง not.toContain จะเขียวเองถ้าตารางวาดศูนย์แถว
   expect(st, 'ต้องมีแถวให้ตรวจจริง').toContain('กำลังดำเนินการ');
   expect(st, 'Support ยังไม่กำหนดวัน ห้ามตัดสินว่าล่าช้า').not.toContain('ล่าช้า Support');
@@ -782,25 +782,25 @@ test('A4 — ตั้งค่า Support (+วัน) แล้วกำหน
   };
 
   await setOffsets('29');
-  expect((await dashStatuses(page)).join(' '), 'ครบกำหนดไปแล้วเมื่อวาน ต้องขึ้นล่าช้า Support')
+  expect((await dayStatuses(page)).join(' '), 'ครบกำหนดไปแล้วเมื่อวาน ต้องขึ้นล่าช้า Support')
     .toContain('ล่าช้า Support');
 
   await page.click('.tab-btn[data-tab="data"]');
   await expect(page.locator('#offSup'), 'ค่าที่บันทึกไว้ต้องกลับมาโชว์ในช่องตั้งค่า').toHaveValue('29');
 
   await setOffsets('31');
-  expect((await dashStatuses(page)).join(' '), 'ยังไม่ถึงกำหนด (อีก 1 วัน) ห้ามตัดสินว่าล่าช้า — พลาดข้างนี้แปลว่านับวันเกินไปหนึ่ง')
+  expect((await dayStatuses(page)).join(' '), 'ยังไม่ถึงกำหนด (อีก 1 วัน) ห้ามตัดสินว่าล่าช้า — พลาดข้างนี้แปลว่านับวันเกินไปหนึ่ง')
     .not.toContain('ล่าช้า Support');
 
   await setOffsets('');
   const off = (await readSaved(page, K_STATE)).deadlineOffsets;
   expect(off.support, 'เว้นช่องว่างต้องเก็บเป็น null (ยังไม่กำหนด) ไม่ใช่ 0 ที่จะทำให้ทุกใบเลยกำหนดทันที')
     .toBeNull();
-  expect((await dashStatuses(page)).join(' '), 'ไม่กำหนดวันแล้วต้องเลิกตัดสินว่าล่าช้า')
+  expect((await dayStatuses(page)).join(' '), 'ไม่กำหนดวันแล้วต้องเลิกตัดสินว่าล่าช้า')
     .not.toContain('ล่าช้า Support');
 });
 
-// ── ตัวกรอง "ค้างอยู่ที่ขั้น" ในตาราง Dashboard (issue #21) ────────────
+// ── ตัวกรอง "ค้างอยู่ที่ขั้น" ในตารางของแท็บแดชบอร์ดเดิม (issue #21) ───
 // นิยาม "ค้าง" ที่ผู้ใช้ยืนยัน = ผ่านขั้นก่อนหน้ามาแล้วแต่ขั้นนี้ยังไม่ครบ
 // ต้องเป็นสูตรเดียวกับการ์ด WIP ด้านบน ไม่งั้นการ์ดกับรายการจะบอกคนละยอด
 
@@ -942,7 +942,7 @@ test('กระดาษต้องไม่ขาดหายเงียบ �
   await expect(page.locator('#recordEditorTable + .muted'), 'ไม่มีการตัดแถวแล้ว ก็ไม่ต้องมีข้อความว่าแสดงไม่ครบ').toHaveCount(0);
 });
 
-// ── Dashboard: Aging · ซ่อนงานที่ส่งของครบแล้ว · เลิกแสดง deadline รายขั้น ──
+// ── Aging · ซ่อนงานที่ส่งของครบแล้ว · เลิกแสดง deadline รายขั้น ────────
 
 /* ⚠️ ช่อง Aging อยู่ที่หน้าคีย์ยอด ไม่ใช่แดชบอร์ด — ย้ายเมื่อ 5 พ.ย. 2026
  * แดชบอร์ดรวมเป็นราย P/N แล้ว อายุงานของกลุ่มไม่มีความหมาย (P/N เดียวมีหลายใบ หลายวันสั่ง)
@@ -1020,7 +1020,10 @@ function agingOrder(id, daysAgo) {
  *    จึงไม่มีแถวราย PO ให้เกาะ · หน้านั้นเป็นราย PO และใช้ computeStatus ตัวเดียวกัน
  *    จึงเป็นบ้านที่ตรงกว่าแดชบอร์ดตั้งแต่แรก · ต้องติ้ก "แสดงทุกใบ" ก่อน
  *    เพราะตั้งต้นหน้านั้นโชว์เพาะใบที่ขั้นนั้นวันนั้นมีการคีย์ */
-const dashStatuses = async page => {
+/* ⚠️ เดิมชื่อ `dashStatuses()` — เปลี่ยนเมื่อ 13 พ.ย. 2569 ตอนที่ชื่อ "Dashboard"
+ *    ย้ายไปเป็นของแท็บยอดค้างรายวัน · ชื่อเดิมอ่านแล้วเข้าใจว่าอ่านป้ายจากแท็บนั้น
+ *    ทั้งที่มันอ่านจากหน้า "ยอดรายวันทุกขั้น" (`#dayTable`) */
+const dayStatuses = async page => {
   await page.click('.tab-btn[data-tab="daily"]');
   await page.waitForTimeout(150);
   await page.locator('#dayShowAll').setChecked(true);
@@ -1039,7 +1042,7 @@ test('A5 — ค้างทั้ง Assembly และ Inspection ต้อง
   await openApp(page, [], [lateOrder('O1', 26)]);
   await gotoDaily(page);
 
-  const st = (await dashStatuses(page)).join(' ');
+  const st = (await dayStatuses(page)).join(' ');
   expect(st, 'ต้องรายงานขั้นที่อยู่ปลายน้ำที่สุดที่ยังค้าง').toContain('ล่าช้า Inspection');
   expect(st, 'ห้ามรายงานขั้นต้นน้ำก่อน — คนจะไปเร่งผิดจุด').not.toContain('ล่าช้า Assembly');
 });
@@ -1049,7 +1052,7 @@ test('A5 — เกินกำหนดส่งของ ต้องมาก
   await openApp(page, [], [lateOrder('O1', 40)]);
   await gotoDaily(page);
 
-  const st = (await dashStatuses(page)).join(' ');
+  const st = (await dayStatuses(page)).join(' ');
   expect(st, 'ปลายน้ำสุดคือกำหนดส่งของ ต้องรายงานอันนี้').toContain('เกินกำหนดส่งของ');
   expect(st, 'และต้องไม่รายงานขั้นอื่นแทน').not.toContain('ล่าช้า');
 });
@@ -1057,12 +1060,12 @@ test('A5 — เกินกำหนดส่งของ ต้องมาก
 test('A5 — ส่งของครบแล้ว ต้องชนะทุกอย่าง แม้เลยกำหนดทุกขั้น', async ({ page }) => {
   await openApp(page, [rec('R1', 'O1', 'shipping', isoDaysAgo(1), 100)], [lateOrder('O1', 40)]);
 
-  const st = (await dashStatuses(page)).join(' ');
+  const st = (await dayStatuses(page)).join(' ');
   expect(st, 'ส่งครบแล้วคืองานจบ ไม่ใช่งานที่เกินกำหนด').toContain('ส่งของครบแล้ว');
   expect(st, 'ห้ามรายงานว่าเกินกำหนด').not.toContain('เกินกำหนด');
 });
 
-/* ── แถบ ทัน/เกิน บน Dashboard — **ถูกลบทั้งกลุ่มเมื่อ 12 พ.ย. 2569** ──────
+/* ── แถบ ทัน/เกิน ของแท็บแดชบอร์ดเดิม — **ลบทั้งกลุ่ม 12 พ.ย. 2569** ─────
  *
  * แถบสองสี · ป้าย "⚠ คีย์เกินยอดสั่ง" · การครอบยอดแยกทัน/เกิน อยู่ในตารางของแดชบอร์ดทั้งหมด
  * ซึ่งถูกลบทั้งแท็บ · `buildCumSplitMap()` จึงไม่เหลือผู้ใช้และถูกลบตามไปด้วย
@@ -1114,7 +1117,7 @@ test('A1 — ยอดส่งที่ถูกยกเลิกแล้ว 
 
   // ยอดส่งที่ยกเลิกไม่นับ ของของใบนี้จึงยังค้างอยู่ในสายทั้งก้อน (100 + 50 ของอีกใบ)
   expect(await wipNow(page, 'winding'), 'ยอดที่ยกเลิกไม่นับ ใบนี้ยังไม่ส่ง').toBe(150);
-  const st = (await dashStatuses(page)).join(' ');
+  const st = (await dayStatuses(page)).join(' ');
   expect(st, 'และต้องไม่ขึ้นว่าส่งของครบแล้ว').not.toContain('ส่งของครบแล้ว');
 });
 
