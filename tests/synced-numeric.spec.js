@@ -126,11 +126,15 @@ test('หน้าใบส่งสินค้า — ต้องขึ้น
   await expect(page.locator('#dnTable tbody tr').first()).toBeVisible();
 });
 
-test('Dashboard — ต้องวาดได้แม้ค่าเป็นตัวเลข', async ({ page }) => {
+test('หน้ายอดค้างรายวัน — ต้องวาดได้แม้ค่าเป็นตัวเลข', async ({ page }) => {
+  /* ⚠️ ข้อนี้เคยอ่านที่แดชบอร์ด ซึ่งถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569
+     หน้านี้เดินผ่าน activeOrders() กับ state.records ทั้งก้อนเหมือนกัน จึงเจอกับดักเดียวกัน
+     ถ้า P/N ที่เป็นตัวเลขทำให้ throw กลางการวาด กราฟจะหายทั้งหน้า ไม่ใช่แค่แถวเดียว */
   const errs = await openSynced(page);
-  await openTab(page, 'dashboard');
+  await openTab(page, 'wiptrend');
   expect(errs).toEqual([]);
-  await expect(page.locator('#dashTable tbody tr')).toHaveCount(3);
+  await expect(page.locator('#wtWip svg')).toBeVisible();
+  await expect(page.locator('#wtPo svg rect[data-proc]').first()).toBeVisible();
 });
 
 test('ตัวเรียงชั้นที่สาม (poNo) ก็ต้องทนตัวเลข ไม่ใช่แค่ชั้นแรก', async ({ page }) => {

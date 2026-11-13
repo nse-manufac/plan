@@ -82,35 +82,39 @@ test('หน้าบันทึกยอด — มีปุ่มของข
   expect(saved.map(r => r.qty).sort(), 'ยอดใหม่ต้องถูกเก็บเป็นขั้น coating').toContain(50);
 });
 
-test('Dashboard — มีคอลัมน์ของขั้นที่เพิ่มในลำดับที่ถูก และตัวเลขถูก', async ({ page }) => {
+/* ⚠️ สามข้อนี้เคยอ่านผลที่ตารางกับการ์ดของแดชบอร์ด ซึ่งถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569
+   ย้ายมาอ่านที่หน้ายอดค้างรายวัน ซึ่งเป็นที่ที่เลขพวกนี้อยู่ตอนนี้
+   · ลำดับขั้น -> คำอธิบายสีของกราฟ (วาดจาก PROCESSES ตามลำดับจริง)
+   · ยอดรายขั้น -> `<title>` ของแท่งในกราฟยอดผลิตรายวัน
+   · ของค้างหน้าขั้น -> แท่งของกราฟยอดค้างรายวัน ซึ่งคิดจาก "ขั้นก่อนหน้า ลบ ขั้นนี้" ตรง ๆ (A3)
+   ⚠️ ตัวกรอง "ค้างอยู่ที่ขั้น" หายไปพร้อมแดชบอร์ด จึงไม่มีข้อของมันอีก —
+      สิ่งที่มันเคยคุม (ขั้นที่เพิ่มต้องโผล่ในตัวเลือกและกรองได้) ตอนนี้ไม่มีจอให้คุม */
+
+test('ขั้นที่เพิ่มต้องอยู่ในคำอธิบายสีของกราฟ ในลำดับที่ถูก และยอดของมันถูก', async ({ page }) => {
   await open(page);
-  await tab(page, 'dashboard');
-  const heads = (await page.locator('#dashTable thead th').allInnerTexts()).map(t => t.replace(/\s+/g, ' ').trim());
-  const iW = heads.indexOf('Winding');
-  expect(heads[iW + 1], 'ถัดจาก Winding').toBe('Coating');
-  expect(heads[iW + 2]).toBe('Assembly');
-  const cells = page.locator('#dashTable tbody tr').first().locator('td');
-  expect(await cells.count(), 'หัวกับแถวต้องมีคอลัมน์เท่ากัน').toBe(heads.length);
-  expect(await cells.nth(iW + 1).innerText()).toContain('500/1,000');
+  await tab(page, 'wiptrend');
+  const names = await page.locator('#wtDailyLegend .legend-item').allInnerTexts();
+  const iW = names.findIndex(t => t.includes('Winding'));
+  expect(names[iW + 1], 'ถัดจาก Winding').toContain('Coating');
+  expect(names[iW + 2]).toContain('Assembly');
+
+  const vals = await page.$$eval('#wtDaily rect[data-proc="coating"] title',
+    els => els.map(e => Number(e.textContent.split(': ').pop().replace(/,/g, ''))));
+  expect(vals.length, 'ต้องมีแท่งของขั้นที่เพิ่มจริง').toBeGreaterThan(0);
+  expect(vals.reduce((a, b) => a + b, 0), 'ยอดของขั้นที่เพิ่มต้องขึ้นในกราฟจริง').toBe(500);
 });
 
-test('การ์ด WIP — ค้างหน้าขั้นที่เพิ่ม และค้างหน้าขั้นถัดไป คิดจากขั้นที่เพิ่ม', async ({ page }) => {
+test('ของค้างหน้าขั้นที่เพิ่ม และค้างหน้าขั้นถัดไป ต้องคิดจากขั้นที่เพิ่ม', async ({ page }) => {
   // Winding 800 · Coating 500 · Assembly 300 → ค้างหน้า Coating 300 · ค้างหน้า Assembly 200
   await open(page);
-  await tab(page, 'dashboard');
-  const card = label => page.locator('#wipCards .wlr', { hasText: label }).locator('.q').first();
-  expect(await card('WIP ค้างหน้า Coating').innerText()).toContain('300');
-  expect(await card('WIP ค้างหน้า Assembly').innerText(), 'ต้องหักจาก Coating ไม่ใช่ Winding').toContain('200');
-});
-
-test('ตัวกรองค้างอยู่ที่ขั้น — มีขั้นที่เพิ่มและกรองได้', async ({ page }) => {
-  await open(page);
-  await tab(page, 'dashboard');
-  await expect(page.locator('#dashWipFilter option[value="coating"]')).toHaveText('ค้างหน้า Coating');
-  await page.selectOption('#dashWipFilter', 'coating');
-  await page.waitForTimeout(200);
-  // แถวเป็นราย P/N แล้ว — เกาะ data-pn ไม่ใช่ข้อความในช่อง (ช่องนั้นมีป้าย ⚠ ผิดลำดับ ปนได้)
-  await expect(page.locator('#dashTable tbody td[data-pn="PN-1"]')).toHaveCount(1);
+  await tab(page, 'wiptrend');
+  const last = async proc => {
+    const v = await page.$$eval(`#wtWip rect[data-proc="${proc}"] title`,
+      els => els.map(e => Number(e.textContent.split(': ').pop().replace(/,/g, ''))));
+    return v[v.length - 1];
+  };
+  expect(await last('coating'), 'ค้างหน้า Coating = Winding 800 − Coating 500').toBe(300);
+  expect(await last('assembly'), 'ต้องหักจาก Coating ไม่ใช่ Winding').toBe(200);
 });
 
 test('สถานะล่าช้า — รู้จักขั้นที่เพิ่ม', async ({ page }) => {
@@ -165,8 +169,9 @@ test('รายงาน Excel — มีคอลัมน์ของขั้
 
 test('กราฟ — คำอธิบายสีมีขั้นที่เพิ่ม', async ({ page }) => {
   await open(page);
-  await tab(page, 'dashboard');
-  await expect(page.locator('#chartLegend [data-proc="coating"]')).toContainText('Coating ทดสอบ');
+  await tab(page, 'wiptrend');
+  // ชื่อเต็มอยู่ที่คำอธิบายสี (แกนของกราฟใช้ชื่อสั้นเพราะที่ไม่พอ)
+  await expect(page.locator('#wtDailyLegend [data-proc="coating"]')).toContainText('Coating ทดสอบ');
 });
 
 // ── ขั้นก่อนหน้า กับ ขั้นแรก ต้องไม่ถูกใช้แทนกัน ─────────────────────
@@ -178,23 +183,18 @@ test('กราฟ — คำอธิบายสีมีขั้นที่
 test('ผิดลำดับ — ต้องเทียบกับขั้นก่อนหน้า ไม่ใช่ขั้นแรก', async ({ page }) => {
   // Winding 1,000 · Assembly 600 · Support 800 → Support เกิน Assembly ทั้งที่ยังไม่เกิน Winding
   await open(page, { extra: false, records: [rec('r1', 'winding', 1000), rec('r2', 'assembly', 600), rec('r3', 'support', 800)] });
-  await tab(page, 'dashboard');
-  await expect(page.locator('#dashTable tbody tr').first(), 'ป้ายในแถว').toContainText('ผิดลำดับ');
-  await expect(page.locator('#wipCards'), 'การ์ดสรุป').toContainText('ข้อมูลย้อนแย้ง');
+  await tab(page, 'wiptrend');
+  await expect(page.locator('#wtAnom'), 'แถบฟ้อง').toContainText('ข้อมูลย้อนแย้ง');
+  await page.click('#wtAnomToggle');
+  await page.waitForTimeout(250);
+  const row = await page.locator('#wtAnom .wanr').first().innerText();
+  expect(row, 'ต้องบอกคู่ Support > Assembly ไม่ใช่เทียบกับ Winding').toContain('Support');
+  expect(row).toContain('Assembly');
+  expect(row, 'เกิน 200 = 800 − 600 ไม่ใช่เทียบกับ Winding 1,000').toContain('200');
 });
 
-test('ตัวกรองยังไม่เริ่มผลิต — ต้องดูจากขั้นแรก ไม่ใช่ขั้นที่สอง', async ({ page }) => {
-  // Winding ครบ 1,000 แล้ว แต่ Assembly ยังไม่เริ่ม → ใบนี้เริ่มผลิตแล้ว ต้องไม่อยู่ในกลุ่มยังไม่เริ่ม
-  await open(page, { extra: false, records: [rec('r1', 'winding', 1000)] });
-  await tab(page, 'dashboard');
-  const pnRow = page.locator('#dashTable tbody td[data-pn="PN-1"]');
-  await page.selectOption('#dashWipFilter', 'notStarted');
-  await page.waitForTimeout(200);
-  await expect(pnRow).toHaveCount(0);
-  await page.selectOption('#dashWipFilter', 'assembly');
-  await page.waitForTimeout(200);
-  await expect(pnRow, 'ต้องไปอยู่ที่ค้างหน้า Assembly แทน').toHaveCount(1);
-});
+/* ⚠️ เทส 'ตัวกรองยังไม่เริ่มผลิต — ต้องดูจากขั้นแรก ไม่ใช่ขั้นที่สอง' ถูกลบไปพร้อม
+   ตัวกรอง "ค้างอยู่ที่ขั้น" ของแดชบอร์ดเมื่อ 12 พ.ย. 2569 · ไม่มีจอไหนถามคำถามนั้นอีกแล้ว */
 
 // ── ห้าขั้นเดิม — หน้าตาต้องเหมือนเดิมทุกตัวอักษร ─────────────────────
 
@@ -203,22 +203,18 @@ test('ห้าขั้นเดิม — ปุ่ม ตัวกรอง �
   await expect(page.locator('#processFlow')).toHaveText('Thai Union Electronics — Winding/Trimming → Assembly → Support → Inspection');
   expect(await page.locator('#procButtons button').allInnerTexts())
     .toEqual(['🌀 Winding/Trimming', '🔧 Assembly', '🧩 Support', '🔍 Inspection', '🚚 ส่งของ (Shipping)']);
-  expect(await page.locator('#dashWipFilter option').allInnerTexts())
-    .toEqual(['ทั้งหมด', 'ยังไม่เริ่มผลิต', 'ค้างหน้า Assembly', 'ค้างหน้า Support', 'ค้างหน้า Inspection', 'รอส่งของ']);
   expect(await page.locator('#offsetFields label').allInnerTexts())
     .toEqual(['Winding/Trimming (+วัน)', 'Assembly (+วัน)', 'Support (+วัน)', 'Inspection (+วัน)', 'กำหนดส่งของ (+วัน)']);
   for (const id of ['offW', 'offA', 'offSup', 'offI', 'offS']) await expect(page.locator('#' + id)).toHaveCount(1);
-  await tab(page, 'dashboard');
-  const heads = (await page.locator('#dashTable thead th').allInnerTexts()).map(t => t.replace(/\s+/g, ' ').trim());
-  // แดชบอร์ดเหลือห้าคอลัมน์หน้าขั้น (Item No. · P/N · Sub-Name · ใบ · ยอดสั่งรวม)
-  expect(heads.slice(0, 5)).toEqual(['Item No.', 'P/N', 'Sub-Name', 'ใบ', 'ยอดสั่งรวม']);
-  expect(heads.slice(5)).toEqual(['Winding', 'Assembly', 'Support', 'Inspection', 'ส่งของ (Shipping)']);
-  expect(await page.locator('#wipCards .wh .k').allInnerTexts(), 'หัวตัวเลขรวมสามตัว')
-    .toEqual(['ยอดแผนรวม', 'ส่งไปแล้ว', 'ยังไม่ได้ส่ง']);
-  const cards = await page.locator('#wipCards .wlr .nm').allInnerTexts();
-  expect(cards, 'แถวของค้าง ขั้นละแถว เรียงตามสายการผลิต')
-    .toEqual(['ยังไม่เริ่มผลิต', 'WIP ค้างหน้า Assembly', 'WIP ค้างหน้า Support',
-      'WIP ค้างหน้า Inspection', 'ยอด FG คงคลัง']);
+  /* ⚠️ ตารางกับการ์ดของแดชบอร์ดเคยถูกตรวจตรงนี้ด้วย — ถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569
+     ที่เหลือซึ่งยังวาดจากรายการขั้นคือคำอธิบายสีของสองกราฟล่าง กับแกนของกราฟ PO */
+  await tab(page, 'wiptrend');
+  expect(await page.locator('#wtDailyLegend .legend-item').allInnerTexts(),
+    'คำอธิบายสีของกราฟยอดผลิต — ทุกขั้น เรียงตามสายการผลิต')
+    .toEqual(['Winding/Trimming', 'Assembly', 'Support', 'Inspection', 'ส่งของ (Shipping)']);
+  expect(await page.locator('#wtWipLegend .legend-item').allInnerTexts(),
+    'ของกราฟยอดค้าง — ขั้นในสายเท่านั้น (A3)')
+    .toEqual(['Winding/Trimming', 'Assembly', 'Support', 'Inspection', 'ส่งของ (Shipping)']);
 });
 
 test('ชื่อขั้นต้นน้ำต้องไม่ถูกเขียนตายตัวนอกรายการขั้น', async () => {

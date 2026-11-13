@@ -43,11 +43,11 @@ test('มียอดของขั้นที่รุ่นนี้ไม�
   await expect(warn(page)).toContainText('รุ่นเก่า');
 });
 
-test('แถบเตือนต้องเห็นได้ทุกหน้า ไม่ใช่แค่ Dashboard', async ({ page }) => {
+test('แถบเตือนต้องเห็นได้ทุกหน้า ไม่ใช่แค่หน้าเดียว', async ({ page }) => {
   await open(page, [rec('r1', 'coating', 300)]);
   // ⚠️ เพิ่มแท็บใหม่ทุกครั้งที่มีแท็บใหม่ — รายการนี้คือสิ่งเดียวที่คุมว่าแถบเห็นได้ทุกหน้า
   //    (แท็บ daily ตกหล่นไปจนผู้ตรวจ #118 รอบเจ็ดจับได้ · ตัวแอปถูกอยู่ แถบอยู่นอกทุก .view)
-  for (const tab of ['entry', 'daily', 'delivery', 'fg', 'dashboard', 'data']) {
+  for (const tab of ['entry', 'daily', 'delivery', 'fg', 'wiptrend', 'data']) {
     await page.click(`.tab-btn[data-tab="${tab}"]`);
     await expect(warn(page), 'หน้า ' + tab).toBeVisible();
   }
@@ -60,12 +60,12 @@ test('ยอดของขั้นแปลกหน้าที่ยกเ�
 
 test('ยอดของขั้นที่รู้จักยังต้องนับถูก — แถบเตือนต้องไม่ไปแตะตัวคิดยอด', async ({ page }) => {
   await open(page, [rec('r1', 'winding', 500), rec('r2', 'coating', 300)]);
-  await page.click('.tab-btn[data-tab="dashboard"]');
-  await page.waitForTimeout(200);
-  // แดชบอร์ดรวมเป็นราย P/N แล้ว — เกาะ data-pn ไม่ใช่เลข PO (เจ้าของสั่ง 5 พ.ย. 2026)
-  const row = await page.locator('#dashTable tbody tr')
-    .filter({ has: page.locator('td[data-pn="PN-1"]') }).innerText();
-  expect(row, 'Winding ยังเป็น 500').toContain('500/1,000');
+  /* ⚠️ อ่านที่หน้ายอดรายวันทุกขั้น — แดชบอร์ดถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569
+     หน้านั้นอ่านยอดสะสมจาก buildCumMap() เหมือนกัน จึงพิสูจน์เรื่อเดียวกันได้ */
+  await page.click('.tab-btn[data-tab="entry"]');
+  await page.waitForTimeout(250);
+  const row = await page.locator('#entryTable tbody tr').first().innerText();
+  expect(row, 'Winding ยังเป็น 500').toContain('500');
 });
 
 test('ชื่อขั้นจากข้อมูลที่ซิงค์มา ต้องขึ้นเป็นข้อความ ไม่ถูกตีความเป็น HTML', async ({ page }) => {

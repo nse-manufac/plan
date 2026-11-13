@@ -71,56 +71,51 @@ test('A3 — ขั้นนับแยกต้องไม่กลายเ�
   await expect(row.locator('.badge.amber')).toHaveCount(0);
 });
 
+/* ⚠️ สามข้อนี้เคยอ่านผลที่การ์ดกับตัวกรองของแดชบอร์ด ซึ่งถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569
+   ย้ายมาอ่านที่หน้ายอดค้างรายวัน ซึ่งเป็นที่ที่ความต่างของ "ขั้นในสาย" กับ "ขั้นนับแยก"
+   มองเห็นได้ตรงที่สุด — กราฟยอดค้างใช้ MAIN_PROCESSES ส่วนกราฟยอดผลิตใช้ PROCESSES (A3) */
+
 test('A3 — ขั้นนับแยกต้องไม่ทำให้ขึ้น "ข้อมูลย้อนแย้ง"', async ({ page }) => {
   await open(page);
-  await tab(page, 'dashboard');
-  await expect(page.locator('#wipCards')).not.toContainText('ข้อมูลย้อนแย้ง');
+  await tab(page, 'wiptrend');
+  expect(await page.locator('#wtAnom').evaluate(el => getComputedStyle(el).display),
+    'แถบย้อนแย้งต้องไม่ขึ้นเลย').toBe('none');
 });
 
-test('A3 — ขั้นนับแยกต้องไม่มีการ์ด WIP ค้างหน้าขั้น', async ({ page }) => {
+test('A3 — ขั้นนับแยกต้องไม่มีแท่งในกราฟยอดค้าง', async ({ page }) => {
   await open(page);
-  await tab(page, 'dashboard');
-  await expect(page.locator('#wipCards')).not.toContainText('ค้างหน้า ซ่อม');
-  // การ์ดของสายหลักยังครบเหมือนเดิม
-  await expect(page.locator('#wipCards')).toContainText('WIP ค้างหน้า Assembly');
+  await tab(page, 'wiptrend');
+  await expect(page.locator('#wtWip rect[data-proc="repair"]'),
+    'ของค้างคิดจาก "ขั้นก่อนหน้า ลบ ขั้นนี้" ซึ่งขั้นนับแยกไม่มี').toHaveCount(0);
+  // ขั้นของสายหลักยังครบเหมือนเดิม
+  await expect(page.locator('#wtWip rect[data-proc="assembly"]').first()).toBeAttached();
+  // แต่กราฟยอดผลิตต้องมี เพราะทุกขั้นมีช่องให้คีย์ยอด
+  await expect(page.locator('#wtDaily rect[data-proc="repair"]').first()).toBeAttached();
 });
 
-test('A3 — ตัวกรอง "ค้างอยู่ที่ขั้น" ต้องไม่มีตัวเลือกของขั้นนับแยก', async ({ page }) => {
+test('A3 — คำอธิบายสีของกราฟยอดค้างต้องไม่มีขั้นนับแยก', async ({ page }) => {
   await open(page);
-  await tab(page, 'dashboard');
-  const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
-  expect(opts).not.toContain('repair');
-  expect(opts).toContain('assembly');
+  await tab(page, 'wiptrend');
+  const wip = await page.locator('#wtWipLegend .legend-item').evaluateAll(os => os.map(o => o.dataset.proc));
+  expect(wip, 'กราฟยอดค้าง = เฉพาะขั้นในสาย').not.toContain('repair');
+  expect(wip).toContain('assembly');
+  const daily = await page.locator('#wtDailyLegend .legend-item').evaluateAll(os => os.map(o => o.dataset.proc));
+  expect(daily, 'กราฟยอดผลิต = ทุกขั้น').toContain('repair');
 });
 
-/* แดชบอร์ดราย P/N ครอบยอดที่ orderQty และขึ้นป้ายเมื่อมีใบคีย์เกิน (เจ้าของเคาะ 5 พ.ย. 2026)
-   ⚠️ เกณฑ์ของทั้งสองอย่างคือ orderQty ซึ่งไม่ใช่เกณฑ์ของขั้นนับแยก — งานซ่อมเกินยอดสั่งเป็นเรื่องปกติ
-      สองข้อนี้ต้องมีคู่กัน: ข้อแรกกันการอ่าน PROCESSES · ข้อสองกันการถอดป้ายทิ้งทั้งก้อน */
+/* ⚠️ **การครอบยอดที่ orderQty กับป้าย "คีย์เกินยอดสั่ง" หายไปพร้อมตารางของแดชบอร์ด**
+   (ลบทั้งแท็บเมื่อ 12 พ.ย. 2569) · เทสสองข้อที่เคยคุมว่าขั้นนับแยกต้องไม่ถูกครอบ
+   และสายหลักต้องยังถูกครอบ จึงไม่มีจอให้ตรวจอีกแล้ว
+   สิ่งที่ยังเหลือและยังต้องคุมคือ **ยอดดิบของขั้นนับแยกต้องไม่ถูกครอบในกราฟ** */
 
-const dashCell = async (page, head) => {
-  const heads = await page.locator('#dashTable thead th').allInnerTexts();
-  const i = heads.findIndex(h => h.includes(head));
-  expect(i, `หาหัวคอลัมน์ ${head} ไม่เจอ`).toBeGreaterThan(-1);
-  return page.locator('#dashTable tbody tr').first().locator('td').nth(i).innerText();
-};
-
-test('A3 — ขั้นนับแยกที่คีย์เกินยอดสั่ง ต้องไม่ถูกครอบและไม่ขึ้นป้าย "คีย์เกินยอดสั่ง"', async ({ page }) => {
+test('A3 — ยอดของขั้นนับแยกที่คีย์เกินยอดสั่ง ต้องขึ้นตามจริง ไม่ถูกครอบ', async ({ page }) => {
   // ใบยอดสั่ง 1,000 · คีย์งานซ่อมไว้ 1,500 ซึ่งปกติสำหรับขั้นนับแยก
   await open(page, { records: [rec('r1', 'winding', 800), rec('r2', 'repair', 1500)] });
-  await tab(page, 'dashboard');
-  expect(await dashCell(page, 'ซ่อม'), 'ยอดของขั้นนับแยกห้ามถูกครอบ — ครอบแล้วยอดจริงหายจากจอ')
-    .toContain('1,500/1,000');
-  await expect(page.locator('#dashTable tbody'),
-    'ป้ายนี้มีไว้ฟ้องการคีย์ผิดของสายหลัก ขึ้นกับงานซ่อมทุกวันแล้วจะไม่มีใครอ่าน')
-    .not.toContainText('คีย์เกินยอดสั่ง');
-});
-
-test('A3 — ขั้นสายหลักที่คีย์เกินยอดสั่ง ยังต้องถูกครอบและยังขึ้นป้ายตามเดิม', async ({ page }) => {
-  // ฉากเดียวกันแต่ยอดเกินอยู่ที่ Winding ซึ่งเป็นสายหลัก — มีขั้นนับแยกอยู่ในรายการด้วย
-  await open(page, { records: [rec('r1', 'winding', 1500), rec('r2', 'repair', 100)] });
-  await tab(page, 'dashboard');
-  expect(await dashCell(page, 'Winding'), 'สายหลักยังครอบที่ยอดสั่ง').toContain('1,000/1,000');
-  await expect(page.locator('#dashTable tbody')).toContainText('คีย์เกินยอดสั่ง');
+  await tab(page, 'wiptrend');
+  const v = await page.$$eval('#wtDaily rect[data-proc="repair"] title',
+    els => els.map(e => Number(e.textContent.split(': ').pop().replace(/,/g, ''))));
+  expect(v.reduce((a, b) => a + b, 0),
+    'ยอดของขั้นนับแยกห้ามถูกครอบที่ยอดสั่ง — ครอบแล้วยอดจริงหายจากจอ').toBe(1500);
 });
 
 test('A5 — ขั้นนับแยกที่เลยกำหนดแล้ว ต้องไม่ทำให้ใบขึ้นล่าช้า', async ({ page }) => {
@@ -173,10 +168,10 @@ test('A3 — ธงนับแยกที่ซิงค์มาจากเ�
       { id: 'shipping', label: 'ส่งของ (Shipping)', short: 'Shipping' }
     ]
   });
-  await tab(page, 'dashboard');
+  await tab(page, 'wiptrend');
   // ยอด extra (900) มากกว่า winding (800) — ถ้าธงหายไป มันจะถูกนับเป็นขั้นในสายแล้วขึ้นย้อนแย้ง
-  await expect(page.locator('#wipCards')).not.toContainText('ข้อมูลย้อนแย้ง');
-  await expect(page.locator('#wipCards')).not.toContainText('ค้างหน้า นอกแผน');
-  const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
+  expect(await page.locator('#wtAnom').evaluate(el => getComputedStyle(el).display)).toBe('none');
+  await expect(page.locator('#wtWip rect[data-proc="extra"]')).toHaveCount(0);
+  const opts = await page.locator('#wtWipLegend .legend-item').evaluateAll(os => os.map(o => o.dataset.proc));
   expect(opts).not.toContain('extra');
 });
