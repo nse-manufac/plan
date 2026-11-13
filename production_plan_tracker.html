@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-13.3">
+<meta name="app-version" content="2026-11-13.4">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -310,7 +310,13 @@
   .wtlr .po{font-weight:700;white-space:nowrap;}
   /* ⚠️ `display:block` ต้องเขียนไว้ตรงนี้เอง — เมื่อก่อนมันพึ่งกฎกลาง `.wh{display:flex}`
      ของแดชบอร์ดโดยบังเอิญ ซึ่งถูกลบไปพร้อมแท็บนั้น 12 พ.ย. 2569 · ปล่อยเป็น inline
-     แล้ว text-overflow:ellipsis ไม่ทำงาน และบรรทัดนี้จะไม่กินเต็มแถว */
+     แล้ว text-overflow:ellipsis ไม่ทำงาน และบรรทัดนี้จะไม่กินเต็มแถว
+     ⚠️ **กฎกลางตัวนั้นยังแจก `padding-bottom:14px` + `border-bottom:1px` ให้บรรทัดนี้
+        โดยบังเอิญด้วย การลบมันจึงเปลี่ยนรูปของกล่อง "ใบที่ล่าช้านานที่สุด" ไปจริง**
+        ผู้ตรวจ #134 รอบ 12 วัดได้ **แถวสูง 50px ไม่มีเส้น** ที่สาขานี้ · แปะกฎเดิมกลับได้
+        **65px มีเส้นทึบ 1px** · ของใหม่สะอาดกว่าเพราะแถวมีเส้นประของตัวเองอยู่แล้ว (`.wtlr`)
+        **ไม่ได้เอากลับโดยตั้งใจ** — ถ้าเจ้าของว่ากล่องเตี้ยลงแล้วอ่านยาก จุดแก้คือเพิ่ม
+        `padding-bottom` ที่ `.wtlr .wh` ตรงนี้ ไม่ใช่เอากฎกลางของแท็บที่ถูกลบกลับมา */
   .wtlr .wh{display:block;grid-column:1/-1;color:var(--text-dim);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .wtlr .dd{font-weight:700;color:var(--red);white-space:nowrap;text-align:right;}
   .wtcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px;}
@@ -1074,6 +1080,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-13.3"></script>
+<script src="app.js?v=2026-11-13.4"></script>
 </body>
 </html>
