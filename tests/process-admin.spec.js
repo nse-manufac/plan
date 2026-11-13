@@ -620,12 +620,22 @@ test('เปลี่ยนสีของขั้นที่เพิ่ม�
   expect((await colorInput(page, id).inputValue()).toLowerCase(),
     'ช่องต้องจำค่าใหม่หลังวาดตารางใหม่').toBe('#8a5a2b');
 
-  // ต้องไปถึงจอจริงทั้งสองที่ที่ใช้สีขั้น
-  await tab(page, 'dashboard');
+  /* ⚠️ แท็บที่ใช้สีขั้นคือ `wiptrend` (ป้ายบนจอคือ 📊 Dashboard) — แท็บ `dashboard` เดิม
+     ถูกลบไปทั้งแท็บเมื่อ 12 พ.ย. 2569 (#134) · เทสข้อนี้เคยชี้ไปที่นั้นและแดงตอนเมิร์จ main */
+  await tab(page, 'wiptrend');
   await page.waitForTimeout(300);
-  expect(await page.locator('.legend-item', { hasText: 'Trimming ทดสอบ' }).locator('i')
+  expect(await page.locator('.legend-item', { hasText: 'Trimming ทดสอบ' }).first().locator('i')
     .evaluate(el => getComputedStyle(el).backgroundColor),
     'คำอธิบายสีของกราฟต้องเปลี่ยนตาม').toBe('rgb(138, 90, 43)');
+  /* ⚠️ ชื่อข้อนี้สัญญาสองที่ ต้องตรวจสองที่จริง — มุมมองแยกรายขั้นใช้สีขั้นอีกสองจุด
+     (สีเหลี่ยมบนหัวการ์ด · แถบสัดส่วนในแถว) ซึ่งเป็นโค้ดคนละบรรทัดกับคำอธิบายสี
+     ก่อนหน้านี้ตรวจแต่คำอธิบายสี ชื่อข้อจึงรับรองเกินของที่รัน (เจอตอนตามแก้ให้เข้ากับ #134) */
+  await page.click('[data-view="daily"][data-mode="cards"]');
+  await page.waitForTimeout(300);
+  const card = page.locator('#wtDaily .wtcard').filter({ hasText: 'Trimming ทดสอบ' }).first();
+  await expect(card, 'ต้องมีการ์ดของขั้นที่เพิ่งเปลี่ยนสี ไม่งั้นข้อนี้ไม่ได้ตรวจการ์ดเลย').toHaveCount(1);
+  expect(await card.locator('.ch i').evaluate(el => getComputedStyle(el).backgroundColor),
+    'สีเหลี่ยมบนหัวการ์ดต้องเปลี่ยนตาม').toBe('rgb(138, 90, 43)');
 });
 
 test('เปลี่ยนสีสองขั้นเร็วกว่าหนึ่งรอบ push — ต้องได้ทั้งสองสี ไม่ใช่อันเดียว', async ({ page }) => {
@@ -685,8 +695,9 @@ test('ห้าขั้นตั้งต้นเปลี่ยนสีไ�
 
 test('สีที่ไม่ใช่ #rrggbb ต้องไม่ถูกบันทึก', async ({ page }) => {
   /* ⚠️ ช่องสีของเบราว์เซอร์คืน #rrggbb เสมอ แต่นี่ไม่ใช่ทางเดียวที่เขียน color ได้
-     และทุกที่ที่สีถูกยัดลง DOM พึ่งรูปแบบนี้อยู่ (G3) — renderWipCards · renderChartLegend ·
-     fill= ของแท่งกราฟ · .proc-swatch — ด่านจึงต้องอยู่ฝั่งที่บันทึก */
+     และทุกที่ที่สีถูกยัดลง DOM พึ่งรูปแบบนี้อยู่ (G3) — renderChartLegend ·
+     fill= ของแท่งกราฟ · การ์ดของมุมมองแยกรายขั้น · .proc-swatch — ด่านจึงต้องอยู่ฝั่งที่บันทึก
+     (เคยเขียน renderWipCards ไว้ด้วย ซึ่งหายไปพร้อมแท็บแดชบอร์ด 12 พ.ย. 2569) */
   const gs = loadGs();
   seedPin(gs);
   await open(page, gs);
