@@ -54,13 +54,16 @@ function seedPin(gs, pin = PIN) {
 const serverList = gs => gs.api.doPullSettings().processes;
 const serverIds = gs => (serverList(gs) || []).map(p => p.id);
 
-/** ส่งทุกคำขอของหน้าเว็บเข้า doPost ของสคริปต์จริง · net.down = true จำลองเน็ตหลุด */
+/** ส่งทุกคำขอของหน้าเว็บเข้า doPost ของสคริปต์จริง · net.down = true จำลองเน็ตหลุด
+ *  net.slowMs = n หน่วงทุกคำขอ n มิลลิวินาที — จำลอง Apps Script ที่ตอบช้าระดับวินาที
+ *  ซึ่งเป็นเงื่อนไขที่ทำให้การกดสองครั้งติดกันชนกันได้ (ดูเทสคิวบันทึกรายการขั้น) */
 async function serve(page, gs) {
-  const net = { calls: [], down: false };
+  const net = { calls: [], down: false, slowMs: 0 };
   await page.route('**/exec', async route => {
     const raw = route.request().postData() || '{}';
     net.calls.push(JSON.parse(raw));
     if (net.down) return route.abort();
+    if (net.slowMs) await new Promise(r => setTimeout(r, net.slowMs));
     const out = gs.api.doPost({ postData: { contents: raw }, parameter: {} });
     await route.fulfill({ contentType: 'application/json', body: out.body });
   });
@@ -581,4 +584,158 @@ test('A3 — คำยืนยันซ่อน/เลิกซ่อนขั
   await tab(page, 'wiptrend');
   const procs = await page.locator('#wtWipLegend .legend-item').evaluateAll(os => os.map(o => o.dataset.proc));
   expect(procs.includes('repair'), 'ขั้นนับแยกต้องไม่มีแท่งในกราฟยอดค้างรายวัน (A3·A5)').toBe(false);
+});
+
+// ── เปลี่ยนสีประจำขั้น (เจ้าของสั่ง 8 พ.ย. 2026) ──────────────────────
+//
+// เหตุ: Trimming ที่เจ้าของเพิ่มเองได้สีจาก PROCESS_PALETTE ซึ่งใกล้กับสีของขั้นส่งของมาก
+// วัดได้ ΔE 11.2 สำหรับตาปกติ (เกณฑ์คือ 15) และบนกราฟสีคือกุญแจเดียว ไม่มีชื่อกำกับแท่ง
+// ก่อนหน้านี้ไม่มีที่ไหนให้แก้สีเลย — ระบบแจกให้ตอนกดเพิ่มขั้นแล้วจบ
+
+const colorInput = (page, id) => page.locator(`[data-proc-color="${id}"]`);
+
+/** ตั้งค่าช่องสีแล้วยิง change — ช่องสีของเบราว์เซอร์กดเลือกจาก Playwright ตรง ๆ ไม่ได้ */
+const setColor = (page, id, v) => colorInput(page, id).evaluate((el, val) => {
+  el.value = val;
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}, v);
+
+test('เปลี่ยนสีของขั้นที่เพิ่มเองได้ และมีผลกับกราฟกับการ์ดทันที', async ({ page }) => {
+  const gs = loadGs();
+  seedPin(gs);
+  await open(page, gs);
+  answerDialogs(page);
+  await unlock(page);
+  await addStep(page, 'Trimming ทดสอบ', 'Trimming', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(6);
+  const id = serverIds(gs)[1];
+
+  // ต้องมีช่องสีจริง ไม่งั้นข้อนี้เขียวเองโดยไม่ได้ตรวจอะไร
+  await expect(colorInput(page, id)).toHaveCount(1);
+  const before = (await colorInput(page, id).inputValue()).toLowerCase();
+  expect(before, 'สีที่ระบบแจกต้องไม่ใช่สีที่เรากำลังจะตั้ง ไม่งั้นเทียบไม่ได้').not.toBe('#8a5a2b');
+
+  await setColor(page, id, '#8a5a2b');
+  await expect.poll(() => (serverList(gs)[1] || {}).color).toBe('#8a5a2b');
+  expect((await colorInput(page, id).inputValue()).toLowerCase(),
+    'ช่องต้องจำค่าใหม่หลังวาดตารางใหม่').toBe('#8a5a2b');
+
+  /* ⚠️ แท็บที่ใช้สีขั้นคือ `wiptrend` (ป้ายบนจอคือ 📊 Dashboard) — แท็บ `dashboard` เดิม
+     ถูกลบไปทั้งแท็บเมื่อ 12 พ.ย. 2569 (#134) · เทสข้อนี้เคยชี้ไปที่นั้นและแดงตอนเมิร์จ main */
+  await tab(page, 'wiptrend');
+  await page.waitForTimeout(300);
+  expect(await page.locator('.legend-item', { hasText: 'Trimming ทดสอบ' }).first().locator('i')
+    .evaluate(el => getComputedStyle(el).backgroundColor),
+    'คำอธิบายสีของกราฟต้องเปลี่ยนตาม').toBe('rgb(138, 90, 43)');
+  /* ⚠️ ชื่อข้อนี้สัญญาสองที่ ต้องตรวจสองที่จริง — มุมมองแยกรายขั้นใช้สีขั้นอีกสองจุด
+     (สีเหลี่ยมบนหัวการ์ด · แถบสัดส่วนในแถว) ซึ่งเป็นโค้ดคนละบรรทัดกับคำอธิบายสี
+     ก่อนหน้านี้ตรวจแต่คำอธิบายสี ชื่อข้อจึงรับรองเกินของที่รัน (เจอตอนตามแก้ให้เข้ากับ #134) */
+  await page.click('[data-view="daily"][data-mode="cards"]');
+  await page.waitForTimeout(300);
+  const card = page.locator('#wtDaily .wtcard').filter({ hasText: 'Trimming ทดสอบ' }).first();
+  await expect(card, 'ต้องมีการ์ดของขั้นที่เพิ่งเปลี่ยนสี ไม่งั้นข้อนี้ไม่ได้ตรวจการ์ดเลย').toHaveCount(1);
+  expect(await card.locator('.ch i').evaluate(el => getComputedStyle(el).backgroundColor),
+    'สีเหลี่ยมบนหัวการ์ดต้องเปลี่ยนตาม').toBe('rgb(138, 90, 43)');
+});
+
+test('เปลี่ยนสีสองขั้นเร็วกว่าหนึ่งรอบ push — ต้องได้ทั้งสองสี ไม่ใช่อันเดียว', async ({ page }) => {
+  /* ⚠️ ทุกทางที่แก้รายการขั้นสร้างรายการใหม่จาก PROCESS_LIST ซึ่งถูกเขียนทับหลัง pushSettings ตอบ
+     ยิงใบที่สองก่อนใบแรกตอบ ใบที่สองจะสร้างจากรายการที่ยังไม่มีสีของใบแรก แล้วทับกลับ
+     — สีของขั้นแรกหายเงียบ ๆ ทั้งที่ toast ขึ้นว่าสำเร็จ (ผู้ตรวจ #130 รันพิสูจน์)
+     queueProcessSave() เรียงทีละใบ และสร้างรายการ **ตอนถึงคิว** ไม่ใช่ตอนกด
+
+     ⚠️ ต้องตรวจทั้งฝั่งชีตและฝั่งจอ — ใบที่สองอาจถึงชีตถูกแต่เครื่องที่กด adopt ของเก่าทับ
+     ⚠️ ต้องมีขั้นที่แก้สีได้ **สองขั้น** ขั้นเดียวจะกลายเป็นการแก้สีซ้ำที่เดิม
+        ซึ่งใบหลังทับใบแรกแล้วได้ผลถูกพอดี เทสจะเขียวเองทั้งที่ไม่มีคิว (ลองแล้ว) */
+  const gs = loadGs();
+  seedPin(gs);
+  const net = await open(page, gs);
+  answerDialogs(page);
+  await unlock(page);
+  await addStep(page, 'Trimming ทดสอบ', 'Trimming', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(6);
+  await addStep(page, 'Core Grinding ทดสอบ', 'Core', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(7);
+
+  const ids = serverIds(gs).filter(id => !DEFAULT_IDS.includes(id));
+  expect(ids.length, 'ต้องมีขั้นที่แก้สีได้สองขั้น ไม่งั้นฉากนี้ไม่เกิด').toBe(2);
+  for (const id of ids) await expect(colorInput(page, id)).toHaveCount(1);
+
+  // push ช้ากว่าระยะที่คนกดสองครั้งได้ — ของจริง Apps Script ตอบระดับวินาที
+  net.slowMs = 700;
+  await setColor(page, ids[0], '#8a5a2b');
+  await page.waitForTimeout(80);
+  await setColor(page, ids[1], '#2b5a8a');
+
+  const onSheet = () => Object.fromEntries(serverList(gs).map(p => [p.id, String(p.color || '').toLowerCase()]));
+  await expect.poll(() => [onSheet()[ids[0]], onSheet()[ids[1]]].join(' '), { timeout: 15000 })
+    .toBe('#8a5a2b #2b5a8a');
+  net.slowMs = 0;
+
+  // ฝั่งจอต้องตรงกับชีต ไม่ใช่ค้างของเก่าที่ adopt ทับ
+  expect((await colorInput(page, ids[0]).inputValue()).toLowerCase()).toBe('#8a5a2b');
+  expect((await colorInput(page, ids[1]).inputValue()).toLowerCase()).toBe('#2b5a8a');
+});
+
+test('ห้าขั้นตั้งต้นเปลี่ยนสีไม่ได้ — โชว์สีให้ดูเฉย ๆ', async ({ page }) => {
+  /* ⚠️ storedProcessList ไม่เก็บ color ของขั้นตั้งต้น ถ้าเปิดให้แก้แล้วค่าจะหายทุกครั้งที่ซิงค์
+     สีของห้าขั้นนั้นวัดมาเป็นชุดใน #124 แล้ว การเปลี่ยนจึงควรผ่านโค้ด ไม่ใช่ผ่านหน้าจอ */
+  const gs = loadGs();
+  seedPin(gs);
+  await open(page, gs);
+  answerDialogs(page);
+  await unlock(page);
+  for (const id of ['winding', 'assembly', 'support', 'inspection', 'shipping']) {
+    await expect(colorInput(page, id), id + ' ต้องไม่มีช่องสีให้แก้').toHaveCount(0);
+  }
+  // แต่ต้องยังเห็นสีของมันได้ ไม่ใช่ช่องว่าง
+  expect(await page.locator('#processTable .proc-swatch').count(),
+    'ทุกขั้นที่แก้ไม่ได้ต้องยังมีจุดสีให้ดู').toBeGreaterThanOrEqual(5);
+});
+
+test('สีที่ไม่ใช่ #rrggbb ต้องไม่ถูกบันทึก', async ({ page }) => {
+  /* ⚠️ ช่องสีของเบราว์เซอร์คืน #rrggbb เสมอ แต่นี่ไม่ใช่ทางเดียวที่เขียน color ได้
+     และทุกที่ที่สีถูกยัดลง DOM พึ่งรูปแบบนี้อยู่ (G3) — renderChartLegend ·
+     fill= ของแท่งกราฟ · การ์ดของมุมมองแยกรายขั้น · .proc-swatch — ด่านจึงต้องอยู่ฝั่งที่บันทึก
+     (เคยเขียน renderWipCards ไว้ด้วย ซึ่งหายไปพร้อมแท็บแดชบอร์ด 12 พ.ย. 2569) */
+  const gs = loadGs();
+  seedPin(gs);
+  await open(page, gs);
+  answerDialogs(page);
+  await unlock(page);
+  await addStep(page, 'Trimming ทดสอบ', 'Trimming', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(6);
+  const id = serverIds(gs)[1];
+  const before = (await colorInput(page, id).inputValue()).toLowerCase();
+
+  /* ⚠️ ช่อง type=color แปลงค่าผิดรูปเป็น #000000 ให้เองก่อนที่โค้ดเราจะเห็น
+     ด่านจึงไม่เคยถูกเรียกถ้ายิงผ่านช่องตรง ๆ — เทสแบบนั้นเขียวโดยไม่ได้ตรวจอะไร (รันเจอเอง)
+     ฉากจริงที่ด่านมีไว้กันคือ "ค่ามาจากทางอื่น" เช่นสีที่ซิงค์มาจากเครื่องอื่น
+     จึงถอด type ออกก่อน เพื่อให้ค่าดิบไปถึงตัวจับ change จริง ๆ */
+  await colorInput(page, id).evaluate(el => {
+    el.type = 'text';
+    el.value = 'red; background:url(x)';
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(400);
+  expect(String(serverList(gs)[1].color).toLowerCase(),
+    'ค่าที่บันทึกต้องยังเป็นสีเดิม').toBe(before);
+});
+
+test('หมดเวลาปลดล็อกแล้วต้องไม่เหลือช่องให้แก้สี', async ({ page }) => {
+  /* ⚠️ saveProcessList มีด่านรหัสหัวหน้าอยู่บรรทัดแรกอยู่แล้ว ข้อนี้ยืนยันว่าทางใหม่
+     ไม่ได้เปิดช่องข้ามด่านนั้น — ทุกทางที่เขียน processes ต้องผ่าน saveProcessList ทางเดียว */
+  const gs = loadGs();
+  seedPin(gs);
+  await open(page, gs);
+  answerDialogs(page);
+  await unlock(page);
+  await addStep(page, 'Trimming ทดสอบ', 'Trimming', 'winding');
+  await expect.poll(() => serverIds(gs).length).toBe(6);
+  const id = serverIds(gs)[1];
+  await expect(colorInput(page, id), 'ปลดล็อกอยู่ต้องมีช่อง ไม่งั้นข้อนี้เขียวฟรี').toHaveCount(1);
+
+  await page.click('#btnProcessLock');
+  await page.waitForTimeout(200);
+  await expect(colorInput(page, id), 'ล็อกแล้วต้องไม่เหลือช่องให้แก้').toHaveCount(0);
 });
