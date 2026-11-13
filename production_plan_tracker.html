@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-13.6">
+<meta name="app-version" content="2026-11-13.7">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -311,6 +311,12 @@
   /* ⚠️ `display:block` ต้องเขียนไว้ตรงนี้เอง — เมื่อก่อนมันพึ่งกฎกลาง `.wh{display:flex}`
      ของแดชบอร์ดโดยบังเอิญ ซึ่งถูกลบไปพร้อมแท็บนั้น 12 พ.ย. 2569 · ปล่อยเป็น inline
      แล้ว text-overflow:ellipsis ไม่ทำงาน และบรรทัดนี้จะไม่กินเต็มแถว
+     🚨 **และ `text-overflow:ellipsis` ของบรรทัดนี้ "เพิ่งเริ่มทำงานจริง" ในใบนี้**
+        บน `main` บรรทัดนี้เป็น flex container (ได้ `display:flex` มาจากกฎกลาง) ซึ่ง `ellipsis`
+        ไม่มีผลกับ flex container · P/N ยาว ๆ จึงเคยดันแถวออกไป ตอนนี้ถูกตัดด้วย `…` แทน
+        **ไปทางที่ตั้งใจ** (ผู้ตรวจ #134 รอบ 6 วัดแล้วว่า `scrollWidth == clientWidth` คือไม่ล้น)
+        แต่เป็น **การเปลี่ยนที่ตาเห็นบนกล่องที่คนอ่านตัวจริงใช้** จึงต้องจดไว้ ไม่ใช่ปล่อยให้
+        คอมเมนต์เล่าแต่เรื่อง padding (ผู้ตรวจ #134 รอบ 15)
      ⚠️ **กฎกลางตัวนั้นยังแจก `padding-bottom:14px` + `border-bottom:1px` ให้บรรทัดนี้
         โดยบังเอิญด้วย การลบมันจึงเปลี่ยนรูปของกล่อง "ใบที่ล่าช้านานที่สุด" ไปจริง**
         ผู้ตรวจ #134 รอบ 12 วัดได้ **แถวสูง 50px ไม่มีเส้น** ที่สาขานี้ · แปะกฎเดิมกลับได้
@@ -1083,6 +1089,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-13.6"></script>
+<script src="app.js?v=2026-11-13.7"></script>
 </body>
 </html>
