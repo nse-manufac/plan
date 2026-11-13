@@ -234,7 +234,9 @@ test('เพิ่มขั้นระหว่าง Winding กับ Assembl
   expect(serverList(gs)[1]).toMatchObject({ label: 'Coating ทดสอบ', short: 'Coating', hidden: false, addedBy: 'เครื่องทดสอบ' });
 
   await expect(page.locator('#offsetFields input#off-' + id)).toHaveCount(1);
-  await expect(page.locator(`#dashWipFilter option[value="${id}"]`)).toHaveCount(1);
+  await tab(page, 'wiptrend');
+  await expect(page.locator(`#wtWipLegend [data-proc="${id}"]`),
+    'ขั้นที่เพิ่มต้องโผล่ในคำอธิบายสีของกราฟยอดค้าง').toHaveCount(1);
   await tab(page, 'entry');
   expect(await procButtonIds(page)).toEqual(['winding', id, 'assembly', 'support', 'inspection', 'shipping']);
   await expect(page.locator('#processFlow')).toContainText('Winding/Trimming → Coating ทดสอบ → Assembly');
@@ -352,7 +354,7 @@ test('ชื่อขั้นที่มีแท็ก HTML — ขึ้น�
   await expect.poll(() => serverIds(gs).length).toBe(6);
   const id = serverIds(gs)[1];
 
-  for (const t of ['entry', 'dashboard', 'data']) await tab(page, t);
+  for (const t of ['entry', 'wiptrend', 'data']) await tab(page, t);
   expect(await page.evaluate(() => window.__xss)).toBeUndefined();
   await expect(page.locator('#processTable b')).toHaveCount(0);
   await tab(page, 'entry');
@@ -426,9 +428,9 @@ test('A3 — กดเปลี่ยนชื่อขั้นอื่น ต
   expect(st.processes.find(p => p.id === 'p_repair').standalone).toBe(true);
 
   // และยังทำงานเป็นขั้นนับแยกจริง ไม่ใช่แค่มีฟิลด์ค้างไว้
-  await tab(page, 'dashboard');
-  const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
-  expect(opts).not.toContain('p_repair');
+  await tab(page, 'wiptrend');
+  const procs = await page.locator('#wtWipLegend .legend-item').evaluateAll(os => os.map(o => o.dataset.proc));
+  expect(procs, 'ขั้นนับแยกต้องไม่อยู่ในกราฟยอดค้าง (A3)').not.toContain('p_repair');
 });
 
 // ── ติ๊ก "นับแยก" ตอนเพิ่มขั้น (ใบ 2) ────────────────────────────────
@@ -446,14 +448,15 @@ test('A3 — ติ๊กนับแยกแล้วเพิ่มขั้�
   const added = serverList(gs).find(p => p.label === 'งานซ่อม');
   expect(added.standalone).toBe(true);
 
-  // อยู่นอกสายจริง ไม่ใช่แค่มีฟิลด์ — ไม่มีการ์ด WIP และไม่อยู่ในตัวกรอง "ค้างอยู่ที่ขั้น"
-  await tab(page, 'dashboard');
-  await expect(page.locator('#wipCards')).not.toContainText('ค้างหน้า ซ่อม');
-  const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
-  expect(opts).not.toContain(added.id);
+  // อยู่นอกสายจริง ไม่ใช่แค่มีฟิลด์ — ไม่มีแท่งในกราฟยอดค้าง และไม่อยู่ในคำอธิบายสีของกราฟนั้น
+  await tab(page, 'wiptrend');
+  const procs = await page.locator('#wtWipLegend .legend-item').evaluateAll(os => os.map(o => o.dataset.proc));
+  expect(procs).not.toContain(added.id);
+  await expect(page.locator(`#wtWip rect[data-proc="${added.id}"]`)).toHaveCount(0);
   // ขั้นที่ตามหลังมันต้องข้ามไปเทียบกับ Winding (800) ไม่ใช่ขั้นนับแยก (0)
-  await expect(page.locator('#wipCards')).toContainText('WIP ค้างหน้า Assembly');
-  await expect(page.locator('#wipCards')).not.toContainText('ข้อมูลย้อนแย้ง');
+  expect(procs, 'ขั้นของสายหลักยังอยู่ครบ').toContain('assembly');
+  expect(await page.locator('#wtAnom').evaluate(el => getComputedStyle(el).display),
+    'ขั้นนับแยกต้องไม่ทำให้ขึ้นข้อมูลย้อนแย้ง').toBe('none');
 });
 
 test('A3 — ไม่ติ๊ก = ขั้นในสายการผลิตตามเดิม ไม่มีธงติดไปด้วย', async ({ page }) => {
@@ -467,9 +470,9 @@ test('A3 — ไม่ติ๊ก = ขั้นในสายการผล�
 
   const added = serverList(gs).find(p => p.label === 'Plating');
   expect(added.standalone).toBeUndefined();
-  await tab(page, 'dashboard');
-  const opts = await page.locator('#dashWipFilter option').evaluateAll(os => os.map(o => o.value));
-  expect(opts).toContain(added.id);
+  await tab(page, 'wiptrend');
+  const procs = await page.locator('#wtWipLegend .legend-item').evaluateAll(os => os.map(o => o.dataset.proc));
+  expect(procs, 'ขั้นในสายต้องอยู่ในกราฟยอดค้างด้วย').toContain(added.id);
 });
 
 test('ตารางจัดการขั้นต้องมีป้าย "นับแยก" บอกว่าขั้นไหนไม่อยู่ในสายการผลิต', async ({ page }) => {
@@ -544,7 +547,10 @@ const withRepair = () => {
   l.splice(1, 0, { id: 'repair', label: 'งานซ่อม', short: 'ซ่อม', hidden: false, standalone: true });
   return l;
 };
-const ROW_PHRASE = 'แถวในบัญชีของค้าง';
+/* ⚠️ ข้อความนี้เคยเป็น "แถวในบัญชีของค้าง" ซึ่งเป็นของบนแดชบอร์ด
+   แท็บนั้นถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569 · ของที่หายจริงตอนนี้คือแท่งในกราฟยอดค้างรายวัน
+   ซึ่งวาดจาก MAIN_PROCESSES เหมือนกัน — ความไม่สมมาตรที่ข้อนี้คุมจึงยังเหมือนเดิมทุกประการ */
+const ROW_PHRASE = 'แท่งในกราฟยอดค้างรายวัน';
 
 test('A3 — คำยืนยันซ่อน/เลิกซ่อนขั้น ต้องตรงกับของที่หายจริง (ขั้นนับแยกไม่มีแถวในบัญชีของค้าง)', async ({ page }) => {
   const gs = loadGs();
@@ -575,9 +581,9 @@ test('A3 — คำยืนยันซ่อน/เลิกซ่อนขั
   expect(seen.at(-1).message, 'เลิกซ่อนขั้นสายหลัก แถวกลับมาจริง ต้องบอก').toContain(ROW_PHRASE);
 
   // และของที่ข้อความอ้างต้องมีอยู่จริง — ขั้นนับแยกต้องไม่มีแถวในบัญชีทั้งก่อนและหลัง
-  await tab(page, 'dashboard');
-  const rows = await page.locator('#wipCards .wlr .nm').allInnerTexts();
-  expect(rows.some(r => r.includes('ซ่อม')), 'ขั้นนับแยกต้องไม่มีแถวในบัญชีของค้าง (A3·A5)').toBe(false);
+  await tab(page, 'wiptrend');
+  const procs = await page.locator('#wtWipLegend .legend-item').evaluateAll(os => os.map(o => o.dataset.proc));
+  expect(procs.includes('repair'), 'ขั้นนับแยกต้องไม่มีแท่งในกราฟยอดค้างรายวัน (A3·A5)').toBe(false);
 });
 
 // ── เปลี่ยนสีประจำขั้น (เจ้าของสั่ง 8 พ.ย. 2026) ──────────────────────
