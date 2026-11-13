@@ -2984,7 +2984,7 @@ function renderDayTable(){
   /* ข้อความต้องตัดสินจาก "มีใบที่ตรงกี่ใบ" ไม่ใช่จากปุ่มที่ถูกกด และต้องแนะทางที่กดแล้วได้ผล
    * (ผู้ตรวจ #118 จับสองรอบ · เลขบนปุ่มบอกเองว่าขั้นไหนมีของ จึงชี้ไปที่ปุ่มด้วย) */
   const emptyMsg = orders.length
-    ? `ขั้น${escapeHtml(procLabel)} ของวันนั้นยังไม่มีการคีย์ยอด — ดูเลขบนปุ่มด้านบนว่าขั้นไหนมีของ `
+    ? `ขั้น ${escapeHtml(procLabel)} ของวันนั้นยังไม่มีการคีย์ยอด — ดูเลขบนปุ่มด้านบนว่าขั้นไหนมีของ `
       + `· ติ๊ก "แสดงทุกใบ" เพื่อดูทั้ง ${numFmt(orders.length)} ใบ · หรือเลือกวันอื่น`
     : (search || weekFilter || subFilter)
       ? 'ไม่มีใบที่ตรงกับตัวกรองที่ตั้งไว้ — ล้างช่องค้นหา สัปดาห์ หรือ Sub-Name แล้วดูอีกครั้ง'
@@ -2996,7 +2996,7 @@ function renderDayTable(){
     + `<th title="วันที่สั่งซื้อจากไฟล์แผนงาน · ช่อง Aging ข้าง ๆ คือจำนวนวันนับจากวันในช่องนี้ถึงวันนี้">Order Date</th>`
     + `<th title="อายุงาน — จำนวนวันนับจากวันที่สั่งถึง &quot;วันนี้&quot; ไม่ใช่ถึงวันที่เลือกดู · สีมาจากกำหนดส่ง · เอาเมาส์ชี้ที่ช่องเพื่อดูสถานะของใบ">Aging</th></tr></thead>`
     + `<tbody>${rowsHtml || emptyRow(12, emptyMsg)}</tbody><tfoot><tr>`
-    + `<td colspan="8">รวมขั้น${escapeHtml(procLabel)} ของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ</td>`
+    + `<td colspan="8">รวมขั้น ${escapeHtml(procLabel)} ของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ</td>`
     + `<td>${total!=null ? numFmt(total) : '—'}</td><td colspan="3"></td></tr></tfoot>`;
 }
 
