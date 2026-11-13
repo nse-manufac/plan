@@ -5811,13 +5811,37 @@ async function saveProcessList(list, doneMsg){
   return true;
 }
 
+/* คิวของการบันทึกรายการขั้น — เรียงทีละใบ และ **สร้างรายการใหม่ตอนถึงคิว ไม่ใช่ตอนกด**
+ *
+ * ⚠️ ทุกทางที่แก้รายการขั้นสร้างรายการใหม่จาก PROCESS_LIST ซึ่งถูกเขียนทับใน adoptProcessList()
+ *    **หลัง** pushSettings ตอบกลับ · กดสองครั้งเร็วกว่าหนึ่งรอบ push ใบหลังจะสร้างจากรายการ
+ *    ที่ยังไม่มีของใบแรก แล้วทับกลับ — **ของใบแรกหายเงียบ ๆ ทั้งที่ toast ขึ้นว่าสำเร็จ**
+ *    (ผู้ตรวจ #130 รันพิสูจน์ที่ push ช้า 1.2 วิ ซึ่งเป็นระดับปกติของ Apps Script)
+ *    ทางเปลี่ยนชื่อกับซ่อนมี prompt/confirm คั่น จึงเอื้อมถึงยาก แต่ **ทางสีไม่มีอะไรคั่นเลย**
+ *    และช่องสีที่เพิ่งเปิดให้แก้มีไว้ให้เจ้าของจัดชุดสีใหม่ = แก้หลายขั้นติดกันพอดี
+ *
+ * ⚠️ build() ต้องอ่าน PROCESS_LIST **ตอนถูกเรียก** ห้ามปิดทับรายการที่สร้างไว้ก่อนเข้าคิว
+ *    ไม่งั้นคิวไม่ช่วยอะไรเลย · คืน null = เลิกทำใบนั้น (เงื่อนไขเพิ่งตกเพราะใบก่อนหน้าเปลี่ยนรายการไปแล้ว)
+ *
+ * ⚠️ .catch ไว้ที่สาย ไม่ใช่ที่ใบที่คืนให้ผู้เรียก — ใบถัดไปต้องยังได้คิวแม้ใบก่อนหน้าพัง
+ *    และผู้เรียกต้องยังเห็นผลของใบตัวเอง (ตัวจับปุ่มเพิ่มขั้นล้างช่องกรอกจากค่านี้) */
+let processSaveChain = Promise.resolve();
+function queueProcessSave(build, doneMsg){
+  const run = processSaveChain.then(()=>{
+    const list = build();
+    return list ? saveProcessList(list, doneMsg) : false;
+  });
+  processSaveChain = run.catch(()=>{});
+  return run;
+}
+
 function renderProcessAdmin(){
   const table = document.getElementById('processTable');
   if(!table) return;
   const unlocked = processUnlocked();
   const counts = {};
   state.records.forEach(r=>{ if(!r.voided) counts[r.process] = (counts[r.process] || 0) + 1; });
-  table.innerHTML = '<thead><tr><th>#</th><th>ชื่อขั้น</th><th>ชื่อสั้น</th><th>สถานะ</th><th>ยอดที่คีย์ไว้ (รายการ)</th><th></th></tr></thead><tbody>'
+  table.innerHTML = '<thead><tr><th>#</th><th>ชื่อขั้น</th><th>ชื่อสั้น</th><th title="สีของแท่งในกราฟ จุดบนการ์ด และคำอธิบายสีเหนือกราฟ">สี</th><th>สถานะ</th><th>ยอดที่คีย์ไว้ (รายการ)</th><th></th></tr></thead><tbody>'
     + PROCESS_LIST.map((p, i)=>{
       const locked = LOCKED_PROCESS_IDS.includes(p.id);
       const status = (locked ? '<span class="badge gray">ล็อก</span>'
@@ -5827,11 +5851,21 @@ function renderProcessAdmin(){
         + (p.standalone ? ' <span class="badge gray" title="ยอดไม่เกี่ยวกับสายหลัก ไม่มีแท่งในกราฟยอดค้างรายวัน และไม่ถูกตัดสินล่าช้า">นับแยก</span>' : '');
       const who = p.updatedBy || p.addedBy;
       const audit = who ? `<div class="hint">${escapeHtml((p.updatedBy ? 'แก้ล่าสุดโดย ' : 'เพิ่มโดย ') + who)}</div>` : '';
+      /* สีเก็บใน state.processes เฉพาะขั้นที่เพิ่มเอง (ดู storedProcessList)
+         ห้าขั้นตั้งต้นจึงเปลี่ยนสีไม่ได้ — สีของมันวัดมาเป็นชุดใน #124
+         และการเก็บสีของขั้นตั้งต้นต้องเพิ่มฟิลด์ที่ต้องซิงค์ ซึ่งเกินขอบเขตของใบนี้
+         โชว์สีให้เห็นทุกขั้น แต่แก้ได้เฉพาะขั้นที่เพิ่มเอง */
+      const canColor = unlocked && !DEFAULT_BY_ID[p.id];
+      const colorCell = canColor
+        ? `<input type="color" class="proc-color" data-proc-color="${p.id}" value="${escapeHtml(p.color)}"`
+          + ` title="เปลี่ยนสีของขั้นนี้ — มีผลกับกราฟและการ์ดทุกเครื่อง">`
+        : `<i class="proc-swatch" style="background:${escapeHtml(p.color)}"`
+          + ` title="${DEFAULT_BY_ID[p.id] ? 'สีของขั้นตั้งต้น เปลี่ยนในโปรแกรมไม่ได้' : 'ใส่รหัสหัวหน้าก่อนถึงแก้สีได้'}"></i>`;
       const actions = unlocked && !locked
         ? `<button class="btn-mini" data-proc-rename="${p.id}">เปลี่ยนชื่อ</button> `
           + `<button class="btn-mini" data-proc-toggle="${p.id}">${p.hidden ? 'เลิกซ่อน' : 'ซ่อน'}</button>` : '';
       return `<tr data-proc-row="${p.id}"><td>${i + 1}</td><td class="left">${escapeHtml(p.icon + ' ' + p.label)}${audit}</td>`
-        + `<td class="left">${escapeHtml(p.short)}</td><td>${status}</td><td>${numFmt(counts[p.id] || 0)}</td><td>${actions}</td></tr>`;
+        + `<td class="left">${escapeHtml(p.short)}</td><td>${colorCell}</td><td>${status}</td><td>${numFmt(counts[p.id] || 0)}</td><td>${actions}</td></tr>`;
     }).join('') + '</tbody>';
 
   document.getElementById('btnProcessUnlock').hidden = unlocked;
@@ -5908,22 +5942,56 @@ document.getElementById('btnProcessAdd').addEventListener('click', ()=>{
   if(PROCESS_LIST.some(p=>p.label === label || p.short === short)){ toast('มีขั้นชื่อนี้อยู่แล้ว'); return; }
   const after = document.getElementById('newProcAfter').value;
   const standalone = document.getElementById('newProcStandalone').checked;
-  const list = PROCESS_LIST.slice();
-  const at = after === '__first__' ? 0 : list.findIndex(p=>p.id === after) + 1;
-  if(after !== '__first__' && at <= 0){ toast('เลือกตำแหน่งของขั้นก่อน'); return; }
+  // ตรวจตำแหน่งก่อนถามยืนยัน เพื่อไม่ให้ถามแล้วค่อยบอกว่าทำไม่ได้ — แต่ดัชนีที่ใช้จริงคิดใหม่ตอนถึงคิว
+  if(after !== '__first__' && !PROCESS_BY_ID[after]){ toast('เลือกตำแหน่งของขั้นก่อน'); return; }
   const where = after === '__first__' ? 'เป็นขั้นแรก' : 'ต่อจาก ' + PROCESS_LABELS[after];
   // ⚠️ ชนิดของขั้นเปลี่ยนทีหลังไม่ได้ (มีแต่เปลี่ยนชื่อกับซ่อน) จึงต้องบอกให้ชัดตั้งแต่ตอนกด
   const kind = standalone
     ? ' · เป็นขั้นนับแยก ยอดไม่เกี่ยวกับสายหลัก ไม่มีแท่งในกราฟยอดค้างรายวัน และไม่ถูกตัดสินล่าช้า'
     : ' · อยู่ในสายการผลิต';
   if(!confirm(`เพิ่มขั้น "${label}" ${where}?${kind}\n— ทุกเครื่องจะเห็นขั้นนี้หลังซิงค์ · ลบทีหลังไม่ได้ ซ่อนได้อย่างเดียว · ชนิดของขั้นเปลี่ยนทีหลังไม่ได้`)) return;
-  list.splice(at, 0, {id: 'p' + Date.now().toString(36), label, short, icon: standalone ? '🧰' : '🔹',
-    color: PROCESS_PALETTE.find(c=>!list.some(p=>p.color === c)) || PROCESS_PALETTE[0],
-    hidden: false, standalone, addedBy: state.deviceName || '', addedAt: new Date().toISOString()});
-  saveProcessList(list, `เพิ่มขั้น ${label} แล้ว`).then(ok=>{
+  /* ⚠️ สร้างรายการในนี้ ไม่ใช่ข้างนอก — การเลือกสีต้องเห็นขั้นที่ใบก่อนหน้าในคิวเพิ่งเพิ่มเข้าไป
+     ไม่งั้นเพิ่มสองขั้นติดกันจะได้สีเดียวกันทั้งคู่ ซึ่งเป็นอาการเดียวกับที่คิวนี้มาแก้ */
+  queueProcessSave(()=>{
+    const list = PROCESS_LIST.slice();
+    const at = after === '__first__' ? 0 : list.findIndex(p=>p.id === after) + 1;
+    if(after !== '__first__' && at <= 0){ toast('ขั้นที่เลือกไว้หายไประหว่างบันทึก — ไม่ได้เพิ่ม'); return null; }
+    list.splice(at, 0, {id: 'p' + Date.now().toString(36), label, short, icon: standalone ? '🧰' : '🔹',
+      color: PROCESS_PALETTE.find(c=>!list.some(p=>p.color === c)) || PROCESS_PALETTE[0],
+      hidden: false, standalone, addedBy: state.deviceName || '', addedAt: new Date().toISOString()});
+    return list;
+  }, `เพิ่มขั้น ${label} แล้ว`).then(ok=>{
     if(ok){ document.getElementById('newProcLabel').value = ''; document.getElementById('newProcShort').value = '';
       document.getElementById('newProcStandalone').checked = false; }
   });
+});
+
+/* เปลี่ยนสีประจำขั้น — ใช้ช่องสีของเบราว์เซอร์ ซึ่งคืนค่าเป็น #rrggbb เสมอ
+ *
+ * ⚠️ **ยังตรวจรูปแบบซ้ำก่อนบันทึก** ถึงแม้ช่องจะคืน #rrggbb ให้อยู่แล้ว —
+ *    ทางนี้ไม่ใช่ทางเดียวที่เขียน color ได้ (ค่าที่ซิงค์มาจากเครื่องอื่นก็ลงที่เดียวกัน)
+ *    และทุกที่ที่สีถูกยัดลง DOM พึ่งรูปแบบนี้อยู่ (G3) — renderChartLegend · fill= ของแท่งกราฟ
+ *    (drawGroupedBars กับ drawStageBars) · การ์ดของมุมมองแยกรายขั้น (สีเหลี่ยม + แถบสัดส่วน) ·
+ *    และ .proc-swatch ในแผงนี้เอง · รายชื่อฉบับเต็มอยู่ใน CLAUDE.md หัวข้อสีประจำขั้น
+ *    (เคยเขียน renderWipCards ไว้ตรงนี้ ซึ่งหายไปพร้อมแท็บแดชบอร์ด 12 พ.ย. 2569)
+ *
+ * ⚠️ **แก้ได้เฉพาะขั้นที่เพิ่มเอง** — ห้าขั้นตั้งต้นไม่เก็บ color ลง state.processes
+ *    (ดู storedProcessList) สีของมันวัดมาเป็นชุดใน #124 แล้ว การเปิดให้แก้
+ *    ต้องเพิ่มฟิลด์ที่ต้องซิงค์ ซึ่งเกินขอบเขตของใบนี้
+ *
+ * ⚠️ ใช้ 'change' ไม่ใช่ 'input' — ช่องสียิง input รัว ๆ ระหว่างลากเมาส์
+ *    ผูกกับ input แล้วจะยิง pushSettings ขึ้นเซิร์ฟเวอร์เป็นสิบครั้งต่อการเลือกสีหนึ่งครั้ง */
+document.getElementById('processTable').addEventListener('change', e=>{
+  const id = e.target.dataset.procColor;
+  if(!id) return;
+  const p = PROCESS_BY_ID[id];
+  const color = String(e.target.value || '').toLowerCase();
+  if(!p || DEFAULT_BY_ID[id]){ renderProcessAdmin(); return; }
+  if(!/^#[0-9a-f]{6}$/.test(color)){ toast('สีไม่ถูกรูปแบบ — ไม่ได้บันทึก'); renderProcessAdmin(); return; }
+  if(color === String(p.color || '').toLowerCase()) return;
+  const by = state.deviceName || '', now = new Date().toISOString();
+  queueProcessSave(()=> PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {color, updatedBy: by, updatedAt: now}) : x),
+    `เปลี่ยนสีของ ${p.label} แล้ว`);
 });
 
 document.getElementById('processTable').addEventListener('click', e=>{
@@ -5945,7 +6013,7 @@ document.getElementById('processTable').addEventListener('click', e=>{
     const label = l.trim(), short = s.trim() || label;
     if(label.length > 40 || short.length > 20){ toast('ชื่อขั้นยาวไม่เกิน 40 ตัว · ชื่อสั้นไม่เกิน 20 ตัว'); return; }
     if(PROCESS_LIST.some(x=>x.id !== id && (x.label === label || x.short === short))){ toast('มีขั้นชื่อนี้อยู่แล้ว'); return; }
-    saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {label, short, updatedBy: by, updatedAt: now}) : x),
+    queueProcessSave(()=> PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {label, short, updatedBy: by, updatedAt: now}) : x),
       `เปลี่ยนชื่อเป็น ${label} แล้ว`);
     return;
   }
@@ -5972,7 +6040,7 @@ document.getElementById('processTable').addEventListener('click', e=>{
     : `ซ่อนขั้น "${p.label}"? ${list} จะหายไปจากทุกเครื่อง`
       + (n ? ` · ยอดที่คีย์ไว้ ${numFmt(n)} รายการยังอยู่ แต่จะไม่ถูกนับจนกว่าจะเลิกซ่อน` : '');
   if(!confirm(msg)) return;
-  saveProcessList(PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {hidden: !p.hidden, updatedBy: by, updatedAt: now}) : x),
+  queueProcessSave(()=> PROCESS_LIST.map(x=> x.id === id ? Object.assign({}, x, {hidden: !p.hidden, updatedBy: by, updatedAt: now}) : x),
     p.hidden ? `เลิกซ่อน ${p.label} แล้ว` : `ซ่อน ${p.label} แล้ว`);
 });
 
