@@ -2970,6 +2970,10 @@ function renderDayTable(){
       + `<td class="rem">${numFmt(Math.max(0, o.orderQty - cum))}</td>`
       + `<td>${todayVal==null ? dash : `<b>${numFmt(todayVal)}</b>`}</td>`
       + `<td class="left">${note ? escapeHtml(note) : dash}</td>`
+      /* ⚠️ วางติดกับ Aging โดยตั้งใจ — Aging คือ "วันนี้ ลบ วันนี้ในช่องนี้" สองช่องจึงอ่านคู่กัน
+         ⚠️ โชว์ค่าที่มีจริงเสมอ แม้เป็นวันที่เป็นไปไม่ได้ (ปี 1901) ห้ามกลบเป็นขีด —
+            หลักเดียวกับ fgRows: ครอบแล้วข้อมูลที่คีย์ผิดจะหาย · ช่อง Aging ข้าง ๆ ฟ้องให้อยู่แล้ว */
+      + `<td>${escapeHtml(fmtDateTH(o.orderDate))}</td>`
       /* ⚠️ ส่ง `ref` ตัวเดียวกับหน้าคีย์ยอด (= วันนี้) ไม่ใช่วันที่เลือกบนจอ
          ไม่งั้นใบเดียวกันขึ้นอายุงานไม่ตรงกันสองหน้า ทุกครั้งที่มีคนคีย์ย้อนหลัง
          ⚠️ สถานะของใบยังคิดอยู่ เพราะ `agingCell()` ใช้ `st.code` ตัดสินสีของใบที่ส่งครบแล้ว
@@ -2989,10 +2993,11 @@ function renderDayTable(){
     + `<th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>`
     + `<th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th>`
     + `<th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนั้น</th><th>หมายเหตุ</th>`
+    + `<th title="วันที่สั่งซื้อจากไฟล์แผนงาน · ช่อง Aging ข้าง ๆ คือจำนวนวันนับจากวันในช่องนี้ถึงวันนี้">Order Date</th>`
     + `<th title="อายุงาน — จำนวนวันนับจากวันที่สั่งถึง &quot;วันนี้&quot; ไม่ใช่ถึงวันที่เลือกดู · สีมาจากกำหนดส่ง · เอาเมาส์ชี้ที่ช่องเพื่อดูสถานะของใบ">Aging</th></tr></thead>`
-    + `<tbody>${rowsHtml || emptyRow(11, emptyMsg)}</tbody><tfoot><tr>`
+    + `<tbody>${rowsHtml || emptyRow(12, emptyMsg)}</tbody><tfoot><tr>`
     + `<td colspan="8">รวมขั้น${escapeHtml(procLabel)} ของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ</td>`
-    + `<td>${total!=null ? numFmt(total) : '—'}</td><td colspan="2"></td></tr></tfoot>`;
+    + `<td>${total!=null ? numFmt(total) : '—'}</td><td colspan="3"></td></tr></tfoot>`;
 }
 
 /* ---------- ของที่ใช้ร่วมกัน: รายการใบย้อนแย้ง · ยอดรายวัน · กราฟแท่งกลุ่ม ----------

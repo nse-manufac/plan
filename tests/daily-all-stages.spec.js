@@ -48,8 +48,10 @@ async function openDaily(page, orders, records = [], date = D1, processes = null
   await page.waitForTimeout(250);
 }
 
-// ลำดับคอลัมน์ — # · สัปดาห์ · PO · P/N · Sub-Name · Order Qty · สะสม · คงเหลือ · ยอดวันนั้น · หมายเหตุ · สถานะ
-const COL = { qty: 5, cum: 6, rem: 7, today: 8, note: 9, status: 10 };
+// ลำดับคอลัมน์ — # · สัปดาห์ · PO · P/N · Sub-Name · Order Qty · สะสม · คงเหลือ · ยอดวันนั้น · หมายเหตุ · Order Date · Aging
+/* ⚠️ 13 พ.ย. 2569 เจ้าของสั่งเปลี่ยนคอลัมน์สุดท้ายจากป้ายสถานะเป็น Aging แล้วเติม Order Date
+      ไว้ข้าง ๆ · สถานะยังอยู่ แต่ไปอยู่ใน `title` ของช่อง Aging ไม่ใช่ข้อความในช่อง */
+const COL = { qty: 5, cum: 6, rem: 7, today: 8, note: 9, orderDate: 10, aging: 11 };
 const rowOf = (page, po) => page.locator('#dayTable tbody tr', { hasText: po });
 const cellOf = (page, po, col) => rowOf(page, po).locator('td').nth(COL[col]);
 // แถวรวมมีช่องแรกเป็น colspan="8" ช่องยอดรวมจึงเป็น td ตัวที่ 1
@@ -494,20 +496,44 @@ test('หัวคอลัมน์ยอดสะสมต้องบอก�
   expect(second).toContain(btnLabel.replace(/^\S+\s/, ''));
 });
 
-test('คอลัมน์สถานะต้องขึ้นป้ายของทั้งใบ ไม่ใช่ของวันที่เลือก', async ({ page }) => {
-  // วันที่เลือกคือ 20 ส.ค. 2026 แต่ป้ายคิดจาก "วันนี้" — ใบที่คีย์ไปนิดเดียวต้องเป็นป้ายแดง
-  // ส่วนใบที่ส่งครบต้องเป็นเขียว แม้แถวนั้นจะมีแต่ยอด winding ของวันที่เลือก
-  // ⚠️ ไม่ผูกกับคำบนป้าย เพราะลำดับการตัดสินของ computeStatus เป็นของ A5 (ปลายน้ำก่อน)
+test('ช่อง Aging และสถานะใน title ต้องคิดจาก "วันนี้" ไม่ใช่วันที่เลือก', async ({ page }) => {
+  // วันที่เลือกคือ 20 ส.ค. 2026 แต่ทั้งสองอย่างคิดจาก "วันนี้" — ใบที่ยังไม่ส่งต้องแดง
+  // ส่วนใบที่ส่งครบต้องเขียว แม้แถวนั้นจะมีแต่ยอด winding ของวันที่เลือก
+  // ⚠️ ไม่ผูกกับคำว่า "ล่าช้า X" เพราะลำดับการตัดสินของ computeStatus เป็นของ A5 (ปลายน้ำก่อน)
   //    ผูกคำแล้วเทสจะแดงเวลาใครแก้ A5 ให้ถูกขึ้น ซึ่งไม่ใช่เรื่องของหน้านี้
+  //    "ส่งของครบแล้ว" ผูกได้ เพราะเป็นข้อแรกสุดของ computeStatus ไม่ขึ้นกับลำดับขั้น
   await openDaily(page, ORDERS, [
     rec('r1', 'PO-1', 'winding', 100),
     rec('r2', 'PO-2', 'winding', 200),
     rec('r3', 'PO-2', 'shipping', 5000)
   ]);
-  await expect(cellOf(page, 'PO-1', 'status').locator('.badge')).toHaveClass(/red/);
-  await expect(cellOf(page, 'PO-2', 'status').locator('.badge')).toHaveClass(/green/);
-  // ป้ายต้องมีข้อความจริง ไม่ใช่ป้ายเปล่า
-  expect((await cellOf(page, 'PO-1', 'status').innerText()).trim().length).toBeGreaterThan(2);
+  await expect(cellOf(page, 'PO-1', 'aging').locator('.badge')).toHaveClass(/red/);
+  await expect(cellOf(page, 'PO-2', 'aging').locator('.badge')).toHaveClass(/green/);
+
+  /* ⚠️ สถานะต้องอ่านจาก `title` — อ่าน innerText จะได้ตัวเลขอายุงาน แล้วข้อนี้จะเขียว
+        โดยไม่ได้ตรวจสถานะเลย (ข้อนี้เคยเขียวแบบนั้นจริงตอนใบ #135 เปลี่ยนคอลัมน์) */
+  await expect(cellOf(page, 'PO-2', 'aging'), 'ใบที่ส่งครบต้องบอกว่าส่งครบ')
+    .toHaveAttribute('title', /ส่งของครบแล้ว/);
+  await expect(cellOf(page, 'PO-1', 'aging'), 'ใบที่ยังไม่ส่งต้องไม่บอกว่าส่งครบ')
+    .not.toHaveAttribute('title', /ส่งของครบแล้ว/);
+  const t1 = await cellOf(page, 'PO-1', 'aging').getAttribute('title');
+  expect(t1.replace('สถานะของใบนี้ ณ วันนี้:', '').trim().length,
+    'title ต้องมีสถานะจริง ไม่ใช่หัวข้อเปล่า').toBeGreaterThan(2);
+});
+
+test('คอลัมน์ Order Date ต้องโชว์วันที่สั่งแบบไทย และอ่านคู่กับ Aging ได้', async ({ page }) => {
+  /* เจ้าของขอเพิ่มคอลัมน์นี้ 13 พ.ย. 2569 · วางติดกับ Aging เพราะ Aging คือ
+     "วันนี้ ลบ วันในช่องนี้" — สองช่องอ่านคู่กันแล้วตรวจกันเองได้ */
+  const d = new Date();
+  const days = n => { const x = new Date(d); x.setDate(x.getDate() - n); return x.toISOString().slice(0, 10); };
+  const o1 = Object.assign(order('PO-1', 4000), { orderDate: days(12) });
+  await openDaily(page, [o1], [rec('r1', 'PO-1', 'winding', 100)]);
+
+  const [yy, mm, dd] = days(12).split('-');
+  expect((await cellOf(page, 'PO-1', 'orderDate').innerText()).trim(),
+    'ต้องเป็น dd/mm/yyyy แบบเดียวกับที่อื่นในแอป').toBe(`${dd}/${mm}/${yy}`);
+  expect((await cellOf(page, 'PO-1', 'aging').innerText()).trim(),
+    'Aging ต้องเท่ากับจำนวนวันจากช่อง Order Date ถึงวันนี้').toBe('12');
 });
 
 test('A3 — ขั้นที่ถูกซ่อนต้องไม่มีปุ่ม และต้องมีขั้นที่ถูกเลือกอยู่หนึ่งขั้นเสมอ', async ({ page }) => {
