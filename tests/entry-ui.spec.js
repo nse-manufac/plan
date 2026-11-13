@@ -147,7 +147,12 @@ test('Aging — ทุกหน้าที่โชว์ช่องนี้ 
 
   /* และสองหน้านั้นต้องให้ **เลขเดียวกัน** สำหรับใบเดียวกัน ซึ่งเป็นผลที่กฎข้างบนมีไว้เพื่อ
      ⚠️ ต้องเทียบของจริงบนจอด้วย ไม่ใช่ตรวจแต่ซอร์ส — ส่ง `ref` คนละตัว (วันนี้ vs วันที่เลือก)
-        ก็ทำให้สองหน้าไม่ตรงกันได้ ทั้งที่เรียกฟังก์ชันเดียวกันทั้งคู่ */
+        ก็ทำให้สองหน้าไม่ตรงกันได้ ทั้งที่เรียกฟังก์ชันเดียวกันทั้งคู่
+
+     🚨 **ต้องตั้ง `#dayDate` เป็นวันในอดีตก่อนอ่าน** ไม่งั้นด่านนี้ไม่มีฟันเลย —
+        ค่าตั้งต้นของช่องคือ "วันนี้" ซึ่งเท่ากับ `ref` พอดี เปลี่ยนโค้ดเป็น
+        `agingCell(o.orderDate, date, …)` แล้วไฟล์นี้ยังเขียวครบ 23 ข้อ (ผู้ตรวจ #135 รันพิสูจน์)
+        วันที่เลือกต้องห่างจากวันนี้มากพอให้เลขต่างกันแน่ ๆ */
   const orders = [order('PO-A', 1000, 'TUE-U', daysAgo(26)), order('PO-B', 1000, 'TUE-U', daysAgo(40))];
   await openEntry(page, orders);
   const onEntry = await page.locator('#entryTable [data-aging]').allInnerTexts();
@@ -155,6 +160,7 @@ test('Aging — ทุกหน้าที่โชว์ช่องนี้ 
 
   await page.click('.tab-btn[data-tab="daily"]');
   await page.waitForTimeout(150);
+  await page.fill('#dayDate', daysAgo(10));
   await page.locator('#dayShowAll').setChecked(true);
   await page.waitForTimeout(250);
   const onDay = await page.locator('#dayTable tbody [data-aging]').allInnerTexts();

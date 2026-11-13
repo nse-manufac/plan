@@ -524,8 +524,13 @@ test('ช่อง Aging และสถานะใน title ต้องคิ
 test('คอลัมน์ Order Date ต้องโชว์วันที่สั่งแบบไทย และอ่านคู่กับ Aging ได้', async ({ page }) => {
   /* เจ้าของขอเพิ่มคอลัมน์นี้ 13 พ.ย. 2569 · วางติดกับ Aging เพราะ Aging คือ
      "วันนี้ ลบ วันในช่องนี้" — สองช่องอ่านคู่กันแล้วตรวจกันเองได้ */
-  const d = new Date();
-  const days = n => { const x = new Date(d); x.setDate(x.getDate() - n); return x.toISOString().slice(0, 10); };
+  /* ⚠️ ต้องประกอบวันจากเวลา **เครื่อง** ไม่ใช่ `toISOString()` ซึ่งเป็น UTC —
+     ไทยเป็น UTC+7 ช่วงเที่ยงคืนถึงเจ็ดโมงเช้า UTC ยังเป็นเมื่อวาน เทสจะแดงเองวันละเจ็ดชั่วโมง
+     (แดงจริงตอนรันข้ามเที่ยงคืนคืนวันที่ 13) · แอปใช้ `todayISO()` ซึ่งเป็นเวลาเครื่อง */
+  const days = n => {
+    const x = new Date(); x.setDate(x.getDate() - n);
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  };
   const o1 = Object.assign(order('PO-1', 4000), { orderDate: days(12) });
   await openDaily(page, [o1], [rec('r1', 'PO-1', 'winding', 100)]);
 
