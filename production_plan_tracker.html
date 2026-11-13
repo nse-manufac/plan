@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-13.1">
+<meta name="app-version" content="2026-11-13.3">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -396,7 +396,16 @@
   <button class="tab-btn" data-tab="daily">📅 ยอดรายวันทุกขั้น</button>
   <button class="tab-btn" data-tab="delivery">🚚 ใบส่งสินค้า</button>
   <button class="tab-btn" data-tab="fg">📦 ยอดคงคลัง FG</button>
-  <button class="tab-btn" data-tab="wiptrend">📉 ยอดค้างรายวัน</button>
+  <!-- 🔒 ป้าย "📊 Dashboard" — เจ้าของสั่งเปลี่ยนชื่อ 13 พ.ย. 2569 (เดิม "📉 ยอดค้างรายวัน")
+       ⚠️ **ชื่อในโค้ดยังเป็น `wiptrend` · `wt*` ทุกตัว ห้ามเปลี่ยนตาม** — การเปลี่ยน id
+          คือการแก้ที่ต้องไล่ทั้ง HTML · CSS · เทส ซึ่งไม่ได้ขออะไรเพิ่มบนจอเลย
+       ⚠️ อยู่ช่องที่หกเหมือนเดิม ซึ่งเป็น **ช่องที่แท็บแดชบอร์ดเดิมเคยอยู่** พอดี
+          (แดชบอร์ดอยู่ช่อง 6 · แท็บนี้อยู่ช่อง 7 · ลบอันแรกแล้วอันนี้เลื่อนมาแทนที่)
+          คำเดียวกัน ไอคอนเดียวกัน ช่องเดียวกัน = คุณพ่อของเจ้าของกดที่เดิมได้
+       🚨 **คำอังกฤษ `Dashboard` = แท็บนี้ · คำไทย "แดชบอร์ด" = ตารางราย P/N ที่ถูกลบ**
+          กติกานี้คือสิ่งที่ทำให้ประวัติใน CLAUDE.md กับคอมเมนต์ทั้งไฟล์ยังอ่านได้
+          `tests/dashboard.spec.js` คุมไว้ -->
+  <button class="tab-btn" data-tab="wiptrend">📊 Dashboard</button>
   <button class="tab-btn" data-tab="data">🗂️ ข้อมูล &amp; แชร์</button>
 </nav>
 <main>
@@ -758,7 +767,10 @@
      เลือกได้แล้วค่อยปิดอันที่ไม่เอาทิ้งทั้งแท็บ -->
 <section id="view-wiptrend" class="view">
   <div class="panel">
-    <h2>ยอดค้างรายวัน</h2>
+    <!-- ⚠️ หัวข้อเป็น "Dashboard" ส่วน `<h3>` ของกราฟยอดค้างข้างล่างยังชื่อเดิม
+         ก่อน 13 พ.ย. 2569 ชื่อหน้ากับชื่อกราฟหนึ่งในสี่กราฟเป็นคำเดียวกัน
+         ซึ่งอ่านแล้วไม่รู้ว่าหมายถึงทั้งหน้าหรือกราฟอันนั้น -->
+    <h2>Dashboard</h2>
     <details class="wtexp"><summary>หน้านี้อ่านยังไง</summary>
     <div class="desc"><b>กราฟคู่บนเป็นภาพนิ่งของวันนี้</b> แกนนอนเป็นขั้น ไม่ใช่วัน และไม่ขึ้นกับช่วงวันที่เลือก ·
       <b>สองชุดล่างเป็นเส้นเวลา แต่ละชุดมีช่วงวันของตัวเอง</b> ·
@@ -1062,6 +1074,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-13.1"></script>
+<script src="app.js?v=2026-11-13.3"></script>
 </body>
 </html>
