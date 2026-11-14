@@ -597,6 +597,47 @@ function prepareState(){
   state.deltaWip.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
   state.deliveryLog.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
 
+  /* ── คลายใบที่คอลัมน์เลื่อน — บั๊ก ORDER_COLS (พบ 14 พ.ย. 2569) ───────────────
+   * doPushRows เคยเขียนลงชีตด้วย "ตำแหน่ง" ขณะที่ planSupport ถูกแทรกไว้กลางรายการ
+   * ค่าห้าช่องท้ายจึงหมุนเป็นวงกลม **ไม่มีค่าไหนตกขอบ** จึงคลายคืนได้ครบทุกตัว:
+   *     ค่าที่เห็นตอนนี้           =  ค่าจริงของ
+   *     planInspection            →  planSupport
+   *     status                    →  planInspection
+   *     importedAt                →  status
+   *     updatedAt                 →  importedAt
+   *     planSupport               →  updatedAt
+   *
+   * 🔒 **ซ่อมที่นี่เพราะนี่คือที่เดียวที่ทุกเครื่องผ่านตอนเปิดโปรแกรม** — เจ้าของสั่ง 14 พ.ย. 2569
+   *    ("ไล่กดทีละเครื่องไม่ไหว") · ทางเดิมคือให้ทุกเครื่องกด "ดึงรายการทั้งหมดใหม่" ซึ่งทำไม่ไหวจริง
+   *    มาร์ค _dirty เพื่อให้รอบซิงค์ถัดไปดันค่าที่ถูกขึ้นชีตทับของเพี้ยน = เครื่องแรกที่เปิดซ่อมชีตให้ทุกคน
+   *
+   * 🚨 **ต้องมาก่อนการซ่อมวันที่ข้างล่าง ห้ามสลับ** — normalizeRowDates ตัด timestamp ที่ค้างอยู่ใน
+   *    planSupport ให้เป็นวันล้วน ถ้ามันทำก่อน updatedAt ตัวจริงจะหายทั้งที่กู้ได้
+   *    (นั่นคืออาการ "เลื่อนสองชั้น" ที่เกิดกับ 2 ใบบนชีตจริงมาแล้ว)
+   * 🚨 **ลายเซ็นต้องสองด้าน** — importedAt ไม่ว่างและไม่ใช่ timestamp **และ** updatedAt เป็น timestamp
+   *    ใบปกติมี importedAt เป็น timestamp เสมอ (วัดจากชีตจริง 475/475 · ใบที่เลื่อน 441/441 เป็นคำว่า active)
+   *    ส่วนใบที่ importedAt ว่างคือใบเก่าที่ยังไม่เคยซิงค์ — เงื่อนไขด้านเดียวจะไปสลับช่องของใบพวกนั้นทิ้ง
+   * ⚠️ **ใบที่เลื่อนสองชั้นไม่แตะ** (updatedAt ไม่ใช่ timestamp) — ค่าหนึ่งถูกตัดเป็นวันล้วนไปแล้ว
+   *    คลายให้ก็ได้ของไม่ครบ · ขึ้น console ให้ตามด้วยตา ดีกว่าเดาแทนคน
+   * ⚠️ คลายแล้วลายเซ็นหายไปเอง (importedAt กลับเป็น timestamp) จึงไม่ทำซ้ำรอบสอง
+   * ⚠️ **ต้องอ่านค่าทุกช่องก่อนเขียนทับช่องนั้น** — ลำดับบรรทัดข้างล่างทำไว้แล้ว อย่าสลับ */
+  const isStamp = v => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(v == null ? '' : v));
+  let unshifted = 0; const shiftedTwice = [];
+  for(const o of state.orders){
+    const imp = String(o.importedAt == null ? '' : o.importedAt);
+    if(imp === '' || isStamp(imp)) continue;
+    if(!isStamp(o.updatedAt)){ shiftedTwice.push(o.poNo); continue; }
+    const wasInspection = o.planInspection;
+    o.planInspection = o.status;
+    o.status         = o.importedAt;
+    o.importedAt     = o.updatedAt;
+    o.updatedAt      = o.planSupport;
+    o.planSupport    = wasInspection;
+    o._dirty = true; unshifted++;
+  }
+  if(unshifted) console.info(`คลายคอลัมน์ที่เลื่อนให้ใบสั่ง ${unshifted} ใบ — จะดันค่าที่ถูกขึ้นเซิร์ฟเวอร์รอบซิงค์ถัดไป`);
+  if(shiftedTwice.length) console.warn(`ใบที่คอลัมน์เลื่อนสองชั้น กู้อัตโนมัติไม่ได้ ${shiftedTwice.length} ใบ — ต้องแก้ด้วยมือ: ${shiftedTwice.join(' · ')}`);
+
   // ซ่อมข้อมูลที่เพี้ยนค้างอยู่แล้วจากบั๊กวันที่ของ Google Sheets (ดู normalizeDateOnly)
   // แถวที่ค่าเปลี่ยนจริงถูกมาร์ค _dirty เพื่อดันค่าที่ถูกต้องกลับขึ้นเซิร์ฟเวอร์ทับของเดิม
   let fixed = 0;
@@ -604,7 +645,8 @@ function prepareState(){
   state.records.forEach(r=>{ if(normalizeRowDates(r, RECORD_DATE_FIELDS)){ r._dirty = true; fixed++; } });
   state.deliveryNotes.forEach(d=>{ if(normalizeRowDates(d, DELIVERY_DATE_FIELDS)){ d._dirty = true; fixed++; } });
   state.deliveryLog.forEach(d=>{ if(normalizeRowDates(d, SYNC_DATE_COLS.DeliveryLog)){ d._dirty = true; fixed++; } });
-  if(fixed){ saveState(); console.info(`ซ่อมวันที่ที่เพี้ยนจากการซิงค์ ${fixed} รายการ`); }
+  if(fixed) console.info(`ซ่อมวันที่ที่เพี้ยนจากการซิงค์ ${fixed} รายการ`);
+  if(fixed || unshifted) saveState();
 }
 
 /** เปิดหน้า: รอโหลดเสร็จก่อน แล้วค่อยเตรียม · วาดจอ · ซิงค์ที่มีคนขอไว้ระหว่างรอ */
