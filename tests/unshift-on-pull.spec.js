@@ -53,7 +53,7 @@ const four = o => Object.fromEntries(FOUR.map(k => [k, o[k]]));
  *    มันเขียน `updatedAt` ทับ **ลงในอ็อบเจกต์ที่รับมา** ไม่ใช่แค่ลงชีต · ส่งตัวจริงไปแล้วค่าที่ตั้งใจ
  *    จะ seed หายตั้งแต่ก่อนได้ใช้ แล้วบรรทัดข้างล่างจะ "เขียนค่าของเซิร์ฟเวอร์ทับด้วยค่าของเซิร์ฟเวอร์"
  *    ซึ่งดูเหมือนทำงานแต่ไม่ได้ทำอะไรเลย (เจอเองตอนเขียนเทส เสียเวลาไปหลายรอบ) */
-async function open(page, rowsOnSheet) {
+async function open(page, rowsOnSheet, ordersInDevice = []) {
   const gs = loadGs();
   const r = gs.api.doPushRows('Orders', rowsOnSheet.map(o => Object.assign({}, o)), 'ชีตตั้งต้น');
   expect(r.ok, 'เตรียมชีตปลอมไม่สำเร็จ: ' + JSON.stringify(r)).toBeTruthy();
@@ -75,7 +75,7 @@ async function open(page, rowsOnSheet) {
   }, [K_STATE, K_SYNC, {
     version: 1, deviceName: 'เครื่องทดสอบ', deadlineOffsets: OFFSETS,
     chartPref: { mode: '14', from: '', to: '' },
-    orders: [], records: [], deliveryNotes: [], deltaWip: [], deliveryLog: [], importHistory: []
+    orders: ordersInDevice, records: [], deliveryNotes: [], deltaWip: [], deliveryLog: [], importHistory: []
   }, { url: 'https://example.test/exec', token: gs.api.TOKEN, auto: true }]);
 
   await page.goto(APP);
@@ -100,25 +100,30 @@ test('แถวที่เลื่อนซึ่งมาถึงทาง p
   expect(four(o)).toEqual(four(TRUE_ROW));
 });
 
-/* คลายแล้วต้องมาร์ครอส่ง ไม่งั้นค่าที่ถูกอยู่แค่ในเครื่อง ชีตยังเพี้ยนต่อไป
-   ⚠️ ตรวจที่ "ถูก push ขึ้นไปแล้ว" ไม่ใช่ที่ธง `_dirty` — ธงถูกล้างทันทีที่ push สำเร็จ
-   ดูที่ค่าบนชีตจึงเป็นการวัดผลลัพธ์จริง ไม่ใช่สถานะชั่วคราวที่อาจหลุดจังหวะ */
-test('คลายแล้วต้องดันค่าที่ถูกขึ้นชีตเอง โดยไม่มีใครกดอะไร', async ({ page }) => {
-  // ⚠️ ตัวคลายทำงาน "หลัง" ขั้น push ของรอบซิงค์นั้นแล้ว การดันขึ้นจึงเกิดที่รอบถัดไป (ทุก 20 วิ)
-  //    ข้อนี้จึงต้องรอข้ามหนึ่งรอบจริง ๆ — เป็นเหตุผลเดียวที่ขยายเวลาของข้อนี้ ไม่ใช่เพราะเครื่องช้า
+/* 🚨 **ตัวคลายห้ามแตะชีต** — มันซ่อมเฉพาะสิ่งที่เครื่องนี้แสดง
+   ฉบับแรกของใบนี้มาร์ค `_dirty` เพื่อดันขึ้นไป ซึ่งทำให้ **สำเนาเก่าในเครื่องชนะของล่าสุดบนชีต**
+   (push มาก่อน pull · และ `mergeRowsInto()` ไม่ทับแถวที่ `_dirty`) · ข้อข้างล่างคือฉากที่ผู้ตรวจรันเจอ */
+test('ตัวคลายต้องไม่แตะชีตเลย — ชีตซ่อมที่ต้นทาง', async ({ page }) => {
   test.setTimeout(70_000);
   const gs = await open(page, [SHIFTED]);
   await pulled(page, TRUE_ROW.id);
-  await expect.poll(() => {
-    const res = gs.api.doPullRows('Orders', '');
-    const row = ((res.rows) || []).find(r => r.id === TRUE_ROW.id);
-    return row ? row.importedAt : null;
-  }, { message: 'ชีตไม่เคยได้ค่าที่คลายแล้ว', timeout: 45000 }).toBe(TRUE_ROW.importedAt);
+  await page.waitForTimeout(25_000);        // ข้ามรอบซิงค์อัตโนมัติไปหนึ่งรอบเต็ม (ทุก 20 วิ)
+  const row = gs.api.doPullRows('Orders', '').rows.find(r => r.id === TRUE_ROW.id);
+  expect(row.importedAt, 'ชีตถูกเขียนทับ ทั้งที่ตัวคลายไม่ควรแตะ').toBe(SHIFTED.importedAt);
+});
 
-  const res = gs.api.doPullRows('Orders', '');
-  const row = res.rows.find(r => r.id === TRUE_ROW.id);
-  expect(row.status).toBe('active');
-  expect(row.planInspection).toBe(TRUE_ROW.planInspection);
+/* 🚨 ฉากที่ฉบับแรกของใบนี้ทำพัง — เครื่องที่ปิดไว้นานแล้วเพิ่งเปิด ถือสำเนาที่ **เก่ากว่า** ชีต
+   (เกิดได้จริงเพราะช่วงที่บั๊กอยู่ คอลัมน์ `updatedAt` บนชีตไม่ขยับ การยกเลิกใบจึงไม่เคยไหลไปเครื่องอื่น)
+   ถ้าตัวคลายมาร์ค `_dirty` สำเนาเก่านั้นจะถูก push ทับของล่าสุด = **ใบที่ยกเลิกไว้กลับมาเอง** */
+test('สำเนาเก่าในเครื่องต้องไม่ทับของล่าสุดบนชีต — ใบที่ยกเลิกต้องไม่ฟื้น', async ({ page }) => {
+  test.setTimeout(70_000);
+  const LATEST = Object.assign({}, TRUE_ROW, { orderQty: 2000, voided: true });
+  const STALE = Object.assign({}, SHIFTED, { orderQty: 1000, voided: false, _dirty: false });
+  const gs = await open(page, [LATEST], [STALE]);
+  await page.waitForTimeout(25_000);
+  const row = gs.api.doPullRows('Orders', '').rows.find(r => r.id === TRUE_ROW.id);
+  expect(Number(row.orderQty), 'ยอดสั่งล่าสุดบนชีตถูกสำเนาเก่าทับ').toBe(2000);
+  expect(String(row.voided).toLowerCase(), 'ใบที่ยกเลิกไว้ฟื้นกลับมา').toBe('true');
 });
 
 test('แถวปกติที่มาถึงทาง pull ต้องไม่ถูกแตะ', async ({ page }) => {
