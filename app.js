@@ -697,11 +697,14 @@ let syncIntervalId = null;
  *  ฟิลด์ที่ไม่อยู่ในนี้จะไม่ถูกส่ง จึงโกหกไม่ได้
  *  และ tests/sync-contract.spec.js อ่านทั้งไฟล์นี้กับ .gs มาเทียบกันทุกครั้งที่รันเทส */
 const SYNC_COLS = {
-  // ⚠️ คอลัมน์ใหม่ต้องเติมท้ายสุดเสมอ — ฝั่ง Apps Script เขียนแถวด้วยตำแหน่ง (toRow)
-  //    แต่เติมคอลัมน์ที่ขาดต่อท้ายหัวตาราง ลำดับสองฝั่งจึงตรงกันได้ต่อเมื่อเติมท้ายเหมือนกัน
+  // 🚨 **ลำดับข้างล่างคือหัวตารางของชีตจริง ไม่ใช่ลำดับที่อ่านแล้วสวย — คอลัมน์ใหม่ต่อท้ายเท่านั้น**
+  //    `planSupport` อยู่ก่อน `voided` เพราะมันถูกเติมเข้าชีตก่อน · เคยเรียงไว้กลางรายการ
+  //    ตามลำดับของสาย แล้วข้อมูล 441 จาก 918 ใบเพี้ยนเงียบ ๆ หลายเดือน
+  //    **เหตุผลเต็มอยู่ที่ `ORDER_COLS` ใน `google-apps-script.gs` ที่เดียว — อย่าเขียนซ้ำที่นี่**
+  //    `tests/node/sync-cols.test.js` ตรึงลำดับไว้แล้ว
   Orders: ['id','week','poNo','pn','subName','osc','pc','orderQty','orderDate',
-           'planWinding','planAssembly','planSupport','planInspection','status','importedAt','updatedAt',
-           'voided'],
+           'planWinding','planAssembly','planInspection','status','importedAt','updatedAt',
+           'planSupport','voided'],
   Records: ['id','date','orderId','process','qty','note','deviceName',
             'createdAt','updatedAt','voided','batchId'],
   DeliveryNotes: ['id','date','unit','orderId','pn','perBox','boxes','remainder','remark','billNo',
