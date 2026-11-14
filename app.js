@@ -624,22 +624,41 @@ function markMoved(){ try{ localStorage.setItem(MOVED_KEY, '1'); }catch(e){ cons
  *
  * 🚨 **ที่ prepareState ต้องมาก่อนการซ่อมวันที่ ห้ามสลับ** — normalizeRowDates ตัด timestamp
  *    ที่ค้างอยู่ใน planSupport ให้เป็นวันล้วน ถ้ามันทำก่อน updatedAt ตัวจริงจะหายทั้งที่กู้ได้
- * 🚨 **ลายเซ็นต้องสองด้าน** — importedAt ไม่ว่างและไม่ใช่ timestamp **และ** updatedAt เป็น timestamp
- *    ใบปกติมี importedAt เป็น timestamp เสมอ (วัดจากชีตจริง 475/475 · ใบที่เลื่อน 441/441 เป็นคำว่า active)
- *    ส่วนใบที่ importedAt ว่างคือใบเก่าที่ยังไม่เคยซิงค์ — เงื่อนไขด้านเดียวจะไปสลับช่องของใบพวกนั้นทิ้ง
- * ⚠️ **ใบที่เลื่อนสองชั้นไม่แตะ** (updatedAt ไม่ใช่ timestamp) — ค่าหนึ่งถูกตัดเป็นวันล้วนไปแล้ว
- *    คลายให้ก็ได้ของไม่ครบ · ขึ้น console ให้ตามด้วยตา ดีกว่าเดาแทนคน
+ * 🚨🚨 **ลายเซ็นต้องเทียบ "ค่าจริง" ไม่ใช่ "รูปแบบ" — `imp === 'active'` เท่านั้น** 🚨🚨
+ *    order.status ถูกเขียนที่เดียวในทั้งแอป คือตอนนำเข้าแผน (`status:'active'`)
+ *    ใบที่เลื่อนชั้นเดียวจึงมี importedAt เป็นคำว่า active **เป๊ะ ๆ ทั้ง 441 ใบ** (วัดจากชีตจริง)
+ *    ส่วนใบปกติมี importedAt เป็น timestamp เสมอ (475/475)
+ *
+ *    ⚠️ **ฉบับก่อนใช้ "importedAt ไม่ใช่ timestamp **และ** updatedAt เป็น timestamp" ซึ่งไม่เสถียร**
+ *    updatedAt ถูกเขียนทับด้วยเวลาปัจจุบันจากทางปกติหลายทาง — ยกเลิก/กู้คืนใบสั่ง ·
+ *    ปุ่ม "คำนวณ Sub-Name ใหม่" (แตะทุกใบพร้อมกัน) · นำเข้าไฟล์แผนทับ · และ doSync เองหลัง push
+ *    พอ updatedAt กลายเป็น timestamp **ใบที่เลื่อนสองชั้นก็เข้าลายเซ็นทันที** แล้วถูกหมุนอีกรอบ
+ *    ได้รูปผิดแบบที่สาม: วันแผนหาย · importedAt กลายเป็นเวลาวันนี้ = **ลายเซ็นหายถาวร**
+ *    console.warn เลิกขึ้นเลข PO ไม่มีใครตามได้อีกว่าใบไหนเสีย (ผู้ตรวจ #138 รันพิสูจน์)
+ *
+ * ⚠️ **สองด่านข้างบนคือ "ไม่แตะ" ไม่ใช่ "คลายให้"** — แถวที่ค่าใน updatedAt ไม่ใช่ timestamp
+ *    หรือ importedAt เป็นวันล้วน คือแถวที่เพี้ยนเกินกว่าจะคลายอัตโนมัติ · ขึ้น console ให้ตามด้วยตา
+ *    ดีกว่าเดาแทนคน · ของจริงบนชีตมี 2 ใบ
+ * ⚠️ **ยังมีรูปที่เงียบอยู่หนึ่งแบบ และยอมรับไว้** — ใบเลื่อนสองชั้นที่ทั้ง importedAt และ updatedAt
+ *    กลายเป็น timestamp ไปแล้ว จะไม่ถูกแตะและไม่ถูกรายงาน · ไม่มีอะไรในแถวบอกได้อีกแล้วว่ามันเพี้ยน
+ *    แต่ "ไม่แตะ" คือสิ่งที่ถูกต้องสำหรับแถวที่อ่านไม่ออก
  * ⚠️ คลายแล้วลายเซ็นหายไปเอง (importedAt กลับเป็น timestamp) จึงไม่หมุนซ้ำรอบสอง
  *    ซึ่งเป็นเหตุผลที่เรียกซ้ำทุก 20 วิได้โดยไม่ต้องจำว่าเคยคลายแล้วหรือยัง
  * ⚠️ **ต้องอ่านค่าทุกช่องก่อนเขียนทับช่องนั้น** — ลำดับบรรทัดข้างล่างทำไว้แล้ว อย่าสลับ
  * @returns {number} จำนวนใบที่คลายให้ (0 = ไม่มีอะไรเปลี่ยน ผู้เรียกไม่ต้องบันทึก) */
 function unshiftShiftedOrders(orders){
   const isStamp = v => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(v == null ? '' : v));
-  let fixed = 0; const shiftedTwice = [];
+  let fixed = 0; const needEyes = [];
   for(const o of orders){
     const imp = String(o.importedAt == null ? '' : o.importedAt);
-    if(imp === '' || isStamp(imp)) continue;
-    if(!isStamp(o.updatedAt)){ shiftedTwice.push(o.poNo); continue; }
+    const upd = String(o.updatedAt == null ? '' : o.updatedAt);
+    // แถวที่เพี้ยนเกินกว่าจะคลายอัตโนมัติ — รายงานแล้วข้าม ห้ามหมุน
+    // ต้องยกเว้น "วันล้วน" ใน updatedAt ด้วย เพราะแถวที่คลายไปแล้วหน้าตาเป็นแบบนั้นพอดี
+    // (updatedAt รับค่ามาจาก planSupport ซึ่งถูกตัดเป็นวันล้วนตั้งแต่ตอน pull)
+    // ไม่ยกเว้นแล้วทุกใบที่เพิ่งคลายจะถูกรายงานว่า "ต้องแก้ด้วยมือ" ทั้งที่เรียบร้อยแล้ว
+    const odd = v => v !== '' && !isStamp(v) && !/^\d{4}-\d{2}-\d{2}$/.test(v);
+    if(odd(upd) || /^\d{4}-\d{2}-\d{2}$/.test(imp)){ needEyes.push(o.poNo); continue; }
+    if(imp !== 'active') continue;   // ปกติ · ยังไม่เคยซิงค์ · หรือเพี้ยนแบบที่อ่านไม่ออก
     const wasInspection = o.planInspection;
     o.planInspection = o.status;
     o.status         = o.importedAt;
@@ -649,7 +668,7 @@ function unshiftShiftedOrders(orders){
     fixed++;   // 🚨 ห้ามมาร์ค _dirty ที่นี่ — อ่านบล็อก 🚨🚨 ข้างบนก่อนคิดจะเติม
   }
   if(fixed) console.info(`คลายคอลัมน์ที่เลื่อนให้ใบสั่ง ${fixed} ใบ — เฉพาะสิ่งที่เครื่องนี้แสดง ชีตซ่อมที่ต้นทาง`);
-  if(shiftedTwice.length) console.warn(`ใบที่คอลัมน์เลื่อนสองชั้น กู้อัตโนมัติไม่ได้ ${shiftedTwice.length} ใบ — ต้องแก้ด้วยมือ: ${shiftedTwice.join(' · ')}`);
+  if(needEyes.length) console.warn(`ใบที่คอลัมน์เพี้ยนเกินกว่าจะคลายอัตโนมัติ ${needEyes.length} ใบ — ต้องแก้ด้วยมือ: ${needEyes.join(' · ')}`);
   return fixed;
 }
 

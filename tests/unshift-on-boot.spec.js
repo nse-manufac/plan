@@ -57,6 +57,15 @@ const CLEAN = good('TM5269H103', 'PN-C');
 const NEVER_SYNCED = good('TM5269H104', 'PN-D', { importedAt: '' });
 const TWICE = shiftOnce(shiftOnce(good('TM5269H105', 'PN-E')));
 
+/* 🚨 **ใบเลื่อนสองชั้นที่ `updatedAt` ถูกเขียนทับด้วยเวลาปัจจุบันไปแล้ว**
+   เกิดได้จากทางปกติหลายทาง — ยกเลิก/กู้คืนใบสั่ง · ปุ่ม "คำนวณ Sub-Name ใหม่" (แตะทุกใบพร้อมกัน) ·
+   นำเข้าไฟล์แผนทับ · และ `doSync()` เองหลัง push
+   ลายเซ็นฉบับเก่า ("`importedAt` ไม่ใช่ timestamp **และ** `updatedAt` เป็น timestamp")
+   จะรับใบแบบนี้ไว้แล้วหมุนอีกรอบ → วันแผนหาย · `importedAt` กลายเป็นเวลาวันนี้ = **ลายเซ็นหายถาวร**
+   แล้ว console เลิกขึ้นเลข PO ไม่มีใครตามได้อีกว่าใบไหนเสีย (ผู้ตรวจ #138 รันพิสูจน์) */
+const TWICE_TOUCHED = Object.assign(shiftOnce(shiftOnce(good('TM5269H107', 'PN-G'))),
+  { updatedAt: '2026-11-14T14:05:21.936Z' });
+
 /* 🚨 **รูปที่เครื่องจริงถืออยู่วันนี้** — `mergeRowsInto()` เรียก `normalizeRowDates()` ให้แถวที่
    ดึงมา **ก่อน** เก็บ (`app.js` บรรทัดแรกของลูป) · `planSupport` อยู่ใน `ORDER_DATE_FIELDS`
    จึงถูกตัดเป็นวันล้วนตั้งแต่ตอน pull · **นี่คือรูปเดียวที่เครื่องจริงถืออยู่**
@@ -69,7 +78,7 @@ const TWICE = shiftOnce(shiftOnce(good('TM5269H105', 'PN-E')));
 const TRUE_C = good('TM5269H106', 'PN-F');
 const SHIFTED_C = Object.assign(shiftOnce(TRUE_C), { planSupport: '2026-09-16' });
 
-const SEED = [shiftOnce(TRUE_A), shiftOnce(TRUE_B), CLEAN, NEVER_SYNCED, TWICE, SHIFTED_C];
+const SEED = [shiftOnce(TRUE_A), shiftOnce(TRUE_B), CLEAN, NEVER_SYNCED, TWICE, TWICE_TOUCHED, SHIFTED_C];
 
 async function boot(page, orders = SEED) {
   await forgetSavedOnEveryLoad(page);
@@ -145,6 +154,17 @@ test('ใบที่ยังไม่เคยซิงค์ (importedAt ว�
    อีกสองช่อง (planSupport · planInspection) ถือ timestamp อยู่ แล้วถูก `normalizeRowDates`
    ตัดเป็นวันล้วน ซึ่งเป็น **ตัวซ่อมวันที่ของเดิม ไม่ใช่โค้ดในใบนี้** — และเป็นกลไกเดียวกับที่
    ทำให้ใบพวกนี้เสียหายกู้ไม่ครบตั้งแต่แรก · เทียบทั้งห้าช่องจะแดงด้วยเหตุที่ไม่เกี่ยวกับสิ่งที่ข้อนี้คุม */
+/* 🚨 ข้อที่กันบั๊กที่ลายเซ็นฉบับเก่ามี — `updatedAt` ถูกเขียนทับได้จากทางปกติหลายทาง
+   จึงใช้เป็นลายเซ็นไม่ได้ · ตอนนี้ด่านแรกเทียบ **ค่าจริง** (`importedAt === 'active'`)
+   ซึ่ง `order.status` ถูกเขียนที่เดียวในทั้งแอปตอนนำเข้าแผน จึงเป็นค่าที่เชื่อได้ */
+test('ใบเลื่อนสองชั้นที่ updatedAt ถูกเขียนทับไปแล้ว ต้องยังไม่ถูกหมุน', async ({ page }) => {
+  const got = await boot(page);
+  const o = got.get(TWICE_TOUCHED.id);
+  expect(o.importedAt).toBe(TWICE_TOUCHED.importedAt);   // หมุนแล้วจะกลายเป็นเวลาวันนี้
+  expect(o.status).toBe(TWICE_TOUCHED.status);
+  expect(o.updatedAt).toBe(TWICE_TOUCHED.updatedAt);
+});
+
 test('ใบที่เลื่อนสองชั้นต้องไม่ถูกหมุนซ้ำ — กู้ไม่ครบ ต้องให้คนดูเอง', async ({ page }) => {
   const got = await boot(page);
   const o = got.get(TWICE.id);
