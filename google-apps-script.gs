@@ -198,9 +198,19 @@ function readObjects(sheet) {
   return out;
 }
 
-function toRow(obj, cols) {
-  return cols.map(function (c) {
-    var v = obj[c];
+/* สร้างแถวสำหรับเขียนลงชีต — เรียงตาม **หัวตารางจริง** (head) ไม่ใช่ตามลำดับของ cols
+ *   head = แถวหัวตารางของชีต · cols = รายชื่อคอลัมน์ที่โปรแกรมนี้รู้จัก
+ *   base = ค่าเดิมของแถวนั้น (null = แถวใหม่) ใช้คงค่าคอลัมน์ที่ไม่ใช่ของเราไว้
+ *
+ * 🚨 เดิมฟังก์ชันนี้เรียงตาม cols แล้วเขียนทับคอลัมน์ที่ 1..cols.length — ถูกเฉพาะตอนสองลำดับตรงกัน
+ *    พอ planSupport ถูกแทรกกลางรายการ ค่าทุกช่องตั้งแต่จุดนั้นก็เลื่อนไปหนึ่งคอลัมน์ **เงียบ ๆ**
+ *    ข้อมูล 441 จาก 918 ใบเพี้ยนอยู่หลายเดือน (14 พ.ย. 2569) · แมปด้วยชื่อแล้วถูกกับชีตทุกแบบ
+ * ⚠️ ฟิลด์ที่แถวไม่ได้ส่งมาเขียนเป็นค่าว่างเหมือนเดิม (นั่นคือเหตุผลที่ KEEP_IF_ABSENT มีอยู่)
+ *    เปลี่ยนเฉพาะ "ลงคอลัมน์ไหน" ไม่ได้เปลี่ยน "เขียนค่าอะไร" */
+function toRow(obj, head, cols, base) {
+  return head.map(function (name, i) {
+    if (!name || cols.indexOf(name) < 0) return base ? base[i] : '';   // ไม่ใช่คอลัมน์ของเรา
+    var v = obj[name];
     return (v === undefined || v === null) ? '' : v;
   });
 }
@@ -229,13 +239,21 @@ function fixTimestampCols(row, cols) {
 /** ตั้ง number format ของคอลัมน์ที่ต้องเป็นข้อความ ('@') ก่อนเขียน
  *  กัน Sheets ตีความสตริงวันที่เป็นเซลล์ชนิดวันที่ และตีความสตริงตัวเลขล้วนเป็นตัวเลข (ดู TEXT_COLS)
  *  ตอน setValues() — ครอบคลุมถึงแถวที่กำลังจะเพิ่มใหม่ด้วย (+buffer กันคลาด) */
-function ensureTextFormat(sheet, cols, textFieldNames, incomingRowCount) {
+function ensureTextFormat(sheet, head, textFieldNames, incomingRowCount) {
   if (!textFieldNames.length) return;
   var rowSpan = Math.max(sheet.getLastRow(), 1) + incomingRowCount + 5;
   textFieldNames.forEach(function (name) {
-    var idx = cols.indexOf(name) + 1;
+    var idx = head.indexOf(name) + 1;
     if (idx > 0) sheet.getRange(2, idx, rowSpan, 1).setNumberFormat('@');
   });
+}
+
+/** แถวหัวตารางจริงของชีต — **ทุกอย่างที่เขียนลงชีตต้องอ้างตำแหน่งจากตัวนี้ ไม่ใช่จาก cols**
+ *  เรียกหลัง sheetOf() เสมอ จึงมั่นใจได้ว่าทุกชื่อใน cols มีอยู่ในหัวตารางแล้ว
+ *  (ดูเหตุผลเต็มที่บล็อกของ ORDER_COLS — ลำดับใน cols กับในชีตไม่ตรงกันเคยทำข้อมูลเพี้ยน 441 ใบ) */
+function headOf(sheet, cols) {
+  var w = Math.max(sheet.getLastColumn(), cols.length, 1);
+  return sheet.getRange(1, 1, 1, w).getValues()[0].map(String);
 }
 
 function meta(key, value) {
@@ -321,9 +339,10 @@ function doPushRows(table, rows, device) {
   if (!lock.tryLock(25000)) return { ok: false, error: 'ระบบกำลังถูกใช้งาน ลองใหม่อีกครั้ง' };
   try {
     var sheet = sheetOf(table, cols);
+    var head = headOf(sheet, cols);   // ตำแหน่งจริงของทุกคอลัมน์ — ห้ามใช้ลำดับของ cols แทน
     // บังคับคอลัมน์วันที่ให้เป็น format ข้อความก่อนเขียน กัน Sheets แปลงเป็นเซลล์ชนิดวันที่เอง
     // (ครอบคลุมแถวที่มีอยู่ + จำนวนแถวที่กำลังจะเขียนเผื่อไว้ ไม่ต้องกวาดทั้งคอลัมน์ทุกครั้ง)
-    ensureTextFormat(sheet, cols, (DATE_ONLY_COLS[table] || []).concat(TEXT_COLS[table] || []), rows.length);
+    ensureTextFormat(sheet, head, (DATE_ONLY_COLS[table] || []).concat(TEXT_COLS[table] || []), rows.length);
     var last = sheet.getLastRow();
     var index = {};
     if (last >= 2) {
@@ -334,9 +353,11 @@ function doPushRows(table, rows, device) {
     var appends = [];
     // คอลัมน์ที่ต้องคงค่าเดิมเมื่อแถวที่ส่งมา "ไม่มีช่องนั้นเลย" — อ่านของเดิมครั้งเดียวทั้งตาราง ไม่อ่านทีละแถว
     var keep = KEEP_IF_ABSENT[table] || [];
-    var existing = (keep.length && last >= 2)
-      ? sheet.getRange(2, 1, last - 1, Math.max(sheet.getLastColumn(), cols.length)).getValues() : [];
-    var head = keep.length ? sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), cols.length)).getValues()[0].map(String) : [];
+    /* 🚨 คอลัมน์ในหัวตารางที่ไม่ใช่ของเรา (คนเติมมือ / ช่องไม่มีชื่อ) ต้องคงค่าเดิมไว้
+       ปกติไม่มีเลย จึงไม่ต้องอ่านทั้งตาราง — อ่านเฉพาะตอนมีจริงเท่านั้น */
+    var alien = head.some(function (h, i) { return i < head.length && (!h || cols.indexOf(h) < 0); });
+    var existing = ((keep.length || alien) && last >= 2)
+      ? sheet.getRange(2, 1, last - 1, head.length).getValues() : [];
     for (var k = 0; k < rows.length; k++) {
       var r = rows[k];
       if (!r.id) continue;
@@ -353,11 +374,12 @@ function doPushRows(table, rows, device) {
         r.voided = r.voided ? 'TRUE' : 'FALSE';
       }
       var at = index[String(r.id)];
-      if (at) sheet.getRange(at, 1, 1, cols.length).setValues([toRow(r, cols)]);
-      else appends.push(toRow(r, cols));
+      var base = (at && existing.length) ? existing[at - 2] : null;
+      if (at) sheet.getRange(at, 1, 1, head.length).setValues([toRow(r, head, cols, base)]);
+      else appends.push(toRow(r, head, cols, null));
     }
     if (appends.length) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, cols.length).setValues(appends);
+      sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, head.length).setValues(appends);
     }
     SpreadsheetApp.flush();
     return { ok: true, serverTime: stamp, saved: rows.length, added: appends.length };
@@ -497,13 +519,14 @@ function repairDateColumns() {
     var cols = ROW_TABLES[table];
     var fields = DATE_ONLY_COLS[table];
     var sheet = sheetOf(table, cols);
+    var head = headOf(sheet, cols);   // ตำแหน่งจริง ไม่ใช่ลำดับของ cols
     var last = sheet.getLastRow();
     if (last < 2) return;
 
-    ensureTextFormat(sheet, cols, fields, 0);
+    ensureTextFormat(sheet, head, fields, 0);
 
     fields.forEach(function (name) {
-      var idx = cols.indexOf(name) + 1;
+      var idx = head.indexOf(name) + 1;
       if (idx < 1) return;
       var range = sheet.getRange(2, idx, last - 1, 1);
       var values = range.getValues();
