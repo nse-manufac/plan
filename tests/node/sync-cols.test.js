@@ -47,12 +47,19 @@ const FROZEN = {
     'deviceName', 'createdAt', 'updatedAt', 'voided']
 };
 
-const GS_NAME = {
-  Orders: 'ORDER_COLS', Records: 'RECORD_COLS', DeliveryNotes: 'DELIVERY_COLS',
-  DeltaWip: 'DELTAWIP_COLS', DeliveryLog: 'DELIVERYLOG_COLS'
-};
-
 const strings = block => [...block.matchAll(/'([^']+)'/g)].map(m => m[1]);
+
+/* ⚠️ **ชื่อตารางฝั่ง `.gs` ต้องอ่านจาก `ROW_TABLES` ห้ามฮาร์ดโค้ดไว้ในไฟล์นี้**
+   ของเดิมมีตาราง `GS_NAME` อยู่ตรงนี้ ซึ่งแปลว่าตารางที่หกที่ใครเพิ่มเข้า `.gs`
+   จะไม่มีวันถูกเห็นโดยไฟล์นี้เลย = ด่านเขียวเพราะไม่ได้ตรวจ (ผู้ตรวจ #136 รอบ 9) */
+function gsNames() {
+  const src = fs.readFileSync(path.join(ROOT, 'google-apps-script.gs'), 'utf8');
+  const m = src.match(/var\s+ROW_TABLES\s*=\s*\{([\s\S]*?)\};/);
+  assert.ok(m, 'หา ROW_TABLES ใน .gs ไม่เจอ');
+  const out = {};
+  for (const p of m[1].matchAll(/(\w+)\s*:\s*(\w+)/g)) out[p[1]] = p[2];
+  return out;
+}
 
 /** รายการคอลัมน์ของทุกตารางจาก SYNC_COLS ใน app.js */
 function appCols() {
@@ -69,7 +76,7 @@ function appCols() {
 function gsCols() {
   const src = fs.readFileSync(path.join(ROOT, 'google-apps-script.gs'), 'utf8');
   const out = {};
-  for (const [table, name] of Object.entries(GS_NAME)) {
+  for (const [table, name] of Object.entries(gsNames())) {
     const m = src.match(new RegExp('const\\s+' + name + '\\s*=\\s*\\[([\\s\\S]*?)\\];'));
     assert.ok(m, 'หา ' + name + ' ใน .gs ไม่เจอ');
     out[table] = strings(m[1]);
@@ -100,6 +107,21 @@ for (const [table, frozen] of Object.entries(FROZEN)) {
       `FROZEN : ${frozen.join(' ')}\nโค้ดใช้ : ${now.join(' ')}`);
   });
 }
+
+/* 🚨 **ต้องเทียบ "ชุดชื่อตาราง" ทั้งสองทิศด้วย ไม่ใช่วนเฉพาะคีย์ของ FROZEN**
+   ลูปข้างบนเดินจาก `FROZEN` เป็นตัวตั้ง จึงมีรูสองทาง และ **ผู้ตรวจ #136 รอบ 9 รันพิสูจน์ทั้งคู่**
+   · เพิ่ม **ตารางที่หก** ครบทั้ง `.gs` + `app.js` โดยไม่แตะ `FROZEN` → เขียวหมด
+     แปลว่าตารางนั้น **ไม่เคยถูกตรึงเลย** ใบถัดไปแทรกคอลัมน์กลางรายการของมันได้โดยไม่มีอะไรฟ้อง
+   · **ลบตารางออกจาก `FROZEN`** → เขียวหมดเหมือนกัน เงียบ ๆ แค่จำนวนข้อหายไปสอง
+   เป็นรูคลาสเดียวกับที่รอบ 5 จับได้ (`now.slice(0, frozen.length)`) — ด่านที่ "เขียวเพราะไม่ได้ตรวจ" */
+test('ชื่อตารางใน FROZEN ต้องตรงกับที่โค้ดประกาศ ครบทั้งสองทิศ', () => {
+  const frozen = Object.keys(FROZEN).sort();
+  for (const [name, cols] of [['app.js', appCols()], ['.gs', gsCols()]]) {
+    assert.deepEqual(Object.keys(cols).sort(), frozen,
+      `${name} ประกาศตารางไม่ตรงกับ FROZEN — เพิ่มตารางใหม่ต้องเพิ่มใน FROZEN ด้วยในใบเดียวกัน\n` +
+      `FROZEN : ${frozen.join(' ')}\nโค้ดใช้ : ${Object.keys(cols).sort().join(' ')}`);
+  }
+});
 
 test('สองไฟล์ต้องประกาศลำดับเดียวกันเป๊ะ', () => {
   const a = appCols(), g = gsCols();
