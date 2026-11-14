@@ -48,8 +48,10 @@ async function openDaily(page, orders, records = [], date = D1, processes = null
   await page.waitForTimeout(250);
 }
 
-// ลำดับคอลัมน์ — # · สัปดาห์ · PO · P/N · Sub-Name · Order Qty · สะสม · คงเหลือ · ยอดวันนั้น · หมายเหตุ · สถานะ
-const COL = { qty: 5, cum: 6, rem: 7, today: 8, note: 9, status: 10 };
+// ลำดับคอลัมน์ — # · สัปดาห์ · PO · P/N · Sub-Name · Order Qty · สะสม · คงเหลือ · ยอดวันนั้น · หมายเหตุ · Order Date · Aging
+/* ⚠️ 13 พ.ย. 2569 เจ้าของสั่งเปลี่ยนคอลัมน์สุดท้ายจากป้ายสถานะเป็น Aging แล้วเติม Order Date
+      ไว้ข้าง ๆ · สถานะยังอยู่ แต่ไปอยู่ใน `title` ของช่อง Aging ไม่ใช่ข้อความในช่อง */
+const COL = { qty: 5, cum: 6, rem: 7, today: 8, note: 9, orderDate: 10, aging: 11 };
 const rowOf = (page, po) => page.locator('#dayTable tbody tr', { hasText: po });
 const cellOf = (page, po, col) => rowOf(page, po).locator('td').nth(COL[col]);
 // แถวรวมมีช่องแรกเป็น colspan="8" ช่องยอดรวมจึงเป็น td ตัวที่ 1
@@ -494,20 +496,49 @@ test('หัวคอลัมน์ยอดสะสมต้องบอก�
   expect(second).toContain(btnLabel.replace(/^\S+\s/, ''));
 });
 
-test('คอลัมน์สถานะต้องขึ้นป้ายของทั้งใบ ไม่ใช่ของวันที่เลือก', async ({ page }) => {
-  // วันที่เลือกคือ 20 ส.ค. 2026 แต่ป้ายคิดจาก "วันนี้" — ใบที่คีย์ไปนิดเดียวต้องเป็นป้ายแดง
-  // ส่วนใบที่ส่งครบต้องเป็นเขียว แม้แถวนั้นจะมีแต่ยอด winding ของวันที่เลือก
-  // ⚠️ ไม่ผูกกับคำบนป้าย เพราะลำดับการตัดสินของ computeStatus เป็นของ A5 (ปลายน้ำก่อน)
+test('ช่อง Aging และสถานะใน title ต้องคิดจาก "วันนี้" ไม่ใช่วันที่เลือก', async ({ page }) => {
+  // วันที่เลือกคือ 20 ส.ค. 2026 แต่ทั้งสองอย่างคิดจาก "วันนี้" — ใบที่ยังไม่ส่งต้องแดง
+  // ส่วนใบที่ส่งครบต้องเขียว แม้แถวนั้นจะมีแต่ยอด winding ของวันที่เลือก
+  // ⚠️ ไม่ผูกกับคำว่า "ล่าช้า X" เพราะลำดับการตัดสินของ computeStatus เป็นของ A5 (ปลายน้ำก่อน)
   //    ผูกคำแล้วเทสจะแดงเวลาใครแก้ A5 ให้ถูกขึ้น ซึ่งไม่ใช่เรื่องของหน้านี้
+  //    "ส่งของครบแล้ว" ผูกได้ เพราะเป็นข้อแรกสุดของ computeStatus ไม่ขึ้นกับลำดับขั้น
   await openDaily(page, ORDERS, [
     rec('r1', 'PO-1', 'winding', 100),
     rec('r2', 'PO-2', 'winding', 200),
     rec('r3', 'PO-2', 'shipping', 5000)
   ]);
-  await expect(cellOf(page, 'PO-1', 'status').locator('.badge')).toHaveClass(/red/);
-  await expect(cellOf(page, 'PO-2', 'status').locator('.badge')).toHaveClass(/green/);
-  // ป้ายต้องมีข้อความจริง ไม่ใช่ป้ายเปล่า
-  expect((await cellOf(page, 'PO-1', 'status').innerText()).trim().length).toBeGreaterThan(2);
+  await expect(cellOf(page, 'PO-1', 'aging').locator('.badge')).toHaveClass(/red/);
+  await expect(cellOf(page, 'PO-2', 'aging').locator('.badge')).toHaveClass(/green/);
+
+  /* ⚠️ สถานะต้องอ่านจาก `title` — อ่าน innerText จะได้ตัวเลขอายุงาน แล้วข้อนี้จะเขียว
+        โดยไม่ได้ตรวจสถานะเลย (ข้อนี้เคยเขียวแบบนั้นจริงตอนใบ #135 เปลี่ยนคอลัมน์) */
+  await expect(cellOf(page, 'PO-2', 'aging'), 'ใบที่ส่งครบต้องบอกว่าส่งครบ')
+    .toHaveAttribute('title', /ส่งของครบแล้ว/);
+  await expect(cellOf(page, 'PO-1', 'aging'), 'ใบที่ยังไม่ส่งต้องไม่บอกว่าส่งครบ')
+    .not.toHaveAttribute('title', /ส่งของครบแล้ว/);
+  const t1 = await cellOf(page, 'PO-1', 'aging').getAttribute('title');
+  expect(t1.replace('สถานะของใบนี้ ณ วันนี้:', '').trim().length,
+    'title ต้องมีสถานะจริง ไม่ใช่หัวข้อเปล่า').toBeGreaterThan(2);
+});
+
+test('คอลัมน์ Order Date ต้องโชว์วันที่สั่งแบบไทย และอ่านคู่กับ Aging ได้', async ({ page }) => {
+  /* เจ้าของขอเพิ่มคอลัมน์นี้ 13 พ.ย. 2569 · วางติดกับ Aging เพราะ Aging คือ
+     "วันนี้ ลบ วันในช่องนี้" — สองช่องอ่านคู่กันแล้วตรวจกันเองได้ */
+  /* ⚠️ ต้องประกอบวันจากเวลา **เครื่อง** ไม่ใช่ `toISOString()` ซึ่งเป็น UTC —
+     ไทยเป็น UTC+7 ช่วงเที่ยงคืนถึงเจ็ดโมงเช้า UTC ยังเป็นเมื่อวาน เทสจะแดงเองวันละเจ็ดชั่วโมง
+     (แดงจริงตอนรันข้ามเที่ยงคืนคืนวันที่ 13) · แอปใช้ `todayISO()` ซึ่งเป็นเวลาเครื่อง */
+  const days = n => {
+    const x = new Date(); x.setDate(x.getDate() - n);
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  };
+  const o1 = Object.assign(order('PO-1', 4000), { orderDate: days(12) });
+  await openDaily(page, [o1], [rec('r1', 'PO-1', 'winding', 100)]);
+
+  const [yy, mm, dd] = days(12).split('-');
+  expect((await cellOf(page, 'PO-1', 'orderDate').innerText()).trim(),
+    'ต้องเป็น dd/mm/yyyy แบบเดียวกับที่อื่นในแอป').toBe(`${dd}/${mm}/${yy}`);
+  expect((await cellOf(page, 'PO-1', 'aging').innerText()).trim(),
+    'Aging ต้องเท่ากับจำนวนวันจากช่อง Order Date ถึงวันนี้').toBe('12');
 });
 
 test('A3 — ขั้นที่ถูกซ่อนต้องไม่มีปุ่ม และต้องมีขั้นที่ถูกเลือกอยู่หนึ่งขั้นเสมอ', async ({ page }) => {
@@ -584,6 +615,56 @@ test('G3 — ชื่อขั้นที่เป็นสคริปต์�
   expect(await page.evaluate(() => window.__xss)).toBeUndefined();
   // ต้องอ่านชื่อขั้นออกเป็นข้อความล้วน ไม่ใช่หายไปทั้งประโยค
   expect(await page.locator('#dayTable tbody').innerText()).toContain(EVIL);
+});
+
+test('G3 — วันที่สั่งที่เป็นสคริปต์ต้องไม่ทำงานในช่อง Order Date', async ({ page }) => {
+  /* ⚠️ `orderDate` เป็นค่าที่ซิงค์ข้ามเครื่องมาได้ และ **ไม่มีด่านรูปแบบ** —
+     `normalizeDateOnly()` คืนสตริงที่ไม่ตรงรูปแบบกลับไปตามเดิม แล้ว `fmtDateTH()`
+     แค่สลับที่ y/m/d ไม่ได้กรองอักขระเลย · ช่องนี้จึงต้องผ่าน `escapeHtml()`
+     (ผู้ตรวจ #135 รอบ 2 รันพิสูจน์ว่าถอดออกแล้วสคริปต์ทำงานจริง) */
+  const EVIL = '2026-01-<img src=x onerror=window.__od=1>';
+  const o1 = Object.assign(order('PO-1', 4000), { orderDate: EVIL });
+  await openDaily(page, [o1], [rec('r1', 'PO-1', 'winding', 100)]);
+  await expect(page.locator('#dayTable tbody img')).toHaveCount(0);
+  expect(await page.evaluate(() => window.__od)).toBeUndefined();
+  // และต้องยังอ่านค่าดิบออกเป็นตัวหนังสือ ไม่ใช่แถวหายไปทั้งแถว
+  expect(await cellOf(page, 'PO-1', 'orderDate').innerText()).toContain('<img');
+});
+
+test('G3 — ชื่อสั้นของขั้นที่เป็นสคริปต์ ต้องแตก title ของช่อง Aging ไม่ได้', async ({ page }) => {
+  /* `title` ของช่อง Aging เก็บป้ายสถานะ ซึ่งมาจาก `ptext(p,'late')` = 'ล่าช้า ' + short
+     ชื่อสั้นตั้งได้จากแผงจัดการขั้นและซิงค์ข้ามเครื่อง จึงเป็นค่าที่เชื่อไม่ได้ (G3)
+     ⚠️ ต้องให้ใบ **ล่าช้าที่ขั้นที่ใส่ชื่อร้ายไว้จริง** ไม่งั้น payload ไม่เคยถูกวาด แล้วข้อนี้เขียวเอง
+        ทั้งที่ถอด escape ออก (กับดักเดียวกับที่ `wip-trend.spec.js` จดไว้)
+     ⚠️ อายุงานต้องอยู่ระหว่าง 11–16 วัน — เลยกำหนด winding (+10) แต่ยังไม่ถึง assembly (+17)
+        เก่ากว่านั้น `lateStageOf()` จะรายงานขั้นปลายน้ำกว่า (A5) แล้วได้ป้าย `เกินกำหนดส่งของ`
+        ซึ่งเป็นข้อความตายตัวของ shipping ไม่ผ่านชื่อสั้นเลย (เจอเองตอนเขียนข้อนี้) */
+  const EVIL = 'W\" onmouseover=\"window.__tip=1';
+  const ago = n => {
+    const x = new Date(); x.setDate(x.getDate() - n);
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  };
+  const old = Object.assign(order('PO-1', 4000), { orderDate: ago(12) });
+  await openDaily(page, [old], [rec('r1', 'PO-1', 'winding', 1)], D1, [
+    { id: 'winding', label: 'Winding', short: EVIL },
+    { id: 'assembly', label: 'Assembly', short: 'Assembly' },
+    { id: 'support', label: 'Support', short: 'Support' },
+    { id: 'inspection', label: 'Inspection', short: 'Inspection' },
+    { id: 'shipping', label: 'ส่งของ (Shipping)', short: 'Shipping' }
+  ]);
+  const td = cellOf(page, 'PO-1', 'aging');
+  /* ⚠️ ด่านแรกต้องอ่าน **outerHTML** ไม่ใช่ `title` — ถ้า escape หลุด attribute จะงอกจริง
+        แล้ว `title` ถูกตัดสั้นลง การตรวจว่า `title` มี payload ครบจึงแดงด้วยข้อความที่ชี้ผิดทาง
+        ("payload ไม่ถูกวาด") ทั้งที่ของจริงคือรูเปิด · เจอเองตอนรัน mutation */
+  const html = await td.evaluate(el => el.outerHTML);
+  expect(html, 'payload ต้องถูกวาดจริง ไม่งั้นข้อนี้ไม่ได้ตรวจอะไร').toContain('onmouseover');
+  expect(await td.evaluate(el => el.getAttribute('onmouseover')),
+    'ห้ามมี attribute งอกจากชื่อขั้น').toBeNull();
+  expect(await td.getAttribute('title'), 'title ต้องเก็บ payload ไว้ครบเป็นตัวหนังสือ')
+    .toContain('onmouseover="window.__tip=1');
+  await td.hover();
+  await page.waitForTimeout(120);
+  expect(await page.evaluate(() => window.__tip)).toBeUndefined();
 });
 
 test('เลขบนปุ่มต้องแยก "ไม่มีใครคีย์" ออกจาก "คีย์ไว้ว่าผลิต 0" เหมือนที่ตารางแยก', async ({ page }) => {

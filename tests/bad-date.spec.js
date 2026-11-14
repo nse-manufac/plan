@@ -69,12 +69,18 @@ const localOrder = page => readSaved(page, K_STATE).then(s => s.orders.find(o =>
 const pushedOrders = net => net.calls.filter(c => c.action === 'pushRows' && c.table === 'Orders');
 /* คอลัมน์ Aging ย้ายไปหน้าคีย์ยอด และป้ายสถานะไปหน้า "ยอดรายวันทุกขั้น"
    ตอนแดชบอร์ดรวมเป็นราย P/N (เจ้าของสั่ง 5 พ.ย. 2026) — แดชบอร์ดไม่มีสองอย่างนี้ให้อ่านแล้ว
-   ⚠️ เช็กที่แดชบอร์ดต่อจะเขียวเองทั้งที่ไม่ได้ตรวจอะไร */
+   (แท็บนั้นถูกลบทั้งแท็บเมื่อ 12 พ.ย. 2569)
+   ⚠️ เช็กที่แดชบอร์ดต่อจะเขียวเองทั้งที่ไม่ได้ตรวจอะไร
+   ⚠️ **และตั้งแต่ 13 พ.ย. 2569 ป้ายสถานะบนหน้านั้นก็ถูกแทนด้วยช่อง Aging แล้ว**
+      สถานะย้ายไปอยู่ใน `title` ของช่อง — ดู `dayStatus()` ข้างล่าง */
 async function entryAging(page) {
   await page.click('.tab-btn[data-tab="entry"]');
   await page.waitForTimeout(250);
   return page.locator('#entryTable tbody tr', { hasText: ORDER.poNo }).locator('td[data-aging]');
 }
+/* ⚠️ คืนช่องสุดท้ายของแถว ซึ่งตั้งแต่ 13 พ.ย. 2569 เป็นช่อง **Aging** ไม่ใช่ป้ายสถานะ
+   สถานะยังคิดอยู่และยังลง DOM แต่ไปอยู่ใน `title` ของช่อง — คนอ่านที่ต้องการสถานะ
+   จึงต้องอ่าน attribute ไม่ใช่ข้อความในช่อง ไม่งั้นได้ตัวเลขอายุงานแล้วเทสเพี้ยน */
 async function dayStatus(page) {
   await page.click('.tab-btn[data-tab="daily"]');
   await page.waitForTimeout(200);
@@ -99,8 +105,9 @@ test('D3 + ปุ่มดึงข้อมูลใหม่ทั้งหม
   const aging = await entryAging(page);
   await expect(aging, 'ต้องบอกว่าวันที่ผิด ไม่ใช่ตัวเลขหลักหมื่น').toHaveText('วันที่ผิด');
   const status = await dayStatus(page);
-  await expect(status, 'วันที่ผิดห้ามเอาไปตัดสินล่าช้า').toContainText('วันที่สั่งผิด');
-  await expect(status).not.toContainText('ล่าช้า');
+  await expect(status, 'วันที่ผิดห้ามเอาไปตัดสินล่าช้า').toHaveAttribute('title', /วันที่สั่งผิด/);
+  await expect(status).not.toHaveAttribute('title', /ล่าช้า/);
+  await expect(status, 'และช่องเองต้องฟ้องว่าวันที่ผิด ไม่ใช่ตัวเลขหลักหมื่น').toHaveText('วันที่ผิด');
 
   await pressPullAll(page);
   await expect.poll(async () => (await localOrder(page)).orderDate, 'กดปุ่มแล้วต้องได้ค่าตามชีต').toBe(ORDER.orderDate);
@@ -171,7 +178,11 @@ test('ใบที่ส่งครบแล้วและวันที่�
   ]);
 
   // สองหน้านี้ไม่ซ่อนใบที่ส่งครบแล้ว จึงไม่ต้องปลดตัวกรองเหมือนตอนอ่านที่แดชบอร์ด
-  await expect(await dayStatus(page)).toContainText('ส่งของครบแล้ว');
+  const dayCell = await dayStatus(page);
+  await expect(dayCell).toHaveAttribute('title', /ส่งของครบแล้ว/);
+  /* ⚠️ ตั้งแต่ช่อง Aging มาแทนป้ายสถานะ สองอย่างนี้อยู่ในช่องเดียวกันแล้ว
+     ข้อนี้จึงตรวจได้ตรง ๆ ว่าสีกับสถานะไม่ขัดกัน ไม่ต้องข้ามหน้าไปเทียบ (ผู้ตรวจ #111) */
+  await expect(dayCell.locator('.badge.green'), 'ส่งครบแล้ว ช่องต้องเขียว ไม่ใช่แดง').toHaveText('วันที่ผิด');
   await expect((await entryAging(page)).locator('.badge.green')).toHaveText('วันที่ผิด');
 });
 
