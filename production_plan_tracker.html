@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-13.8">
+<meta name="app-version" content="2026-11-13.9">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -604,7 +604,8 @@
       · <b>หน้านี้อ่านอย่างเดียว</b> จะแก้ยอดให้ไปที่หน้า &quot;บันทึกยอดรายวัน&quot; เลือกวันกับขั้นเดียวกัน
       (ยกเว้นขั้นส่งของ ซึ่งแก้ที่หน้าใบส่งสินค้า)
       · ช่อง &quot;—&quot; คือวันนั้นไม่มีใครคีย์ ส่วน &quot;0&quot; คือมีคนคีย์ไว้ว่าผลิตศูนย์
-      · <b>คอลัมน์สถานะเป็นสถานะของทั้งใบ ณ วันนี้ ไม่ใช่ของวันที่เลือก</b></div>
+      · <b>คอลัมน์ Aging คืออายุงานนับถึง &quot;วันนี้&quot; ไม่ใช่ถึงวันที่เลือก</b>
+      เอาเมาส์ชี้ที่ช่องเพื่อดูสถานะของใบนั้น ซึ่งเป็นสถานะ ณ วันนี้เหมือนกัน</div>
     <div class="row filters">
       <div class="field">
         <label>วันที่</label>
@@ -1093,6 +1094,6 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="app.js?v=2026-11-13.8"></script>
+<script src="app.js?v=2026-11-13.9"></script>
 </body>
 </html>

@@ -232,7 +232,9 @@ const NOTE_CLEARED = 'เคลียร์แล้ว';
  *   id             ค่าที่เก็บใน record.process · ห้ามเปลี่ยนเด็ดขาด (A2) — ยอดเก่าจะหลุดจากขั้นนั้นทั้งหมด
  *   label          ชื่อเต็ม · ปุ่มเลือกขั้น หัวคอลัมน์สะสม กราฟ
  *   short          ชื่อสั้น · **โผล่หกที่ ไล่ของจริงด้วย `grep -n '\.short\b' app.js`**
- *                  แกนของกราฟ PO · ป้ายสถานะล่าช้า (`ptext 'late'`) · คอลัมน์ "ขั้นที่เพี้ยน"
+ *                  แกนของกราฟ PO · ป้ายสถานะล่าช้า (`ptext 'late'` — ตั้งแต่ 13 พ.ย. 2569
+ *                  ไม่ได้อยู่บนจอแล้ว แต่อยู่ใน `title` ของช่อง Aging หน้ายอดรายวันทุกขั้น) ·
+ *                  คอลัมน์ "ขั้นที่เพี้ยน"
  *                  ของรายการย้อนแย้ง · **สองบรรทัดในกล่องใบที่ล่าช้า** ("ค้างที่…" กับ
  *                  "เลยกำหนด… มา N วัน" ซึ่งเป็นคนละขั้นกันได้จริง ดู CLAUDE.md) ·
  *                  หัวคอลัมน์ของรายงาน Excel · และคอลัมน์ชื่อสั้นในตารางจัดการขั้นเอง
@@ -2956,6 +2958,10 @@ function renderDayTable(){
     if(todayVal!=null) total = (total||0) + (Number(todayVal)||0);   // ช่องขีดไม่ใช่ศูนย์ จึงไม่บวก
     const cum = (allCum[o.id] && allCum[o.id][dayProcess]) || 0;
     const st = computeStatus(o, allCum[o.id] || emptyCum(), computeDeadlines(o), ref);
+    /* ⚠️ `data-aging` กับ `agingCell(` ต้องอยู่บรรทัดเดียวกัน — เทสกันสูตรซ้ำใน
+       `tests/entry-ui.spec.js` อ่านทีละบรรทัด แยกคนละบรรทัดแล้วมันฟ้องว่าเขียนสูตรขึ้นใหม่ */
+    const stTip = `สถานะของใบนี้ ณ วันนี้: ${escapeHtml(st.label)}`;
+    const odTxt = escapeHtml(fmtDateTH(o.orderDate));
     const note = (noteIndex[o.id+'|'+dayProcess+'|'+date] || '').trim();
     n++;
     rowsHtml += `<tr><td>${n}</td>`
@@ -2965,13 +2971,23 @@ function renderDayTable(){
       + `<td class="rem">${numFmt(Math.max(0, o.orderQty - cum))}</td>`
       + `<td>${todayVal==null ? dash : `<b>${numFmt(todayVal)}</b>`}</td>`
       + `<td class="left">${note ? escapeHtml(note) : dash}</td>`
-      + `<td><span class="badge ${st.color}">${escapeHtml(st.label)}</span></td></tr>`;
+      /* ⚠️ วางติดกับ Aging โดยตั้งใจ — Aging คือ "วันนี้ ลบ วันในช่องนี้" สองช่องจึงอ่านคู่กัน
+         ⚠️ วันที่รูปแบบถูกแต่เป็นไปไม่ได้ (ปี 1901) โชว์ค่าดิบ ห้ามกลบเป็นขีด —
+            หลักเดียวกับ fgRows: ครอบแล้วข้อมูลที่คีย์ผิดจะหาย · ช่อง Aging ข้าง ๆ ฟ้องให้อยู่แล้ว
+         ⚠️ แต่ค่าที่ `fmtDateTH()` อ่านไม่ออกเลย (เซลล์เป็นตัวเลข · สตริงมั่ว) มันคืน `-`
+            ซึ่งเป็นขีดคนละตัวกับช่องอื่นในแถว จึงแปลงเป็น `dash` ตัวเดียวกัน (ผู้ตรวจ #135 รอบ 2) */
+      + `<td>${odTxt === '-' ? dash : odTxt}</td>`
+      /* ⚠️ ส่ง `ref` ตัวเดียวกับหน้าคีย์ยอด (= วันนี้) ไม่ใช่วันที่เลือกบนจอ
+         ไม่งั้นใบเดียวกันขึ้นอายุงานไม่ตรงกันสองหน้า ทุกครั้งที่มีคนคีย์ย้อนหลัง
+         ⚠️ สถานะของใบยังคิดอยู่ เพราะ `agingCell()` ใช้ `st.code` ตัดสินสีของใบที่ส่งครบแล้ว
+         และข้อความเต็มไปอยู่ใน `title` ของช่อง — ป้ายถูกถอดออกจากจอ ไม่ได้ถูกถอดออกจากข้อมูล */
+      + `<td data-aging title="${stTip}">${agingCell(o.orderDate, ref, st.code)}</td></tr>`;
   });
 
   /* ข้อความต้องตัดสินจาก "มีใบที่ตรงกี่ใบ" ไม่ใช่จากปุ่มที่ถูกกด และต้องแนะทางที่กดแล้วได้ผล
    * (ผู้ตรวจ #118 จับสองรอบ · เลขบนปุ่มบอกเองว่าขั้นไหนมีของ จึงชี้ไปที่ปุ่มด้วย) */
   const emptyMsg = orders.length
-    ? `ขั้น${escapeHtml(procLabel)} ของวันนั้นยังไม่มีการคีย์ยอด — ดูเลขบนปุ่มด้านบนว่าขั้นไหนมีของ `
+    ? `ขั้น ${escapeHtml(procLabel)} ของวันนั้นยังไม่มีการคีย์ยอด — ดูเลขบนปุ่มด้านบนว่าขั้นไหนมีของ `
       + `· ติ๊ก "แสดงทุกใบ" เพื่อดูทั้ง ${numFmt(orders.length)} ใบ · หรือเลือกวันอื่น`
     : (search || weekFilter || subFilter)
       ? 'ไม่มีใบที่ตรงกับตัวกรองที่ตั้งไว้ — ล้างช่องค้นหา สัปดาห์ หรือ Sub-Name แล้วดูอีกครั้ง'
@@ -2980,10 +2996,11 @@ function renderDayTable(){
     + `<th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>`
     + `<th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th>`
     + `<th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนั้น</th><th>หมายเหตุ</th>`
-    + `<th title="สถานะของทั้งใบ ณ วันนี้ ไม่ใช่ของวันที่เลือก">สถานะของใบ</th></tr></thead>`
-    + `<tbody>${rowsHtml || emptyRow(11, emptyMsg)}</tbody><tfoot><tr>`
-    + `<td colspan="8">รวมขั้น${escapeHtml(procLabel)} ของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ</td>`
-    + `<td>${total!=null ? numFmt(total) : '—'}</td><td colspan="2"></td></tr></tfoot>`;
+    + `<th title="วันที่สั่งซื้อจากไฟล์แผนงาน · ช่อง Aging ข้าง ๆ คือจำนวนวันนับจากวันในช่องนี้ถึงวันนี้">Order Date</th>`
+    + `<th title="อายุงาน — จำนวนวันนับจากวันที่สั่งถึง &quot;วันนี้&quot; ไม่ใช่ถึงวันที่เลือกดู · สีมาจากกำหนดส่ง · เอาเมาส์ชี้ที่ช่องเพื่อดูสถานะของใบ">Aging</th></tr></thead>`
+    + `<tbody>${rowsHtml || emptyRow(12, emptyMsg)}</tbody><tfoot><tr>`
+    + `<td colspan="8">รวมขั้น ${escapeHtml(procLabel)} ของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ</td>`
+    + `<td>${total!=null ? numFmt(total) : '—'}</td><td colspan="3"></td></tr></tfoot>`;
 }
 
 /* ---------- ของที่ใช้ร่วมกัน: รายการใบย้อนแย้ง · ยอดรายวัน · กราฟแท่งกลุ่ม ----------
