@@ -52,7 +52,16 @@ const CLEAN = good('TM5269H103', 'PN-C');
 const NEVER_SYNCED = good('TM5269H104', 'PN-D', { importedAt: '' });
 const TWICE = shiftOnce(shiftOnce(good('TM5269H105', 'PN-E')));
 
-const SEED = [shiftOnce(TRUE_A), shiftOnce(TRUE_B), CLEAN, NEVER_SYNCED, TWICE];
+/* 🚨 **รูปที่เครื่องจริงถืออยู่วันนี้** — `mergeRowsInto()` เรียก `normalizeRowDates()` ให้แถวที่
+   ดึงมา **ก่อน** เก็บ (`app.js` บรรทัดแรกของลูป) · `planSupport` อยู่ใน `ORDER_DATE_FIELDS`
+   จึงถูกตัดเป็นวันล้วนตั้งแต่ตอน pull · ใบข้างบนที่ `planSupport` เป็น timestamp เต็มคือรูปของ
+   แถวที่ค้างในเครื่องจากแอปรุ่นก่อนที่ merge จะ normalize ให้ ซึ่งหาได้ยากแล้ว
+   **สองรูปต้องมีทั้งคู่** — ไม่มีรูปนี้ ชุดเทสจะคุมแค่รูปที่ของจริงไม่ค่อยมี
+   (ผู้ตรวจ #136 รอบ 10 รันพิสูจน์ว่า pull ไม่เคยทิ้ง timestamp ไว้ใน `planSupport`) */
+const TRUE_C = good('TM5269H106', 'PN-F');
+const SHIFTED_C = Object.assign(shiftOnce(TRUE_C), { planSupport: '2026-09-16' });
+
+const SEED = [shiftOnce(TRUE_A), shiftOnce(TRUE_B), CLEAN, NEVER_SYNCED, TWICE, SHIFTED_C];
 
 async function boot(page, orders = SEED) {
   await forgetSavedOnEveryLoad(page);
@@ -84,6 +93,21 @@ test('ต้องคลายก่อนซ่อมวันที่ — upd
   const got = await boot(page);
   expect(got.get(TRUE_A.id).updatedAt).toBe('2026-09-16T04:22:45.231Z');
   expect(got.get(TRUE_B.id).updatedAt).toBe('2026-09-16T04:22:45.231Z');
+});
+
+/* รูปที่เครื่องจริงถืออยู่: `planSupport` เป็นวันล้วนเพราะ pull ตัดไปแล้ว
+   ⚠️ **`updatedAt` ที่ได้คืนจึงเป็นวันล้วน ไม่ใช่ timestamp — และนั่นไม่มีผล**
+   เพราะแถวถูกมาร์ค `_dirty` แล้ว `doSync()` เขียน `o.updatedAt = res.serverTime` ทับหลัง push (D4)
+   ที่ต้องถูกคือสี่ช่องที่เก็บข้อมูลจริง ส่วน `updatedAt` เป็นนาฬิกาของการซิงค์ */
+test('รูปที่เครื่องจริงถืออยู่ (planSupport เป็นวันล้วน) ต้องคลายได้ถูกทุกช่อง', async ({ page }) => {
+  const got = await boot(page);
+  const o = got.get(TRUE_C.id);
+  expect(o.planSupport).toBe(TRUE_C.planSupport);
+  expect(o.planInspection).toBe(TRUE_C.planInspection);
+  expect(o.status).toBe(TRUE_C.status);
+  expect(o.importedAt).toBe(TRUE_C.importedAt);
+  expect(o.updatedAt).toBe('2026-09-16');
+  expect(o._dirty).toBe(true);
 });
 
 test('คลายแล้วต้องมาร์ครอส่ง เพื่อดันค่าที่ถูกขึ้นชีตทับของเพี้ยน', async ({ page }) => {
