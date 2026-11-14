@@ -699,6 +699,10 @@ let syncIntervalId = null;
 const SYNC_COLS = {
   // ⚠️ คอลัมน์ใหม่ต้องเติมท้ายสุดเสมอ — ฝั่ง Apps Script เขียนแถวด้วยตำแหน่ง (toRow)
   //    แต่เติมคอลัมน์ที่ขาดต่อท้ายหัวตาราง ลำดับสองฝั่งจึงตรงกันได้ต่อเมื่อเติมท้ายเหมือนกัน
+  // 🚨 **ลำดับข้างล่างคือหัวตารางของชีตจริง ไม่ใช่ลำดับที่อ่านแล้วสวย** — `planSupport`
+  //    อยู่ก่อน `voided` เพราะมันถูกเติมเข้าชีตก่อน (2 ก.ย. 2026 · `voided` เข้า 5 ก.ย.)
+  //    เคยเรียงไว้กลางรายการตามลำดับของสาย แล้วข้อมูล 398 ใบเพี้ยนเงียบ ๆ
+  //    เหตุผลเต็มอยู่ที่ `ORDER_COLS` ใน `google-apps-script.gs` · `tests/node/sync-cols.test.js` คุมไว้
   Orders: ['id','week','poNo','pn','subName','osc','pc','orderQty','orderDate',
            'planWinding','planAssembly','planInspection','status','importedAt','updatedAt',
            'planSupport','voided'],
