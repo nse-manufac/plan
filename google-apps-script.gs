@@ -14,9 +14,13 @@ const TOKEN = 'CHANGE-ME-1234';   // ⚠️ ต้องเปลี่ยน �
 //    ส่วน sheetOf() เติมคอลัมน์ที่ขาด "ต่อท้าย" หัวตารางของชีตเดิม
 //    ลำดับสองฝั่งจึงตรงกันได้ต่อเมื่อคอลัมน์ใหม่ถูกเติมท้ายทั้งคู่ (เช่น batchId · override* อยู่หลัง voided)
 //    ถ้าแทรกไว้กลางรายการ ชีตที่มีอยู่แล้วจะเขียนข้อมูลเหลื่อมคอลัมน์ทั้งตารางโดยไม่มี error
+/* ⚠️ ลำดับนี้ต้องตรงกับแถวหัวของชีตจริง — `doPushRows` เขียนด้วย **ตำแหน่ง**
+   `planSupport` เคยถูกแทรกไว้กลางรายการตอนไปแก้ให้มันซิงค์ได้ (issue #17) ขณะที่ในชีต
+   `sheetOf()` เติมมัน **ต่อท้าย** → สองฝั่งเยื้องกันห้าช่อง ข้อมูล 398 ใบเพี้ยน
+   ลำดับข้างล่างคือหัวตารางของจริง ห้ามเรียงใหม่ · ของใหม่ต่อท้ายเท่านั้น (tests/node/sync-cols.test.js คุมไว้) */
 const ORDER_COLS  = ['id','week','poNo','pn','subName','osc','pc','orderQty','orderDate',
-  'planWinding','planAssembly','planSupport','planInspection','status','importedAt','updatedAt',
-  'voided'];
+  'planWinding','planAssembly','planInspection','status','importedAt','updatedAt',
+  'planSupport','voided'];
 const RECORD_COLS = ['id','date','orderId','process','qty','note','deviceName','createdAt','updatedAt','voided','batchId'];
 
 // ใบส่งสินค้า FM-ST-07 — หนึ่งแถว = หนึ่งบรรทัดบนใบ ไม่ใช่หนึ่งใบ

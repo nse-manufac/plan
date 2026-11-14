@@ -698,8 +698,8 @@ const SYNC_COLS = {
   // ⚠️ คอลัมน์ใหม่ต้องเติมท้ายสุดเสมอ — ฝั่ง Apps Script เขียนแถวด้วยตำแหน่ง (toRow)
   //    แต่เติมคอลัมน์ที่ขาดต่อท้ายหัวตาราง ลำดับสองฝั่งจึงตรงกันได้ต่อเมื่อเติมท้ายเหมือนกัน
   Orders: ['id','week','poNo','pn','subName','osc','pc','orderQty','orderDate',
-           'planWinding','planAssembly','planSupport','planInspection','status','importedAt','updatedAt',
-           'voided'],
+           'planWinding','planAssembly','planInspection','status','importedAt','updatedAt',
+           'planSupport','voided'],
   Records: ['id','date','orderId','process','qty','note','deviceName',
             'createdAt','updatedAt','voided','batchId'],
   DeliveryNotes: ['id','date','unit','orderId','pn','perBox','boxes','remainder','remark','billNo',
