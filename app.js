@@ -584,6 +584,55 @@ async function bootState(){
 function markMoved(){ try{ localStorage.setItem(MOVED_KEY, '1'); }catch(e){ console.error('ตั้งธงย้ายไม่ได้', e); } }
 
 /** เตรียม state ที่เพิ่งโหลด — ต้องรันหลังโหลดเสร็จเท่านั้น (openState) */
+/* ── คลายใบที่คอลัมน์เลื่อน — บั๊ก ORDER_COLS (พบ 14 พ.ย. 2569) ─────────────────────
+ * doPushRows เคยเขียนลงชีตด้วย "ตำแหน่ง" ขณะที่ planSupport ถูกแทรกไว้กลางรายการ
+ * ค่าห้าช่องท้ายจึงหมุนเป็นวงกลม **ไม่มีค่าไหนตกขอบ** จึงคลายคืนได้ครบทุกตัว
+ * 📌 **ตาราง "ช่องที่เห็นในชีต → เก็บค่าจริงของอะไร" อยู่ใน CLAUDE.md ที่เดียว**
+ *    (บล็อก ORDER_COLS · ค้นด้วยคำว่า "ตารางกู้ค่า") — **ห้ามเขียนซ้ำที่นี่**
+ *    มันเป็นข้อเท็จจริงชุดเดียวที่ทั้งการซ่อมด้วยมือและโค้ดนี้ใช้ มีสองฉบับเมื่อไหร่ก็หลุดจากกันเมื่อนั้น
+ *    **ตัวคลายของจริงคือห้าบรรทัดข้างล่าง** ซึ่งเป็นด้านกลับของตารางนั้น อ่านคู่กันได้เลย
+ *
+ * 🔒 **เจ้าของสั่ง 14 พ.ย. 2569** — "ไล่กดทีละเครื่องไม่ไหว" · ทางเดิมคือให้ทุกเครื่องกด
+ *    "ดึงรายการทั้งหมดใหม่" ซึ่งทำไม่ไหวจริง · มาร์ค _dirty ให้รอบซิงค์ถัดไปดันค่าที่ถูกขึ้นชีต
+ *
+ * 🚨 **มีผู้เรียกสองที่ และทั้งสองที่จำเป็น — ถอดที่ไหนก็เหลือรูที่นั่น**
+ *    1. prepareState()  = แถวที่นอนอยู่ในเครื่องแล้ว (ต้องมาก่อนการซ่อมวันที่ ดูข้างล่าง)
+ *    2. หลัง mergeRowsInto ของ Orders ใน doSync() = แถวที่ **เพิ่งถูกดึงลงมา**
+ *       แถวที่ไม่มีอยู่ในเครื่องไหนเลยจะมาถึงทางนี้ทางเดียว (เช่นหลังกด "ดึงรายการทั้งหมดใหม่")
+ *       ถ้ามีแต่ข้อ 1 คนต้อง **รีโหลดหน้า** หลังดึง ตัวคลายถึงจะเห็น ซึ่งเป็นขั้นที่คนลืม
+ *       (ผู้ตรวจ #136 รอบ 13 ทัก: ชีตมีใบเลื่อน 441 ใบ แต่สำเนาของเครื่องเจ้าของมี 398 — ต่าง 43 ใบ)
+ *
+ * 🚨 **ที่ prepareState ต้องมาก่อนการซ่อมวันที่ ห้ามสลับ** — normalizeRowDates ตัด timestamp
+ *    ที่ค้างอยู่ใน planSupport ให้เป็นวันล้วน ถ้ามันทำก่อน updatedAt ตัวจริงจะหายทั้งที่กู้ได้
+ * 🚨 **ลายเซ็นต้องสองด้าน** — importedAt ไม่ว่างและไม่ใช่ timestamp **และ** updatedAt เป็น timestamp
+ *    ใบปกติมี importedAt เป็น timestamp เสมอ (วัดจากชีตจริง 475/475 · ใบที่เลื่อน 441/441 เป็นคำว่า active)
+ *    ส่วนใบที่ importedAt ว่างคือใบเก่าที่ยังไม่เคยซิงค์ — เงื่อนไขด้านเดียวจะไปสลับช่องของใบพวกนั้นทิ้ง
+ * ⚠️ **ใบที่เลื่อนสองชั้นไม่แตะ** (updatedAt ไม่ใช่ timestamp) — ค่าหนึ่งถูกตัดเป็นวันล้วนไปแล้ว
+ *    คลายให้ก็ได้ของไม่ครบ · ขึ้น console ให้ตามด้วยตา ดีกว่าเดาแทนคน
+ * ⚠️ คลายแล้วลายเซ็นหายไปเอง (importedAt กลับเป็น timestamp) จึงไม่หมุนซ้ำรอบสอง
+ *    ซึ่งเป็นเหตุผลที่เรียกซ้ำทุก 20 วิได้โดยไม่ต้องจำว่าเคยคลายแล้วหรือยัง
+ * ⚠️ **ต้องอ่านค่าทุกช่องก่อนเขียนทับช่องนั้น** — ลำดับบรรทัดข้างล่างทำไว้แล้ว อย่าสลับ
+ * @returns {number} จำนวนใบที่คลายให้ (0 = ไม่มีอะไรเปลี่ยน ผู้เรียกไม่ต้องบันทึก) */
+function unshiftShiftedOrders(orders){
+  const isStamp = v => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(v == null ? '' : v));
+  let fixed = 0; const shiftedTwice = [];
+  for(const o of orders){
+    const imp = String(o.importedAt == null ? '' : o.importedAt);
+    if(imp === '' || isStamp(imp)) continue;
+    if(!isStamp(o.updatedAt)){ shiftedTwice.push(o.poNo); continue; }
+    const wasInspection = o.planInspection;
+    o.planInspection = o.status;
+    o.status         = o.importedAt;
+    o.importedAt     = o.updatedAt;
+    o.updatedAt      = o.planSupport;
+    o.planSupport    = wasInspection;
+    o._dirty = true; fixed++;
+  }
+  if(fixed) console.info(`คลายคอลัมน์ที่เลื่อนให้ใบสั่ง ${fixed} ใบ — จะดันค่าที่ถูกขึ้นเซิร์ฟเวอร์รอบซิงค์ถัดไป`);
+  if(shiftedTwice.length) console.warn(`ใบที่คอลัมน์เลื่อนสองชั้น กู้อัตโนมัติไม่ได้ ${shiftedTwice.length} ใบ — ต้องแก้ด้วยมือ: ${shiftedTwice.join(' · ')}`);
+  return fixed;
+}
+
 function prepareState(){
   // รายการขั้นที่ได้มาครั้งล่าสุดต้องใช้ตั้งแต่ก่อนวาดจอครั้งแรก — เปิดแบบออฟไลน์ก็ยังได้ขั้นที่เพิ่มไว้
   applyProcessList(composeProcesses(state.processes));
@@ -597,44 +646,7 @@ function prepareState(){
   state.deltaWip.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
   state.deliveryLog.forEach(d=>{ if(d._dirty===undefined) d._dirty=true; });
 
-  /* ── คลายใบที่คอลัมน์เลื่อน — บั๊ก ORDER_COLS (พบ 14 พ.ย. 2569) ───────────────
-   * doPushRows เคยเขียนลงชีตด้วย "ตำแหน่ง" ขณะที่ planSupport ถูกแทรกไว้กลางรายการ
-   * ค่าห้าช่องท้ายจึงหมุนเป็นวงกลม **ไม่มีค่าไหนตกขอบ** จึงคลายคืนได้ครบทุกตัว
-   * 📌 **ตาราง "ช่องที่เห็นในชีต → เก็บค่าจริงของอะไร" อยู่ใน CLAUDE.md ที่เดียว**
-   *    (บล็อก ORDER_COLS · ค้นด้วยคำว่า "ตารางกู้ค่า") — **ห้ามเขียนซ้ำที่นี่**
-   *    มันเป็นข้อเท็จจริงชุดเดียวที่ทั้งการซ่อมด้วยมือและโค้ดนี้ใช้ มีสองฉบับเมื่อไหร่ก็หลุดจากกันเมื่อนั้น
-   *    **ตัวคลายของจริงคือห้าบรรทัดข้างล่าง** ซึ่งเป็นด้านกลับของตารางนั้น อ่านคู่กันได้เลย
-   *
-   * 🔒 **ซ่อมที่นี่เพราะนี่คือที่เดียวที่ทุกเครื่องผ่านตอนเปิดโปรแกรม** — เจ้าของสั่ง 14 พ.ย. 2569
-   *    ("ไล่กดทีละเครื่องไม่ไหว") · ทางเดิมคือให้ทุกเครื่องกด "ดึงรายการทั้งหมดใหม่" ซึ่งทำไม่ไหวจริง
-   *    มาร์ค _dirty เพื่อให้รอบซิงค์ถัดไปดันค่าที่ถูกขึ้นชีตทับของเพี้ยน = เครื่องแรกที่เปิดซ่อมชีตให้ทุกคน
-   *
-   * 🚨 **ต้องมาก่อนการซ่อมวันที่ข้างล่าง ห้ามสลับ** — normalizeRowDates ตัด timestamp ที่ค้างอยู่ใน
-   *    planSupport ให้เป็นวันล้วน ถ้ามันทำก่อน updatedAt ตัวจริงจะหายทั้งที่กู้ได้
-   *    (นั่นคืออาการ "เลื่อนสองชั้น" ที่เกิดกับ 2 ใบบนชีตจริงมาแล้ว)
-   * 🚨 **ลายเซ็นต้องสองด้าน** — importedAt ไม่ว่างและไม่ใช่ timestamp **และ** updatedAt เป็น timestamp
-   *    ใบปกติมี importedAt เป็น timestamp เสมอ (วัดจากชีตจริง 475/475 · ใบที่เลื่อน 441/441 เป็นคำว่า active)
-   *    ส่วนใบที่ importedAt ว่างคือใบเก่าที่ยังไม่เคยซิงค์ — เงื่อนไขด้านเดียวจะไปสลับช่องของใบพวกนั้นทิ้ง
-   * ⚠️ **ใบที่เลื่อนสองชั้นไม่แตะ** (updatedAt ไม่ใช่ timestamp) — ค่าหนึ่งถูกตัดเป็นวันล้วนไปแล้ว
-   *    คลายให้ก็ได้ของไม่ครบ · ขึ้น console ให้ตามด้วยตา ดีกว่าเดาแทนคน
-   * ⚠️ คลายแล้วลายเซ็นหายไปเอง (importedAt กลับเป็น timestamp) จึงไม่ทำซ้ำรอบสอง
-   * ⚠️ **ต้องอ่านค่าทุกช่องก่อนเขียนทับช่องนั้น** — ลำดับบรรทัดข้างล่างทำไว้แล้ว อย่าสลับ */
-  const isStamp = v => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(v == null ? '' : v));
-  let unshifted = 0; const shiftedTwice = [];
-  for(const o of state.orders){
-    const imp = String(o.importedAt == null ? '' : o.importedAt);
-    if(imp === '' || isStamp(imp)) continue;
-    if(!isStamp(o.updatedAt)){ shiftedTwice.push(o.poNo); continue; }
-    const wasInspection = o.planInspection;
-    o.planInspection = o.status;
-    o.status         = o.importedAt;
-    o.importedAt     = o.updatedAt;
-    o.updatedAt      = o.planSupport;
-    o.planSupport    = wasInspection;
-    o._dirty = true; unshifted++;
-  }
-  if(unshifted) console.info(`คลายคอลัมน์ที่เลื่อนให้ใบสั่ง ${unshifted} ใบ — จะดันค่าที่ถูกขึ้นเซิร์ฟเวอร์รอบซิงค์ถัดไป`);
-  if(shiftedTwice.length) console.warn(`ใบที่คอลัมน์เลื่อนสองชั้น กู้อัตโนมัติไม่ได้ ${shiftedTwice.length} ใบ — ต้องแก้ด้วยมือ: ${shiftedTwice.join(' · ')}`);
+  const unshifted = unshiftShiftedOrders(state.orders);
 
   // ซ่อมข้อมูลที่เพี้ยนค้างอยู่แล้วจากบั๊กวันที่ของ Google Sheets (ดู normalizeDateOnly)
   // แถวที่ค่าเปลี่ยนจริงถูกมาร์ค _dirty เพื่อดันค่าที่ถูกต้องกลับขึ้นเซิร์ฟเวอร์ทับของเดิม
@@ -919,6 +931,9 @@ async function doSync(silent = true){
 
     const pulledOrders = await gsApi('pullRows', {table:'Orders', since: syncCfg.lastPullOrders});
     const ro = mergeRowsInto(state.orders, pulledOrders.rows||[], ORDER_DATE_FIELDS, serverWins);
+    // แถวที่เพิ่งดึงลงมาอาจเป็นแถวที่คอลัมน์เลื่อน และอาจเป็นแถวที่ไม่มีอยู่ในเครื่องไหนเลยมาก่อน
+    // ต้องคลายตรงนี้ด้วย ไม่ใช่รอให้คนรีโหลดหน้า — ดูบล็อกคอมเมนต์ของ unshiftShiftedOrders()
+    unshiftShiftedOrders(state.orders);
     syncCfg.lastPullOrders = pulledOrders.serverTime;
 
     const pulledRecords = await gsApi('pullRows', {table:'Records', since: syncCfg.lastPullRecords});
