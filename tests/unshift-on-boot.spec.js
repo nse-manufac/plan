@@ -181,3 +181,28 @@ test('เปิดซ้ำต้องไม่หมุนอีกรอบ',
   expect(five(again.get(TRUE_A.id))).toEqual(five(TRUE_A));
   expect(five(again.get(TRUE_B.id))).toEqual(five(TRUE_B));
 });
+
+/* 🚨 **เครื่องที่ยังไม่ได้ตั้งค่า Google Sheets — ประตูเข้าทางเดียวคือการรวมข้อมูลจากไฟล์**
+   `doSync()` คืนค่าที่บรรทัดแรกบนเครื่องแบบนั้น (`if(!syncCfg.url…) return;` อยู่ก่อน `try`)
+   ผู้เรียกที่ 2 กับ 3 จึงไม่เคยวิ่งเลย · ถ้าแถวเลื่อนนอนอยู่จนมีคน **นำเข้าไฟล์แผนทับ** ก่อนเปิดโปรแกรมรอบหน้า
+   จะได้ **รูปผสม** — วันแผนถูกจากไฟล์แล้ว แต่ท้ายยังเลื่อน · ลายเซ็น `importedAt === 'active'` ยังเข้า
+   ตัวคลายจึงหมุนวันแผนที่เพิ่งถูกต้องไปผิดช่อง แล้วค่าผิดถูก push ขึ้นชีตเพราะแถวเป็น `_dirty` จากการนำเข้า
+   (ผู้ตรวจ #138 รันพิสูจน์) · ตัวแก้คือผู้เรียกที่ **4 ใน `applyMerge()` ก่อน `saveState()`** */
+test('รวมข้อมูลจากไฟล์บนเครื่องที่ยังไม่ได้ตั้งซิงค์ — ต้องคลายทันที ไม่รอเปิดโปรแกรมรอบหน้า', async ({ page }) => {
+  await boot(page, [CLEAN]);          // เครื่องเริ่มจากใบปกติใบเดียว · ไม่มีการตั้งค่าซิงค์
+  await page.click('.tab-btn[data-tab="data"]');
+  await page.setInputFiles('#mergeFileInput', {
+    name: 'merge.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ orders: [shiftOnce(TRUE_A)], records: [] }), 'utf8')
+  });
+  await page.click('#mergeConfirmBtn');
+  await page.waitForTimeout(400);
+
+  const st = await readSaved(page, K_STATE);
+  const o = (st.orders || []).find(x => x.id === TRUE_A.id);
+  expect(o, 'ใบที่รวมมาไม่อยู่ใน state').toBeTruthy();
+  expect(o.planSupport).toBe(TRUE_A.planSupport);
+  expect(o.planInspection).toBe(TRUE_A.planInspection);
+  expect(o.status).toBe('active');
+  expect(o.importedAt).toBe(TRUE_A.importedAt);
+});
