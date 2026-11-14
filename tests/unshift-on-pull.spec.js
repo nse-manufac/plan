@@ -55,6 +55,7 @@ const four = o => Object.fromEntries(FOUR.map(k => [k, o[k]]));
  *    ซึ่งดูเหมือนทำงานแต่ไม่ได้ทำอะไรเลย (เจอเองตอนเขียนเทส เสียเวลาไปหลายรอบ) */
 async function open(page, rowsOnSheet, ordersInDevice = []) {
   const gs = loadGs();
+  if(rowsOnSheet.length){
   const r = gs.api.doPushRows('Orders', rowsOnSheet.map(o => Object.assign({}, o)), 'ชีตตั้งต้น');
   expect(r.ok, 'เตรียมชีตปลอมไม่สำเร็จ: ' + JSON.stringify(r)).toBeTruthy();
   const sheet = gs.book.getSheetByName('Orders');
@@ -62,6 +63,7 @@ async function open(page, rowsOnSheet, ordersInDevice = []) {
   const col = head.indexOf('updatedAt') + 1;
   expect(col, 'ชีตปลอมไม่มีคอลัมน์ updatedAt').toBeGreaterThan(0);
   rowsOnSheet.forEach((row, i) => sheet.getRange(2 + i, col).setValue(row.updatedAt));
+  }
 
   await page.route('**/exec', async route => {
     const raw = route.request().postData() || '{}';
@@ -131,4 +133,32 @@ test('แถวปกติที่มาถึงทาง pull ต้อง�
   const o = await pulled(page, TRUE_ROW.id);
   expect(four(o)).toEqual(four(TRUE_ROW));
   expect(o.updatedAt).toBe(TRUE_ROW.updatedAt);   // แถวปกติไม่ถูกมาร์ครอส่ง จึงไม่มีอะไรมาเขียนทับ
+});
+
+/* 🚨 **รวมข้อมูลจากไฟล์ — ทางที่แถวเลื่อนกลายเป็น `_dirty` "ระหว่างที่โปรแกรมเปิดอยู่"**
+   `applyMerge()` ติด `_dirty:true` แล้วเรียก `doSync()` ทันที · `doSync()` **push ก่อน**
+   แล้วเขียน `o.updatedAt = serverTime` ทับ **ช่องที่ถือ `importedAt` ตัวจริงของใบที่เลื่อน**
+   ตัวคลายที่วิ่งทีหลัง (หลัง `mergeRowsInto`) จึงหยิบ serverTime ไปใส่ `importedAt` = วันนำเข้าหายถาวร
+   ตอนบูตไม่เจอรูนี้ เพราะ `prepareState()` คลายไปก่อน `doSync()` แล้ว
+   `importedAt` คือฐานของกราฟยอดค้างรายวัน (C1) และค่าผิดกระจายต่อไปทุกเครื่องที่ pull แถวนั้น
+   (ผู้ตรวจ #138 รันพิสูจน์ · ตัวแก้คือผู้เรียกที่ **ต้น `doSync()` ก่อนบล็อก push**) */
+test('รวมข้อมูลจากไฟล์ที่มีแถวเลื่อน — importedAt ตัวจริงต้องไม่ถูก serverTime ทับ', async ({ page }) => {
+  test.setTimeout(70_000);
+  await open(page, []);
+  await page.click('.tab-btn[data-tab="data"]');
+  await page.setInputFiles('#mergeFileInput', {
+    name: 'merge.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ orders: [SHIFTED], records: [] }), 'utf8')
+  });
+  await page.click('#mergeConfirmBtn');
+  // รอจนรอบซิงค์คลายให้เสร็จ — ตอน applyMerge บันทึกครั้งแรก แถวยังเป็นรูปที่เลื่อนอยู่
+  // อ่านเร็วกว่านั้นจะเจอรูปกลางทาง แล้วเทสจะแดงด้วยเหตุที่ไม่ใช่สิ่งที่ข้อนี้คุม
+  let o = null;
+  await expect.poll(async () => {
+    o = await pulled(page, TRUE_ROW.id);
+    return o.importedAt !== 'active';
+  }, { message: 'ตัวคลายไม่เคยทำงานกับแถวที่รวมมาจากไฟล์', timeout: 45000 }).toBe(true);
+  expect(o.importedAt, 'วันนำเข้าตัวจริงถูก serverTime ทับ').toBe(TRUE_ROW.importedAt);
+  expect(o.status).toBe('active');
+  expect(o.planInspection).toBe(TRUE_ROW.planInspection);
 });
