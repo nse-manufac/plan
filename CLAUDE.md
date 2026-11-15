@@ -1389,6 +1389,7 @@ base ของแต่ละใบคือสาขาของใบก่อ
 → `core/dates` → `core/cumulative` → `core/status` → `core/fg` → `core/delivery` → `io/` → `excel/` → `ui/`
 
 **สถานะ:** ใบ 01–03 เข้า main แล้ว (17 ต.ค. 2026 · #104 #105 #107) · โค้ดของแอปอยู่ใน `app.js` ไฟล์ HTML เหลือแต่หน้าตา
+ใบ 04 ย้ายตัวคิดวันที่ไป `core/dates.js` (15 พ.ย. 2569) · ถัดไป `core/cumulative`
 ตารางใน §4 ยังใช้ได้ทั้งหมด แค่ section ทั้งหมดอยู่ใน `app.js` แทน
 
 ---
@@ -1396,8 +1397,9 @@ base ของแต่ละใบคือสาขาของใบก่อ
 
 | ไฟล์ | มีอะไร |
 |---|---|
-| `production_plan_tracker.html` | หน้าตาอย่างเดียว (~780 บรรทัด) ชื่อไฟล์ห้ามเปลี่ยน บุ๊กมาร์กของพนักงานชี้มาที่นี่ |
-| `app.js` | **โค้ดของแอปทั้งหมด** (~4,870 บรรทัด) — จะทยอยแยกออกไป `core/` `io/` `excel/` `ui/` ตาม §3.1 |
+| `production_plan_tracker.html` | หน้าตาอย่างเดียว (~1,100 บรรทัด) ชื่อไฟล์ห้ามเปลี่ยน บุ๊กมาร์กของพนักงานชี้มาที่นี่ |
+| `app.js` | **โค้ดของแอปเกือบทั้งหมด** (~6,470 บรรทัด) — จะทยอยแยกออกไป `core/` `io/` `excel/` `ui/` ตาม §3.1 |
+| `core/dates.js` | ตัวคิดวันที่ (หมวด C) — แปลงค่าจาก Excel · `normalizeDateOnly` · `todayISO` · `addDaysISO` · `daysBetween` · `implausibleDate` · `fmtDateTH` · เทส `tests/node/core-dates.test.js` |
 | `lib/` | ExcelJS + JSZip ที่ vendor ไว้ (~1 MB บรรทัดละหลายแสนตัวอักษร) |
 
 > ⚠️ **ห้ามอ่าน ห้ามแก้ ห้าม format ไฟล์ใน `lib/`** และห้ามอ่าน `app.js` ทั้งไฟล์เข้า context
@@ -1410,7 +1412,7 @@ grep -n "^/\* -\{5,\}" app.js
 
 | Section banner | มีอะไร |
 |---|---|
-| `Basic helpers` | `normalizeDateOnly` `fmtDateTH` `addDaysISO` `daysBetween` `escapeHtml` `uid` `toast` |
+| `Basic helpers` | `escapeHtml` `uid` `cmpText` `numFmt` `toast` · ตัวคิดวันที่ย้ายไป `core/dates.js` แล้ว (ใบ 04) |
 | `Processes` / `รายการขั้นการผลิต` | `DEFAULT_PROCESSES` (ที่เดียวของรายการขั้น) → `PROCESSES` **`MAIN_PROCESSES`** `PREV_PROCESS` `ptext` `hasOrderAnomaly` · `ORDER_DATE_FIELDS` `RECORD_DATE_FIELDS` |
 | `State` | `STORAGE_KEY` `defaultState` `loadState` `saveState` · `bootState` (IndexedDB + ย้ายจาก localStorage) · `prepareState` (คลายคอลัมน์ที่เลื่อน · ซ่อมวันที่ เดิมชื่อ `migrateCorruptedDates`) · `openState` (ลำดับการเปิดหน้า) |
 | `Google Sheets sync` | `gsApi` `cleanForPush` `doSync` และการ merge ตอน pull |
