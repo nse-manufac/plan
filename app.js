@@ -1,6 +1,40 @@
 /* ===================== Production Plan Tracker — App Logic ===================== */
 "use strict";
 
+/* ---------- กันหน้าตายเมื่อไฟล์ที่หน้าโหลดมาไม่ครบชุด ----------
+ * ⚠️ ตั้งแต่แยกไฟล์ (CLAUDE.md §3.1) ฟังก์ชันที่ app.js เรียกอยู่คนละไฟล์ได้ · เครื่องที่ถือ HTML รุ่นเก่าในแคช
+ *    (ยังไม่มีแท็กของไฟล์ใหม่) แต่ได้ app.js ตัวใหม่ จะเจอ ReferenceError ตอนเปิดหน้า แล้วโค้ดที่เหลือไม่ได้รันเลย
+ *    = หน้าตายเงียบ ๆ ตัวเช็ก "มีรุ่นใหม่" ก็ไม่ได้รัน ไม่มีอะไรบอกให้กด Ctrl+F5 (ผู้ตรวจ #139 จำลองเจอ)
+ *    ข้อมูลไม่หาย เพราะก่อนโหลดเสร็จห้ามบันทึกและห้ามซิงค์ (E4) — ที่ขาดคือคนหน้างานไม่รู้ว่าต้องทำอะไร
+ *
+ * ทำครั้งเดียว: โหลดหน้าใหม่แบบข้ามแคชของ HTML (`?_v=` แบบเดียวกับปุ่ม "มีรุ่นใหม่") แล้ว HTML ตัวใหม่
+ * จะชี้ไปที่ไฟล์ครบชุด · ยังพังอีกภายใน 5 นาที = ไม่ใช่เรื่องแคช → ขึ้นข้อความแทน ห้ามวนโหลดไม่รู้จบ
+ *
+ * ⚠️ ต้องอยู่บนสุดของ app.js และห้ามเรียกอะไรที่ประกาศทีหลัง — ตอนมันทำงาน โค้ดข้างล่างอาจยังไม่ได้รันเลย
+ *    อ่าน `data-state-ready` แทน `stateReady` เพราะ let ที่ยังไม่ถึงบรรทัดประกาศ อ่านแล้ว throw ซ้ำ
+ * ⚠️ จับเฉพาะ ReferenceError ก่อนโหลดเสร็จ — นั่นคือรูปของ "ไฟล์ขาด" · ข้อผิดพลาดชนิดอื่นหรือหลังโหลดเสร็จ
+ *    ไม่ใช่เรื่องที่การโหลดใหม่แก้ได้ และการเด้งโหลดใหม่กลางที่คนกำลังคีย์คือการทำงานหาย */
+const BOOT_RELOAD_KEY = 'tue_order_tracker_v1:bootReload';
+function bootFailed(err){
+  if(!(err instanceof ReferenceError) || document.documentElement.dataset.stateReady === '1') return;
+  let last = 0;
+  try{ last = Number(sessionStorage.getItem(BOOT_RELOAD_KEY)) || 0; }catch(e){ /* อ่านธงไม่ได้ = ถือว่ายังไม่เคยลอง */ }
+  if(Date.now() - last > 5*60*1000){
+    // เก็บธงไม่ได้ = กันวนไม่ได้ → ขึ้นข้อความเลย ดีกว่าโหลดซ้ำไม่รู้จบ
+    try{ sessionStorage.setItem(BOOT_RELOAD_KEY, String(Date.now())); }catch(e){ showBootFailed(); return; }
+    location.replace(location.pathname + '?_v=' + Date.now() + location.hash);
+    return;
+  }
+  showBootFailed();
+}
+function showBootFailed(){
+  if(document.getElementById('bootFailed')) return;
+  console.error('โปรแกรมโหลดไม่ครบชุด — โหลดใหม่แบบข้ามแคชไปแล้วหนึ่งครั้งก็ยังไม่หาย');
+  document.body.insertAdjacentHTML('afterbegin', '<div id="bootFailed" style="position:fixed;inset:0;z-index:9999;background:#fff;color:#b00;padding:40px;font-size:22px;line-height:1.6">⛔ โปรแกรมโหลดมาไม่ครบ — <b>กด Ctrl+F5</b> แล้วรอสักครู่<br>ถ้ายังขึ้นข้อความนี้ให้แจ้งหัวหน้า<br>(ข้อมูลยังอยู่ในเครื่อง ไม่หาย)</div>');
+}
+window.addEventListener('error', e => bootFailed(e.error));
+window.addEventListener('unhandledrejection', e => bootFailed(e.reason));
+
 /* ---------- Basic helpers ---------- */
 function uid(){ return 'r'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 function escapeHtml(s){
