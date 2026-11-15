@@ -54,19 +54,37 @@ test('C1 — ช่องวันที่ที่ตัวอ่าน Excel 
   assert.equal(D.excelValueToISO(vm.runInContext('new Date(NaN)', D)), null);
 });
 
-test('C1 — อ่าน Date ด้วยเวลา UTC ต้องได้วันเดิมแม้เครื่องอยู่หลัง UTC (รันซ้ำในเขตเวลาสหรัฐฯ)', () => {
-  // ⚠️ ข้อข้างบนรันในเขตเวลาของเครื่องที่รันเทส · CI เป็น UTC ส่วนเครื่องเจ้าของเป็นไทย (UTC+7)
-  //    ทั้งสองที่อ่านด้วยเวลาท้องถิ่นก็ "บังเอิญ" ได้วันเดิม เทสจึงเขียวทั้งที่โค้ดผิด (ลองถอด getUTC แล้ว)
-  //    ต้องรันในโปรเซสลูกที่ตั้ง TZ ไว้หลัง UTC ถึงจะจับได้
+/** รันนิพจน์กับ core/dates.js ในโปรเซสลูกที่ตั้งเขตเวลาไว้ · คืน [ห่างจาก UTC กี่ชั่วโมง, ผลลัพธ์]
+ *  ⚠️ ข้อที่ขึ้นกับเขตเวลาต้องรันแบบนี้ · CI เป็น UTC ส่วนเครื่องเจ้าของเป็นไทย (UTC+7)
+ *     ซึ่งบังเอิญได้วันเดิมในบางทิศ เทสที่รันในเขตเวลาของเครื่องจึงเขียวทั้งที่โค้ดผิดได้
+ *  ⚠️ ตั้ง TZ ผ่าน env ของ spawn เท่านั้น — Git Bash บน Windows ไม่ส่ง TZ ที่มี "/" ให้ node */
+function inTz(tz, expr) {
   const { spawnSync } = require('child_process');
   const code = `const vm=require('vm');const c=vm.createContext({});vm.runInContext(${JSON.stringify(SRC)},c);`
-    + `process.stdout.write(String(new Date(0).getUTCHours()-new Date(0).getHours())+' '+`
-    + `vm.runInContext("excelValueToISO(new Date(Date.UTC(2026,6,29)))",c));`;
-  const r = spawnSync(process.execPath, ['-e', code], { env: { ...process.env, TZ: 'America/Los_Angeles' }, encoding: 'utf8' });
+    + `process.stdout.write(String(-new Date(0).getTimezoneOffset()/60)+' '+`
+    + `vm.runInContext(${JSON.stringify(expr)},c));`;
+  const r = spawnSync(process.execPath, ['-e', code], { env: { ...process.env, TZ: tz }, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
-  const [offset, iso] = r.stdout.split(' ');
-  assert.notEqual(offset, '0', 'โปรเซสลูกไม่ได้อยู่หลัง UTC จริง — เทสนี้จะไม่ได้ตรวจอะไร');
+  const [offset, out] = r.stdout.split(' ');
+  return [Number(offset), out];
+}
+
+test('C1 — อ่าน Date ด้วยเวลา UTC ต้องได้วันเดิมแม้เครื่องอยู่หลัง UTC (รันในเขตเวลาสหรัฐฯ)', () => {
+  // ลองถอด getUTC* ออกแล้ว: ข้อข้างบนเขียวทั้งบน CI และเครื่องไทย · ข้อนี้แดงทั้งคู่
+  const [offset, iso] = inTz('America/Los_Angeles', 'excelValueToISO(new Date(Date.UTC(2026,6,29)))');
+  assert.ok(offset < 0, 'โปรเซสลูกไม่ได้อยู่หลัง UTC จริง — เทสนี้จะไม่ได้ตรวจอะไร');
   assert.equal(iso, '2026-07-29');
+});
+
+test('C2 — timestamp เต็มต้องตัดเป็นวันตามเวลาเครื่อง ไม่ใช่วันของ UTC (รันในเขตเวลาไทยและสหรัฐฯ)', () => {
+  // ทิศตรงข้ามกับ excelValueToISO · 17:00Z ของวันที่ 7 คือ 00:00 วันที่ 8 ที่ไทย
+  // ⚠️ ผู้ตรวจ #139 ลองสลับ isoLocal เป็น getUTC* แล้ว: ข้อ C2 ข้างล่างเขียวบน CI ทั้งที่โค้ดผิด
+  //    เพราะ timestamp ที่ไม่มี Z ไม่ขึ้นกับเขตเวลา และ UTC กับ "เวลาท้องถิ่นของ CI" คือตัวเดียวกัน
+  const [th, inBangkok] = inTz('Asia/Bangkok', "normalizeDateOnly('2026-07-07T17:00:00.000Z')");
+  assert.equal(th, 7, 'โปรเซสลูกไม่ได้อยู่ที่ UTC+7 จริง — เทสนี้จะไม่ได้ตรวจอะไร');
+  assert.equal(inBangkok, '2026-07-08');
+  const [, inLA] = inTz('America/Los_Angeles', "normalizeDateOnly('2026-07-08T02:00:00.000Z')");
+  assert.equal(inLA, '2026-07-07');
 });
 
 test('C2 — normalizeDateOnly: YYYY-MM-DD ผ่านตามเดิม · timestamp เต็มเหลือแค่วัน · ค่าว่างไม่ถูกแตะ', () => {
