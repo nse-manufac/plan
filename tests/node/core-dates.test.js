@@ -20,9 +20,9 @@ vm.runInContext(SRC, D, { filename: 'core/dates.js' });
  *  ใช้ได้กับเลขตั้งแต่ 61 ขึ้นไป — Excel นับ 29 ก.พ. 1900 ที่ไม่มีอยู่จริงเป็นเลข 60 */
 const oracle = serial => new Date(Date.UTC(1899, 11, 30) + serial * 86400000).toISOString().slice(0, 10);
 
-test('core/ ห้ามแตะ DOM · localStorage · state · fetch — โหลดได้ใน sandbox เปล่า', () => {
-  const touches = SRC.match(/\b(document|window|localStorage|sessionStorage|indexedDB|fetch|state)\s*[.(\[]/g);
-  assert.deepEqual(touches, null, 'core/ เป็นกฎล้วน (CLAUDE.md §3.1) ของที่แตะหน้าจอหรือข้อมูลต้องอยู่ที่อื่น');
+// ด่าน "ห้ามแตะ DOM · ที่เก็บข้อมูล · state" ย้ายไป core-purity.test.js แล้ว — ตรวจทุกไฟล์ใน core/
+// และจับรูปที่ regex เดิมตรงนี้หลุด (`globalThis.document` · `typeof window`) · ห้ามเขียนซ้ำที่นี่
+test('core/dates.js โหลดได้ใน sandbox เปล่า และมีครบทุกฟังก์ชันที่ย้ายมา', () => {
   for (const fn of ['excelSerialToISO', 'excelValueToISO', 'normalizeDateOnly', 'dateFromISO',
     'addDaysISO', 'daysBetween', 'implausibleDate', 'fmtDateTH', 'todayISO', 'isoLocal', 'pad2']) {
     assert.equal(typeof D[fn], 'function', `${fn} ต้องอยู่ใน core/dates.js`);
