@@ -31,3 +31,4 @@
 /package-lock.json
 !/lib/
 !/app.js
+!/core/
