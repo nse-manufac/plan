@@ -74,3 +74,43 @@ test('ข้อผิดพลาดหลังโหลดเสร็จ — 
   expect(navs.length).toBe(1);
   await expect(page.locator('#bootFailed')).toHaveCount(0);
 });
+
+/* ---------- ไฟล์ขาดที่โผล่ "ตอนวาดจอ" ไม่ใช่ตอนโหลดสคริปต์ (ผู้ตรวจ #140 ทัก) ----------
+ * ฟังก์ชันที่ถูกเรียกเฉพาะใน renderAll() พังหลัง state โหลดแล้ว · openState() ติดป้ายโหลดเสร็จใน finally
+ * ก่อนที่ error จะหลุดออกไป ตัวกันจึงเคยถอยแล้วปล่อยหน้าครึ่งเดียว
+ * ใช้ buildCumMap เพราะถูกเรียกเฉพาะในฟังก์ชันวาดจอ (renderEntryTable บรรทัดต้น ๆ ไม่มีทางออกก่อน)
+ * และเป็นก้อนที่จะย้ายไป core/cumulative ในใบถัดไป = ฉากจริงของใบนั้นพอดี
+ * เปลี่ยนชื่อแทนการลบทั้งก้อน — ผลเหมือนไฟล์ไม่ถูกโหลด และไฟล์ยัง parse ได้ */
+const RENDER_ANCHOR = 'function buildCumMap(records){';
+const RENDER_GONE = 'function buildCumMap_ไม่ได้โหลด(records){';
+
+test('ไฟล์ขาดที่โผล่ตอนวาดจอ — โหลดใหม่แบบข้ามแคชเองครั้งเดียว แล้วใช้งานได้', async ({ page }) => {
+  let served = 0;
+  await page.route(url => url.hostname === '127.0.0.1' && /\.(html|js)$/.test(url.pathname), async route => {
+    const res = await route.fetch();
+    const body = await res.text();
+    if (!body.includes(RENDER_ANCHOR) || served++ > 0) return route.fulfill({ response: res });
+    return route.fulfill({ response: res, body: body.replace(RENDER_ANCHOR, RENDER_GONE) });
+  });
+  const navs = trackNavigations(page);
+  await page.goto(APP);
+
+  await expect.poll(() => navs.length, { message: 'ต้องโหลดใหม่เอง ไม่ใช่ค้างหน้าครึ่งเดียว' }).toBe(2);
+  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.stateReady)).toBe('1');
+  expect(served, 'ไฟล์ที่ขาดต้องถูกขอใหม่ในรอบที่สอง').toBe(2);
+  expect(navs[1]).toMatch(/\?_v=\d+/);
+  await expect(page.locator('#bootFailed')).toHaveCount(0);
+  expect(await page.locator('#entryTable').innerHTML(), 'รอบที่สองต้องวาดจอได้จริง').not.toBe('');
+});
+
+test('ไฟล์ขาดตอนวาดจอทุกรอบ — ขึ้นข้อความให้กด Ctrl+F5 ห้ามวนโหลดไม่รู้จบ', async ({ page }) => {
+  const hits = await patchAppSource(page, RENDER_ANCHOR, RENDER_GONE);
+  const navs = trackNavigations(page);
+  await page.goto(APP);
+
+  await expect(page.locator('#bootFailed')).toBeVisible();
+  await expect(page.locator('#bootFailed')).toContainText('Ctrl+F5');
+  expect(hits(), 'ต้องเปลี่ยนชื่อได้จริง ไม่งั้นเทสนี้ไม่ได้ตรวจอะไร').toBeGreaterThan(0);
+  await page.waitForTimeout(1500);
+  expect(navs.length, 'โหลดใหม่ได้ครั้งเดียว').toBe(2);
+});
