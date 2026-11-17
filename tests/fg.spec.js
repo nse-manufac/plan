@@ -278,6 +278,73 @@ test('กางแถวค้างไว้แล้วหน้าวาด�
   await expect(subOf(page, PN_A, 'TUE-U').locator('details.fg-moves'),
     'กล่องการเคลื่อนไหวที่เพิ่งเปิดก็ต้องไม่หุบตาม').toHaveAttribute('open', '');
 });
+test('กางแถวค้างไว้แล้วหน้าวาดใหม่ โฟกัสต้องไม่ตกไป BODY (G2)', async ({ page }) => {
+  /* ของที่กดได้ในตารางนี้มีสามชิ้น และทั้งสามอยู่ใน #fgTable ซึ่งถูกเขียนทับทั้งก้อนทุกรอบซิงค์
+     ปุ่ม ✎ แก้ เคยอยู่ในการ์ดที่ renderAll() ไม่เคยวาดใหม่ โฟกัสจึงรอด — ย้ายเข้าตารางแล้วไม่รอด
+     (ผู้ตรวจ #142 วัดได้ BODY ทั้งปุ่มแก้และหัวกล่องการเคลื่อนไหว)
+     🚨 ต้องเรียก renderFg() ตรง ๆ ห้ามยิงผ่านช่องค้นหาเหมือนข้อข้างบน — การพิมพ์ลงช่องนั้น
+        ย้ายโฟกัสไปที่ช่องค้นหาเอง ด่านจึงไม่มีฟันเลย · รอบซิงค์ของจริงวาดใหม่โดยไม่แตะโฟกัสใคร */
+  await open(page, [order('PO-A1', PN_A, 5000)],
+    [rec('r1', 'PO-A1|' + PN_A, 'shipping', 1000, '2026-08-28')],
+    [deltaRow('PO-A1|' + PN_A, 35, 4000)]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+  await sub.locator('details.fg-moves summary').click();
+  await expect(sub.locator('.fg-dw-edit'),
+    'ฉากนี้ต้องมีปุ่มแก้จริง ไม่งั้นข้อที่วัดปุ่มแก้ไม่ได้ตรวจอะไร').toHaveCount(1);
+
+  /** โฟกัสของในแถวที่กาง แล้วให้หน้าวาดใหม่ แล้วบอกว่าโฟกัสไปอยู่ที่อะไร */
+  const after = async sel => {
+    await sub.locator(sel).focus();
+    await page.evaluate(()=> renderFg());
+    return page.evaluate(()=> {
+      const a = document.activeElement;
+      return a.tagName === 'SUMMARY' ? 'summary' : (a.className || a.tagName);
+    });
+  };
+
+  expect(await after('details.fg-moves summary'), 'หัวกล่องการเคลื่อนไหว').toBe('summary');
+  expect(await after('.fg-dw-edit'), 'ปุ่ม ✎ แก้').toContain('fg-dw-edit');
+
+  // ปุ่ม P/N อยู่บนแถวของกลุ่ม ไม่ได้อยู่ในแถวที่กาง — ของเดิม ตรึงไว้ไม่ให้หลุดตอนแก้
+  await page.locator(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"] .fg-pn`).focus();
+  await page.evaluate(()=> renderFg());
+  expect(await page.evaluate(()=> document.activeElement.className), 'ปุ่ม P/N').toContain('fg-pn');
+});
+test('กางแถวแล้วต้องไม่ดันตารางของกลุ่มให้กว้างขึ้น (จอ 819)', async ({ page }) => {
+  /* 819 CSS px = จอ 1024 ซูม 125% ซึ่งเครื่องหน้างานตั้งจริง · ตารางกลุ่มพอดีขอบอยู่แล้ว
+     ตารางราย PO กว้างกว่านั้น ถ้าไม่รัดไว้มันจะดันตารางกลุ่มให้ล้น แล้วคอลัมน์ `ต่าง`
+     ของแถวที่กำลังอ่านเลยขอบไปตอนกาง (ผู้ตรวจ #142 วัดได้ 761 vs 737)
+     ที่รัดไว้คือ `#fgTable tr.fg-sub > td{max-width:0}` ตารางราย PO จึงเลื่อนในแถวตัวเองแทน
+     ⚠️ ต้องตั้งจอให้แคบจริง — ที่จอกว้าง (วัดที่ 1400) ไม่มีการล้นให้จับ ด่านจะเขียวเอง
+     ⚠️ และต้องใช้ข้อมูลยาวแบบของจริง (P/N มีท้าย -REV-C · ยอดเจ็ดหลัก · มีปุ่มแก้ของ Delta) */
+  await page.setViewportSize({ width: 819, height: 900 });
+  const PN = PN_A + '-REV-C';
+  const os = ['TM5267H012', 'TM5267H013', 'TM5267H014'].map(no =>
+    Object.assign(order(no, PN, 1234567), { id: no + '|' + PN }));
+  const rs = [], dws = [];
+  os.forEach((o, i) => {
+    rs.push(rec('i' + i, o.id, 'inspection', 1200000 + i, '2026-08-20'));
+    // ⚠️ ส่งต้องมากกว่าที่ Delta นับส่งแล้ว (ยอดสั่ง − Wip bal.) ช่องของ Delta จึงมีบรรทัด
+    //    "ไฟล์ … − Delta ยังไม่นับ …" ติดมา ซึ่งเป็นตัวที่ทำให้ตารางราย PO กว้างจริงแบบของจริง
+    //    ไม่มีบรรทัดนั้นแล้วตารางพอดีขอบเอง ด่านนี้จะเขียวทั้งที่ถอด max-width:0 ออก (ลองแล้ว)
+    rs.push(rec('s' + i, o.id, 'shipping', 500000 + i, '2026-08-22'));
+    dws.push(deltaRow(o.id, 35, 900000));
+  });
+  await open(page, os, rs, dws);
+
+  const width = () => page.evaluate(()=> {
+    const w = document.getElementById('fgTable').closest('.table-wrap');
+    return {scroll: w.scrollWidth, client: w.clientWidth};
+  });
+  const before = await width();
+  expect(before.scroll, 'ก่อนกางต้องพอดีขอบ ไม่งั้นข้อนี้วัดของอื่นอยู่').toBe(before.client);
+
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN}"][data-unit="TUE-U"]`);
+  await expect(subOf(page, PN, 'TUE-U').locator('.fg-dw-edit'), 'ฉากนี้ต้องมีปุ่มแก้จริง').toHaveCount(3);
+  const after = await width();
+  expect(after.scroll, 'กางแล้วตารางกลุ่มต้องไม่กว้างขึ้น').toBe(before.scroll);
+});
 
 /* ── ใบที่ยกเลิกแล้วต้องไม่ถูกนับในหน้า FG ────────────────────────────
  *

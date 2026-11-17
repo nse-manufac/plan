@@ -76,7 +76,14 @@
      ⚠️ ต้องเขียน [hidden]{display:none} ของตัวเอง เผื่อวันหนึ่งมีกฎ display มาทับแถวนี้
         กฎ display ชนะ [hidden] ของเบราว์เซอร์เสมอ (กับดักเดียวกับ .wtdiff กับ .wtanom) */
   #fgTable tr.fg-sub[hidden]{display:none;}
-  #fgTable tr.fg-sub > td{padding:0;background:#fafbfc;text-align:left;white-space:normal;}
+  /* 🚨 max-width:0 ไม่ใช่ของเล่น — ไม่มีบรรทัดนี้ การกางแถวจะดันตารางของกลุ่มให้กว้างขึ้น
+        ผู้ตรวจ #142 วัดที่จอ 819 (= จอ 1024 ซูม 125% ซึ่งหน้างานตั้งจริง) ด้วยข้อมูลยาวแบบของจริง:
+        ก่อนกาง 737/737 พอดี · หลังกาง 761 vs 737 → คอลัมน์ `ต่าง` ของแถวกลุ่มเลยขอบตอนกาง
+        ตัวที่ดันคือตารางราย PO ซึ่งกว้างกว่าแถว แล้ว `<td>` รัดมันไม่ได้ถ้าไม่มีบรรทัดนี้
+        ฉากของเทส (มีบรรทัด "Delta ยังไม่นับ" ทั้งสามใบ) วัดได้ 813 vs 737 คือหนักกว่าที่ผู้ตรวจเจอ
+        ใส่บรรทัดนี้แล้วตารางกลุ่มกลับเป็น 737 และตารางราย PO เลื่อนอยู่ในแถวตัวเองแทน (มีเทสคุม)
+        ที่จอ 1400 ไม่เปลี่ยนอะไรเลย (วัดแล้ว 1318 เท่าเดิมทั้งก่อนและหลัง) */
+  #fgTable tr.fg-sub > td{padding:0;background:#fafbfc;text-align:left;white-space:normal;max-width:0;}
   #fgTable tr.fg-row:hover > td,#fgTable tr.fg-row.open > td{background:var(--primary-light);}
   .fg-pn{display:inline-flex;align-items:center;gap:7px;background:none;border:none;padding:0;
          font:inherit;font-weight:700;color:var(--text);cursor:pointer;}

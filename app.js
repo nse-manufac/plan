@@ -2842,11 +2842,12 @@ function renderFg(){
 
   /* 🚨 สองบล็อกนี้ต้องอ่าน DOM **ก่อน** สร้าง html ข้างล่าง — ของที่กางอยู่ถูกเขียนลงไปในนั้นแล้ว
         (เขียนไว้ใกล้ ๆ จุดเขียนทับตอนแรก แล้วกล่องการเคลื่อนไหวหุบทุกครั้ง เทสจับได้) */
-  // จำปุ่มที่โฟกัสอยู่ไว้คืนให้ที่ท้ายฟังก์ชัน — ตารางนี้ถูกวาดใหม่ทุกรอบซิงค์ถ้าเปิดแท็บนี้ค้างไว้
-  // ไม่คืนแล้วคนที่ไล่ด้วยแป้นพิมพ์ตกไป BODY กลางคัน ต้อง Tab จากต้นหน้าใหม่ (G2)
-  const act = document.activeElement;
-  const actRow = act && act.classList && act.classList.contains('fg-pn') ? act.closest('tr.fg-row') : null;
-  const focused = actRow ? {pn: actRow.dataset.pn, unit: actRow.dataset.unit} : null;
+  /* จำของที่โฟกัสอยู่ไว้คืนให้ที่ท้ายฟังก์ชัน — ตารางนี้ถูกวาดใหม่ทุกรอบซิงค์ถ้าเปิดแท็บนี้ค้างไว้
+     ไม่คืนแล้วคนที่ไล่ด้วยแป้นพิมพ์ตกไป BODY กลางคัน ต้อง Tab จากต้นหน้าใหม่ (G2)
+     🚨 ต้องครบทั้งสามชิ้นที่กดได้ในตารางนี้ ไม่ใช่แค่ปุ่ม P/N — ปุ่ม ✎ แก้ กับหัวกล่องการเคลื่อนไหว
+        อยู่ในแถวที่กาง ซึ่งอยู่ในตารางเดียวกัน จึงถูกเขียนทับพร้อมกัน
+        (ของเดิมปุ่ม ✎ แก้ อยู่ในการ์ดที่ renderAll() ไม่เคยวาดใหม่ โฟกัสจึงรอด · ผู้ตรวจ #142) */
+  const focused = fgFocusOf(document.activeElement);
   /* สถานะของกล่องการเคลื่อนไหวอ่านจาก DOM ไม่พึ่ง event `toggle` ของ <details>
      ซึ่งเบราว์เซอร์ยิงเป็น task แยก จึงมาทีหลังการวาดใหม่ที่เกิดติด ๆ กันได้ */
   document.querySelectorAll('#fgTable tr.fg-sub').forEach(sub=>{
@@ -2900,11 +2901,35 @@ function renderFg(){
   });
   document.querySelectorAll('#fgTable tr.fg-sub').forEach(sub=>{ if(!sub.hidden) fgBindSub(sub); });
 
-  if(focused){
-    const back = Array.from(document.querySelectorAll('#fgTable tr.fg-row'))
-      .find(tr=> tr.dataset.pn === focused.pn && tr.dataset.unit === focused.unit);
-    if(back) back.querySelector('.fg-pn').focus();
-  }
+  if(focused) fgRefocus(focused);
+}
+
+/** สิ่งที่โฟกัสอยู่ในตาราง FG — คืนค่าที่พาหาตัวมันกลับมาได้หลังวาดใหม่ หรือ null
+ *  ⚠️ ต้องจำว่าเป็นชิ้นไหน ไม่ใช่จำแค่ว่าอยู่กลุ่มไหน — คืนให้ผิดชิ้นก็ยังเหวี่ยงคนที่ไล่ด้วยแป้นพิมพ์
+ *  `.fg-dw-edit` ระบุด้วย `data-dw` เพราะกลุ่มหนึ่งมีได้หลายใบ · หัวกล่องการเคลื่อนไหวมีแถวละอัน */
+function fgFocusOf(el){
+  if(!el || !el.closest) return null;
+  const row = el.closest('tr.fg-row, tr.fg-sub');
+  if(!row || !row.closest('#fgTable')) return null;   // <details> ที่อื่นของแอปต้องไม่เข้ามา
+  const at = el.classList.contains('fg-pn') ? 'pn'
+    : el.classList.contains('fg-dw-edit') ? 'dw'
+    : el.tagName === 'SUMMARY' ? 'moves' : null;
+  return at ? {pn: row.dataset.pn, unit: row.dataset.unit, at, dw: el.dataset.dw || ''} : null;
+}
+
+/** คืนโฟกัสให้ชิ้นเดิมหลังวาดใหม่ — หาไม่เจอให้ถอยไปที่ปุ่ม P/N ของกลุ่มนั้น
+ *  ปุ่ม ✎ แก้ หายได้จริงเมื่อ Delta ตัดใบนั้นออกจากไฟล์งวดใหม่ (deltaWipOf คืนเฉพาะงวดล่าสุด) */
+function fgRefocus(f){
+  const find = cls => Array.from(document.querySelectorAll('#fgTable tr.' + cls))
+    .find(tr=> tr.dataset.pn === f.pn && tr.dataset.unit === f.unit) || null;
+  const row = find('fg-row'), sub = find('fg-sub');
+  let el = null;
+  /* หาปุ่มด้วยการไล่ `dataset` ไม่ใช่ attribute selector — ค่านี้ซิงค์มาได้
+     ใส่ลง selector ตรง ๆ แล้วพังตอนมีอักขระพิเศษ (หลักเดียวกับ G3) */
+  if(f.at === 'dw' && sub) el = Array.from(sub.querySelectorAll('.fg-dw-edit')).find(b=> b.dataset.dw === f.dw) || null;
+  else if(f.at === 'moves' && sub) el = sub.querySelector('details.fg-moves > summary');
+  if(!el && row) el = row.querySelector('.fg-pn');
+  if(el) el.focus();
 }
 
 /** แถวที่กางออกมาใต้แถวของกลุ่ม — ราย PO ของ P/N นั้น ระดับที่ Delta ถามมาจริง
