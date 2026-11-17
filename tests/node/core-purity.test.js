@@ -7,6 +7,11 @@
 //    จึงหลุด `globalThis.document` · `typeof window` · `const w = window` (ผู้ตรวจ #139 รอบ 2 ทัก)
 //    ตัดคอมเมนต์ก่อนค้น เพราะคอมเมนต์ภาษาไทยในไฟล์พวกนี้พูดถึง state กับหน้าจอเป็นปกติ
 // ⚠️ คำเดียวกันในข้อความ (string) จะแดงด้วย — ตั้งใจ ถ้าวันหนึ่งเจอ ให้ดูว่ามันแตะของจริงหรือไม่ก่อนจะยกเว้น
+// ⚠️ ไม่ใส่ `top` `parent` `frames` — เป็น global จริงแต่ชื่อกลางเกินไป พารามิเตอร์ชื่อนี้จะแดงผิด (ผู้ตรวจ #141)
+//    ของจริงที่ต้องผ่านพวกนี้ต้องเขียน `window.` / `self.` / `globalThis.` นำหน้าอยู่แล้ว ซึ่งยังจับได้
+// 🚨 **ใบย้าย `core/status` จะแดงที่นี่** — `computeDeadlines()` อ่าน `state.deadlineOffsets` ตรง ๆ
+//    ถูกตามเจตนา แต่ใบย้ายแก้ตรรกะไม่ได้ (§3.1 ข้อ 1) → ต้องมีใบเปลี่ยนให้รับค่าเป็นพารามิเตอร์ **ก่อน**
+//    ห้ามแก้ด่านนี้ให้ยอม `state` เพื่อให้ใบย้ายผ่าน (ผู้ตรวจ #141 ไล่เจอ)
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -14,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 
 const CORE = path.join(__dirname, '..', '..', 'core');
-const FORBIDDEN = ['document', 'window', 'globalThis', 'self', 'top', 'parent', 'frames',
+const FORBIDDEN = ['document', 'window', 'globalThis', 'self',
   'localStorage', 'sessionStorage', 'indexedDB', 'caches', 'fetch', 'XMLHttpRequest', 'WebSocket',
   'navigator', 'location', 'history', 'alert', 'confirm', 'prompt', 'state'];
 
@@ -28,7 +33,9 @@ function forbiddenIn(src) {
   return stripComments(src).match(re);
 }
 
-const FILES = fs.readdirSync(CORE).filter(f => f.endsWith('.js'));
+// ลงโฟลเดอร์ย่อยด้วย — ไม่งั้นไฟล์ใน core/<ย่อย>/ หลุดการตรวจเงียบ ๆ (ผู้ตรวจ #141) · `/` เสมอแม้บน Windows
+const FILES = fs.readdirSync(CORE, { recursive: true })
+  .map(f => String(f).split(path.sep).join('/')).filter(f => f.endsWith('.js'));
 
 test('core/ มีไฟล์ให้ตรวจจริง — ไม่งั้นข้อข้างล่างเขียวเปล่า ๆ', () => {
   assert.ok(FILES.includes('dates.js'), FILES.join(', '));
@@ -55,6 +62,7 @@ test('ตัวตรวจต้องจับรูปที่ฉบับ�
   // ของที่ไม่ใช่ของต้องห้าม — ชื่อที่มีคำพวกนี้ซ้อนอยู่ · property ของ object อื่น · คอมเมนต์
   for (const ok of [
     'const stateReady = 1; const myWindow = 2;',
+    'function pick(parent, top){ return parent || top; }',
     'o.state = 1; d.location;',
     '// อ่าน state จากที่อื่น\n/* document */ const x = 1;',
     'const url = "https://example.test/a";',
