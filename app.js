@@ -2827,10 +2827,33 @@ function fgDiffCell(g){
        + (partial ? ` <span class="hint">${cover}</span>` : '');
 }
 
+/* กลุ่มที่กางรายการ PO ออกมาอยู่ — ของเครื่องใครเครื่องมัน ไม่เก็บลง state (E1–E4 · กฎเดียวกับ dayProcess)
+ *
+ * 🚨 ต้องจำข้ามการวาดใหม่ — renderAll() เรียก renderFg() ทุกรอบซิงค์ (20 วิ) ถ้าเปิดแท็บนี้ค้างไว้
+ *    ไม่จำแล้วแถวที่คนเพิ่งกางจะหุบเองกลางที่กำลังอ่าน แบบเดียวกับกล่องคำอธิบายของหน้ายอดค้างรายวัน (G2)
+ * กุญแจคือ `pn|unit` ตัวเดียวกับที่ fgRows() ใช้จัดกลุ่ม · ค่าคือ "กล่องการเคลื่อนไหวเปิดอยู่ไหม" */
+const fgOpen = new Map();
+function fgKey(pn, unit){ return pn + '|' + unit; }
+
 function renderFg(){
   fillSelect('fgUnit', uniqueSorted(activeOrders().map(o=>o.subName)));
   const unit = fgUnit(), q = fgQuery();
   const hideZero = document.getElementById('fgHideZero').checked;
+
+  /* 🚨 สองบล็อกนี้ต้องอ่าน DOM **ก่อน** สร้าง html ข้างล่าง — ของที่กางอยู่ถูกเขียนลงไปในนั้นแล้ว
+        (เขียนไว้ใกล้ ๆ จุดเขียนทับตอนแรก แล้วกล่องการเคลื่อนไหวหุบทุกครั้ง เทสจับได้) */
+  // จำปุ่มที่โฟกัสอยู่ไว้คืนให้ที่ท้ายฟังก์ชัน — ตารางนี้ถูกวาดใหม่ทุกรอบซิงค์ถ้าเปิดแท็บนี้ค้างไว้
+  // ไม่คืนแล้วคนที่ไล่ด้วยแป้นพิมพ์ตกไป BODY กลางคัน ต้อง Tab จากต้นหน้าใหม่ (G2)
+  const act = document.activeElement;
+  const actRow = act && act.classList && act.classList.contains('fg-pn') ? act.closest('tr.fg-row') : null;
+  const focused = actRow ? {pn: actRow.dataset.pn, unit: actRow.dataset.unit} : null;
+  /* สถานะของกล่องการเคลื่อนไหวอ่านจาก DOM ไม่พึ่ง event `toggle` ของ <details>
+     ซึ่งเบราว์เซอร์ยิงเป็น task แยก จึงมาทีหลังการวาดใหม่ที่เกิดติด ๆ กันได้ */
+  document.querySelectorAll('#fgTable tr.fg-sub').forEach(sub=>{
+    const k = fgKey(sub.dataset.pn, sub.dataset.unit);
+    const d = sub.querySelector('details.fg-moves');
+    if(d && fgOpen.has(k)) fgOpen.set(k, d.open);
+  });
 
   const all = fgRows();
   let rows = all;
@@ -2843,8 +2866,9 @@ function renderFg(){
     const neg = g.fg < 0
       ? ' <span class="badge red" title="ส่งออกมากกว่าที่ผ่าน Inspection — น่าจะคีย์ย้อนหลังหรือคีย์ผิดลำดับ">⚠ ติดลบ</span>'
       : '';
-    return `<tr class="fg-row" data-pn="${escapeHtml(g.pn)}" data-unit="${escapeHtml(g.unit)}" style="cursor:pointer">
-      <td class="left"><b>${escapeHtml(g.pn)}</b></td>
+    const open = fgOpen.has(fgKey(g.pn, g.unit));
+    return `<tr class="fg-row${open ? ' open' : ''}" data-pn="${escapeHtml(g.pn)}" data-unit="${escapeHtml(g.unit)}" style="cursor:pointer">
+      <td class="left"><button type="button" class="fg-pn" aria-expanded="${open}"><span class="fg-caret" aria-hidden="true">▶</span>${escapeHtml(g.pn)}</button></td>
       <td class="left">${escapeHtml(g.unit)}</td>
       <td>${numFmt(g.inQty)}</td>
       <td>${numFmt(g.outQty)}</td>
@@ -2852,7 +2876,7 @@ function renderFg(){
       <td>${numFmt(g.ourWip)}</td>
       <td>${g.deltaHave ? numFmt(g.deltaWip) : '—'}</td>
       <td>${fgDiffCell(g)}</td>
-    </tr>`;
+    </tr>` + fgSubRow(g, open);
   }).join('');
 
   document.getElementById('fgTable').innerHTML =
@@ -2869,68 +2893,127 @@ function renderFg(){
     `${numFmt(all.length)} กลุ่ม · <b>FG รวมทั้งหมด ${numFmt(totalFg)} ชิ้น</b>` +
     (rows.length !== all.length ? ` · แสดงอยู่ ${numFmt(rows.length)} กลุ่ม` : '') +
     (mismatch ? ` · <b style="color:var(--warn)">${numFmt(mismatch)} กลุ่มยอดค้างไม่ตรงกับ Delta</b>` : '') +
-    ` · กดที่แถวเพื่อดูการเคลื่อนไหว`;
+    ` · กดที่แถวเพื่อดูใบสั่งของ P/N นั้น`;
 
-  document.querySelectorAll('#fgTable .fg-row').forEach(tr=>{
-    tr.addEventListener('click', ()=> renderFgCard(tr.dataset.pn, tr.dataset.unit));
+  document.querySelectorAll('#fgTable tr.fg-row').forEach(tr=>{
+    tr.addEventListener('click', ()=> fgToggle(tr.dataset.pn, tr.dataset.unit));
   });
+  document.querySelectorAll('#fgTable tr.fg-sub').forEach(sub=>{ if(!sub.hidden) fgBindSub(sub); });
+
+  if(focused){
+    const back = Array.from(document.querySelectorAll('#fgTable tr.fg-row'))
+      .find(tr=> tr.dataset.pn === focused.pn && tr.dataset.unit === focused.unit);
+    if(back) back.querySelector('.fg-pn').focus();
+  }
 }
 
-/** การ์ดรายตัว — ระดับที่ Delta ถามมาจริง เขาถามเป็นราย PO */
-function renderFgCard(pn, unit){
-  const g = fgRows().find(x=> x.pn === pn && x.unit === unit);
-  if(!g) return;
-  const moves = fgMoves(pn, unit);
+/** แถวที่กางออกมาใต้แถวของกลุ่ม — ราย PO ของ P/N นั้น ระดับที่ Delta ถามมาจริง
+ *
+ *  ⚠️ เนื้อในวาดเฉพาะตอนกางอยู่ ไม่ใช่วาดไว้ล่วงหน้าแล้วซ่อน — fgMovesHtml() เดินผ่าน record
+ *     ทั้งก้อนหนึ่งรอบต่อกลุ่ม ของจริง 180 กลุ่ม × ~14,000 รายการ = จ่ายทุกรอบซิงค์โดยไม่มีใครดู */
+function fgSubRow(g, open){
+  return `<tr class="fg-sub" data-pn="${escapeHtml(g.pn)}" data-unit="${escapeHtml(g.unit)}"${open ? '' : ' hidden'}>`
+    + `<td colspan="8">${open ? fgSubInner(g) : ''}</td></tr>`;
+}
 
-  document.getElementById('fgCardTitle').textContent = `P/N ${pn} · ${unit}`;
-  document.getElementById('fgCardSummary').innerHTML =
-    `รับเข้าสะสม <b>${numFmt(g.inQty)}</b> · ส่งออกสะสม <b>${numFmt(g.outQty)}</b>`
-    + ` · คงเหลือ <b>${numFmt(g.fg)}</b> ชิ้น · ${numFmt(g.orders.length)} ใบสั่ง`;
+function fgSubInner(g){
+  // ⚠️ ครอบ Number() ทุกครั้งที่บวกยอดสั่ง — ค่าที่ซิงค์มาเป็นสตริงได้ แล้ว '100' + 100 = '100100'
+  const qty = g.orders.reduce((n,x)=> n + (Number(x.o.orderQty)||0), 0);
+  return `<div class="fg-sub-wrap">
+    <div class="fg-sub-head">ใบสั่งของ P/N ${escapeHtml(g.pn)} · ${numFmt(g.orders.length)} ใบ
+      <span class="hint">PO qty. รวม ${numFmt(qty)} ชิ้น · FG คงเหลือของกลุ่ม ${numFmt(g.fg)} ชิ้น</span></div>
+    <div class="table-wrap"><table class="fg-cmp"><thead><tr>
+      <th class="left">PO No.</th><th style="width:105px">PO Date</th><th style="width:100px">PO qty.</th>
+      <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th><th style="width:110px">FG คงเหลือ</th>
+      <th style="width:110px">ค้างส่ง (เรา)</th><th style="width:140px">ค้างส่ง (Delta)</th>
+      <th style="width:70px">งวด</th><th style="width:90px">ต่าง</th>
+    </tr></thead><tbody>${g.orders.map(fgPoRow).join('')}</tbody></table></div>
+    ${fgMovesHtml(g)}
+  </div>`;
+}
 
-  document.getElementById('fgCardTable').innerHTML =
-    `<thead><tr><th style="width:110px">วันที่</th><th>PO No.</th>
-      <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>
-      <th style="width:110px">คงเหลือ</th></tr></thead><tbody>` +
-    (moves.map(m=>`<tr>
-      <td>${escapeHtml(fmtDateTH(m.date))}</td>
-      <td class="left">${escapeHtml(m.po)}</td>
-      <td>${m.kind==='inspection' ? numFmt(m.qty) : ''}</td>
-      <td>${m.kind==='shipping' ? numFmt(m.qty) : ''}</td>
-      <td><b>${numFmt(m.balance)}</b></td>
-    </tr>`).join('') || emptyRow(5, 'ยังไม่มีการเคลื่อนไหว')) + '</tbody>';
+/** หนึ่งใบสั่งในแถวที่กางออกมา
+ *  PO Date มาจาก `orderDate` ช่องเดียวกับที่หน้าคีย์ยอดใช้คิด Aging — ไม่ได้เพิ่มข้อมูลใหม่ */
+function fgPoRow({o, inQty, outQty, ourWip, delta, dw}){
+  const d = delta ? delta.left : null;
+  const diff = d == null ? null : ourWip - d;
+  // ยอดฐานของการหักคือยอดที่แก้มือถ้ามี (deltaWipNum) — บอกให้ชัดว่าเลขนั้นมาจากไฟล์หรือจากคนแก้
+  const edited = dw && deltaWipOverride(dw) != null;
+  const cut = delta && delta.uncounted > 0
+    ? `<div class="hint" title="ยอดสั่ง − Wip bal. = Delta นับส่งแล้ว ${numFmt(delta.counted)} · เราส่งมากกว่านั้น ${numFmt(delta.uncounted)}">`
+      + `${edited ? 'แก้มือ' : 'ไฟล์'} ${numFmt(delta.raw)} − Delta ยังไม่นับ ${numFmt(delta.uncounted)}</div>` : '';
+  const tools = (edited ? `<div><span class="badge amber" title="${escapeHtml(deltaOverrideTip(dw))}">แก้มือ</span></div>` : '')
+    + (dw ? `<button type="button" class="btn-mini fg-dw-edit" data-dw="${escapeHtml(dw.id)}"`
+      + ` title="แก้ Wip bal. ของ Delta ด้วยมือ — ต้องใส่เหตุผลและชื่อผู้แก้">✎ แก้</button>` : '');
+  return `<tr>
+    <td class="left">${escapeHtml(o.poNo)}</td>
+    <td>${escapeHtml(fmtDateTH(o.orderDate))}</td>
+    <td>${numFmt(Number(o.orderQty)||0)}</td>
+    <td>${numFmt(inQty)}</td>
+    <td>${numFmt(outQty)}</td>
+    <td><b>${numFmt(inQty - outQty)}</b></td>
+    <td>${numFmt(ourWip)}</td>
+    <td>${(d == null ? '<span class="hint">ไม่มี</span>' : numFmt(d) + cut) + tools}</td>
+    <td>${delta && delta.week ? 'wk'+escapeHtml(delta.week) : '—'}</td>
+    <td>${diff == null ? '—'
+         : diff === 0 ? '<span class="badge green">ตรง</span>'
+         : `<span class="badge amber">${diff>0?'+':''}${numFmt(diff)}</span>`}</td>
+  </tr>`;
+}
 
-  document.getElementById('fgCardCmp').innerHTML =
-    `<thead><tr><th>PO No.</th><th style="width:110px">ค้างส่ง (เรา)</th>
-      <th style="width:110px">ค้างส่ง (Delta)</th><th style="width:90px">งวด</th>
-      <th style="width:100px">ต่าง</th></tr></thead><tbody>` +
-    g.orders.map(({o, ourWip, delta, dw})=>{
-      const d = delta ? delta.left : null;
-      const diff = d == null ? null : ourWip - d;
-      // ยอดฐานของการหักคือยอดที่แก้มือถ้ามี (deltaWipNum) — บอกให้ชัดว่าเลขนั้นมาจากไฟล์หรือจากคนแก้
-      const edited = dw && deltaWipOverride(dw) != null;
-      const cut = delta && delta.uncounted > 0
-        ? `<div class="hint" title="ยอดสั่ง − Wip bal. = Delta นับส่งแล้ว ${numFmt(delta.counted)} · เราส่งมากกว่านั้น ${numFmt(delta.uncounted)}">`
-          + `${edited ? 'แก้มือ' : 'ไฟล์'} ${numFmt(delta.raw)} − Delta ยังไม่นับ ${numFmt(delta.uncounted)}</div>` : '';
-      const tools = (edited ? `<div><span class="badge amber" title="${escapeHtml(deltaOverrideTip(dw))}">แก้มือ</span></div>` : '')
-        + (dw ? `<button type="button" class="btn-mini fg-dw-edit" data-dw="${escapeHtml(dw.id)}"`
-          + ` title="แก้ Wip bal. ของ Delta ด้วยมือ — ต้องใส่เหตุผลและชื่อผู้แก้">✎ แก้</button>` : '');
-      return `<tr>
-        <td class="left">${escapeHtml(o.poNo)}</td>
-        <td>${numFmt(ourWip)}</td>
-        <td>${(d == null ? '<span class="hint">ไม่มี</span>' : numFmt(d) + cut) + tools}</td>
-        <td>${delta && delta.week ? 'wk'+escapeHtml(delta.week) : '—'}</td>
-        <td>${diff == null ? '—'
-             : diff === 0 ? '<span class="badge green">ตรง</span>'
-             : `<span class="badge amber">${diff>0?'+':''}${numFmt(diff)}</span>`}</td>
-      </tr>`;
-    }).join('') + '</tbody>';
-  document.querySelectorAll('#fgCardCmp .fg-dw-edit').forEach(el=>{
-    // renderAll() ไม่ได้วาดการ์ดนี้ใหม่ — แก้เสร็จต้องวาดเองให้เห็นเลขที่แก้ทันที
-    el.addEventListener('click', function(){ if(editDeltaWip(this.dataset.dw)) renderFgCard(pn, unit); });
+/** การเคลื่อนไหวรายวันของกลุ่ม — พับไว้ เพราะคนเปิดแถวมาเพื่อดูราย PO ก่อน */
+function fgMovesHtml(g){
+  const moves = fgMoves(g.pn, g.unit);
+  const open = fgOpen.get(fgKey(g.pn, g.unit)) ? ' open' : '';
+  return `<details class="fg-moves"${open}>`
+    + `<summary>การเคลื่อนไหวรายวัน (${numFmt(moves.length)} รายการ)</summary>`
+    + `<div class="table-wrap"><table class="fg-mv"><thead><tr><th style="width:110px">วันที่</th><th class="left">PO No.</th>`
+    + `<th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>`
+    + `<th style="width:110px">คงเหลือ</th></tr></thead><tbody>`
+    + (moves.map(m=>`<tr>
+        <td>${escapeHtml(fmtDateTH(m.date))}</td>
+        <td class="left">${escapeHtml(m.po)}</td>
+        <td>${m.kind==='inspection' ? numFmt(m.qty) : ''}</td>
+        <td>${m.kind==='shipping' ? numFmt(m.qty) : ''}</td>
+        <td><b>${numFmt(m.balance)}</b></td>
+      </tr>`).join('') || emptyRow(5, 'ยังไม่มีการเคลื่อนไหว'))
+    + `</tbody></table></div></details>`;
+}
+
+/** กาง/พับกลุ่มหนึ่ง — แก้แค่สองแถวนั้น ไม่วาดทั้งตารางใหม่
+ *  โฟกัสของปุ่มที่เพิ่งกดจึงไม่ตก และการกางไม่ต้องจ่ายค่าวาดทั้งตาราง (G2) */
+function fgToggle(pn, unit){
+  const find = cls => Array.from(document.querySelectorAll('#fgTable tr.' + cls))
+    .find(tr=> tr.dataset.pn === pn && tr.dataset.unit === unit) || null;
+  const row = find('fg-row'), sub = find('fg-sub');
+  if(!row || !sub) return;
+  const k = fgKey(pn, unit);
+  if(fgOpen.has(k)){
+    fgOpen.delete(k);
+    sub.hidden = true;
+    sub.firstElementChild.innerHTML = '';   // คืนแรงให้การวาดรอบหน้า ไม่ต้องคิดของแถวที่พับแล้ว
+  } else {
+    const g = fgRows().find(x=> x.pn === pn && x.unit === unit);
+    if(!g) return;
+    fgOpen.set(k, false);
+    sub.firstElementChild.innerHTML = fgSubInner(g);
+    sub.hidden = false;
+    fgBindSub(sub);
+  }
+  const open = fgOpen.has(k);
+  row.classList.toggle('open', open);
+  row.querySelector('.fg-pn').setAttribute('aria-expanded', String(open));
+}
+
+/** ผูกปุ่มในแถวที่กางออกมา
+ *  (กล่องการเคลื่อนไหวไม่ต้องผูกอะไร — renderFg() อ่านสถานะของมันจาก DOM ก่อนวาดใหม่) */
+function fgBindSub(sub){
+  sub.querySelectorAll('.fg-dw-edit').forEach(el=>{
+    /* แก้แล้วเลขของแถวกลุ่มข้างบนเปลี่ยนด้วย ต้องวาดทั้งตาราง — editDeltaWip() เรียก renderAll()
+       ซึ่งเรียก renderFg() ให้อยู่แล้วเมื่อเปิดแท็บนี้อยู่ · แถวที่กางค้างไว้กลับมาเองจาก fgOpen
+       (ของเดิมวาดใหม่แค่การ์ด เลขบนแถวกลุ่มจึงค้างของเก่าจนกว่าจะสลับแท็บ) */
+    el.addEventListener('click', function(e){ e.stopPropagation(); editDeltaWip(this.dataset.dw); });
   });
-
-  document.getElementById('fgCardPanel').style.display = '';
-  document.getElementById('fgCardPanel').scrollIntoView({block:'nearest'});
 }
 
 /* ---------- Render: ยอดรายวันทุกขั้น ----------
@@ -6137,9 +6220,6 @@ document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
   document.getElementById(id).addEventListener('change', renderFg));
 // ช่องค้นหาอยู่นอกตาราง การวาดใหม่จึงไม่แย่งโฟกัส พิมพ์รัวได้ (INVARIANTS G2)
 document.getElementById('fgSearch').addEventListener('input', renderFg);
-document.getElementById('btnFgCardClose').addEventListener('click', ()=>{
-  document.getElementById('fgCardPanel').style.display = 'none';
-});
 
 document.getElementById('dnDate').addEventListener('change', renderDeliveryNote);
 // ช่องค้นหาอยู่นอกตาราง การวาดตารางใหม่จึงไม่แย่งโฟกัสไปจากมัน พิมพ์รัวได้ (INVARIANTS G2)

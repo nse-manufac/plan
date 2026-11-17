@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-16.1">
+<meta name="app-version" content="2026-11-17.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -72,6 +72,22 @@
   .badge.red{background:var(--red-light);color:var(--red);}
   .badge.gray{background:var(--gray-light);color:var(--text-dim);}
   .hint{color:var(--text-dim);font-size:11.5px;}
+  /* หน้ายอดคงคลัง FG — แถวที่กางรายการ PO ออกมาใต้แถวของกลุ่ม
+     ⚠️ ต้องเขียน [hidden]{display:none} ของตัวเอง เผื่อวันหนึ่งมีกฎ display มาทับแถวนี้
+        กฎ display ชนะ [hidden] ของเบราว์เซอร์เสมอ (กับดักเดียวกับ .wtdiff กับ .wtanom) */
+  #fgTable tr.fg-sub[hidden]{display:none;}
+  #fgTable tr.fg-sub > td{padding:0;background:#fafbfc;text-align:left;white-space:normal;}
+  #fgTable tr.fg-row:hover > td,#fgTable tr.fg-row.open > td{background:var(--primary-light);}
+  .fg-pn{display:inline-flex;align-items:center;gap:7px;background:none;border:none;padding:0;
+         font:inherit;font-weight:700;color:var(--text);cursor:pointer;}
+  .fg-caret{display:inline-block;width:12px;color:var(--primary);font-size:11px;transition:transform .12s;}
+  #fgTable tr.fg-row.open .fg-caret{transform:rotate(90deg);}
+  .fg-sub-wrap{padding:12px 14px 14px;border-left:3px solid var(--primary);}
+  .fg-sub-head{font-weight:700;font-size:13.5px;margin-bottom:8px;}
+  .fg-sub-head .hint{font-weight:400;margin-left:6px;}
+  details.fg-moves{margin-top:12px;}
+  details.fg-moves summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--primary);}
+  details.fg-moves .table-wrap{margin-top:8px;max-width:760px;}
   /* หน้าใบส่งสินค้า — เลียนหน้าตาของใบจริง (เจ้าของขอ 3 ก.ย. 2026 ว่าอ่านยาก)
      ช่องที่ merge คร่อมทุกใบสั่งของ P/N เดียวกัน = ช่องที่ merge ไว้ในกระดาษ
      เส้นหนาคั่นระหว่างกลุ่ม = เส้นตารางในกระดาษ ทำให้กวาดตาหากลุ่มได้เร็ว */
@@ -763,20 +779,6 @@
     </div>
   </div>
 
-  <div class="panel" id="fgCardPanel" style="display:none;">
-    <h2 id="fgCardTitle">การเคลื่อนไหว</h2>
-    <div class="desc" id="fgCardSummary"></div>
-    <div class="table-wrap">
-      <table id="fgCardTable"></table>
-    </div>
-    <h3 style="margin-top:18px;font-size:16px">เทียบยอดค้างส่งราย PO กับ Delta</h3>
-    <div class="table-wrap">
-      <table id="fgCardCmp"></table>
-    </div>
-    <div class="row" style="margin-top:12px">
-      <button class="btn" id="btnFgCardClose">ปิด</button>
-    </div>
-  </div>
 </section>
 
 <!-- ================= TAB: ยอดค้างรายวัน ================= -->
@@ -1094,7 +1096,7 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="core/dates.js?v=2026-11-16.1"></script>
-<script src="app.js?v=2026-11-16.1"></script>
+<script src="core/dates.js?v=2026-11-17.1"></script>
+<script src="app.js?v=2026-11-17.1"></script>
 </body>
 </html>

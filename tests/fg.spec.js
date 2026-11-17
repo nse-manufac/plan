@@ -54,6 +54,12 @@ async function open(page, orders, records = [], deltaWip = []) {
 const rowOf = (page, pn, unit) =>
   page.locator(`#fgTable tr.fg-row[data-pn="${pn}"][data-unit="${unit}"]`).innerText();
 
+/** แถวที่กางออกมาใต้แถวของกลุ่ม — ต้องกดแถวนั้นก่อน ไม่งั้นเนื้อในยังไม่ถูกวาด (ดู fgSubRow) */
+const subOf = (page, pn, unit) =>
+  page.locator(`#fgTable tr.fg-sub[data-pn="${pn}"][data-unit="${unit}"]`);
+/** ตารางเทียบราย PO ในแถวที่กางออกมา */
+const cmpOf = (page, pn, unit) => subOf(page, pn, unit).locator('table.fg-cmp tbody');
+
 const ORDERS = [
   order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 5000),
   order('PO-B1', PN_A, 3000, 'TUE-H'), order('PO-C1', PN_B, 4000)
@@ -205,13 +211,72 @@ test('กดที่แถวแล้วต้องเห็นการเ�
     rec('r2', 'PO-A1|' + PN_A, 'shipping', 1200, '2026-08-22')
   ]);
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  await expect(page.locator('#fgCardPanel')).toBeVisible();
+  await expect(subOf(page, PN_A, 'TUE-U')).toBeVisible();
 
-  const rows = await page.locator('#fgCardTable tbody tr').allInnerTexts();
+  // ⚠️ ต้องกดกางกล่องก่อนอ่าน — innerText ของของที่ซ่อนอยู่คืนค่าว่าง
+  await subOf(page, PN_A, 'TUE-U').locator('details.fg-moves summary').click();
+  const rows = await subOf(page, PN_A, 'TUE-U').locator('table.fg-mv tbody tr').allInnerTexts();
   expect(rows.length, 'สามการเคลื่อนไหว').toBe(3);
   expect(rows[0], 'ยอดสะสมหลังรับเข้าครั้งแรก').toContain('3,000');
   expect(rows[1], 'บวกอีก 1,500').toContain('4,500');
   expect(rows[2], 'หักที่ส่งออก 1,200').toContain('3,300');
+});
+
+test('แถวที่กางออกมาต้องบอก PO Date กับ PO qty. ของแต่ละใบ', async ({ page }) => {
+  /* เจ้าของขอสองช่องนี้เมื่อ 17 พ.ย. 2569 เพื่อเทียบกับไฟล์ Call In ของ Delta ได้ทีละบรรทัด
+     ไฟล์ของเขามีคอลัมน์ PO NO กับ PO QTY อยู่แล้ว จึงใช้คำเดียวกัน ไม่แปลเป็นไทย
+     PO Date มาจาก orderDate ช่องเดียวกับที่หน้าคีย์ยอดใช้คิด Aging ไม่ได้เพิ่มข้อมูลใหม่ */
+  await open(page, [order('PO-A1', PN_A, 5000)]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  const head = await subOf(page, PN_A, 'TUE-U').locator('table.fg-cmp thead').innerText();
+  expect(head, 'ใช้คำเดียวกับไฟล์ของ Delta').toContain('PO qty.');
+  expect(head).toContain('PO Date');
+
+  const td = cmpOf(page, PN_A, 'TUE-U').locator('tr').first().locator('td');
+  expect(await td.nth(1).innerText(), 'วันที่ของใบสั่ง รูปแบบเดียวกับทั้งแอป').toBe('03/08/2026');
+  expect(await td.nth(2).innerText(), 'ยอดสั่งของใบนั้น').toBe('5,000');
+});
+
+test('ยอดราย PO ที่กางออกมา บวกกันต้องเท่ากับเลขบนแถวของกลุ่ม', async ({ page }) => {
+  /* แถวของกลุ่มกับรายการที่กางออกมาอยู่ติดกัน คนจะบวกตามด้วยตาทันที
+     ถ้าสองชั้นคิดคนละชุดใบ จะได้เลขไม่ตรงกันโดยไม่มีอะไรฟ้อง แล้วเลิกเชื่อทั้งหน้า
+     (หลักเดียวกับแถบข้อมูลย้อนแย้งกับรายการที่กางจากมัน) */
+  await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 3000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000, '2026-08-20'),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22'),
+    rec('r3', 'PO-A2|' + PN_A, 'inspection', 1500, '2026-08-21')
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  const num = s => Number(String(s).replace(/,/g, ''));
+  let qtySum = 0, inSum = 0, outSum = 0;
+  for(const r of await cmpOf(page, PN_A, 'TUE-U').locator('tr').all()){
+    const td = r.locator('td');
+    qtySum += num(await td.nth(2).innerText());
+    inSum  += num(await td.nth(3).innerText());
+    outSum += num(await td.nth(4).innerText());
+  }
+  expect(qtySum, 'PO qty. ของสองใบรวมกัน').toBe(8000);
+  expect(inSum, 'รับเข้ารวม').toBe(4500);
+  expect(outSum, 'ส่งออกรวม').toBe(1200);
+  expect(await cellOf(page, PN_A, 'TUE-U', 2), 'ต้องตรงกับช่องรับเข้าของแถวกลุ่ม').toBe('4,500');
+  expect(await cellOf(page, PN_A, 'TUE-U', 3), 'ต้องตรงกับช่องส่งออกของแถวกลุ่ม').toBe('1,200');
+});
+
+test('กางแถวค้างไว้แล้วหน้าวาดใหม่ ต้องไม่หุบเอง', async ({ page }) => {
+  /* renderAll() วาดหน้านี้ใหม่ทุกรอบซิงค์ (20 วิ) ถ้าเปิดแท็บนี้ค้างไว้ — ไม่จำสถานะการกางไว้
+     แถวที่คนเพิ่งกางจะหุบเองกลางที่กำลังอ่าน และโฟกัสตกไป BODY (G2)
+     ข้อนี้ยิงผ่านช่องค้นหา ซึ่งเรียก renderFg() ตัวเดียวกับที่ซิงค์เรียก */
+  await open(page, [order('PO-A1', PN_A, 5000)]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  await subOf(page, PN_A, 'TUE-U').locator('details.fg-moves summary').click();
+
+  await page.fill('#fgSearch', PN_A.slice(0, 4));
+  await page.waitForTimeout(150);
+  await expect(subOf(page, PN_A, 'TUE-U'), 'แถวที่กางไว้ต้องยังกางอยู่').toBeVisible();
+  await expect(subOf(page, PN_A, 'TUE-U').locator('details.fg-moves'),
+    'กล่องการเคลื่อนไหวที่เพิ่งเปิดก็ต้องไม่หุบตาม').toHaveAttribute('open', '');
 });
 
 /* ── ใบที่ยกเลิกแล้วต้องไม่ถูกนับในหน้า FG ────────────────────────────
@@ -255,7 +320,7 @@ test('การ์ดต้องเทียบราย PO และบอก�
                    [deltaRow('PO-A1|' + PN_A, 34, 5000)]);
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
 
-  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
   expect(cmp, 'ต้องบอกงวดของไฟล์ เพราะ Delta ถามย้อนหลังเป็นราย PO').toContain('wk34');
   expect(cmp, 'ใบที่ Delta ไม่มีข้อมูล ต้องบอกตรง ๆ ว่าไม่มี ไม่ใช่โชว์ 0').toContain('ไม่มี');
 });
@@ -280,7 +345,7 @@ test('ยอดค้างของ Delta นับเฉพาะงวดล�
     .toContain('ตรงกันทุกใบ');
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
   expect(cmp, 'การ์ดต้องไม่อ้างยอดของงวดเก่า').not.toContain('wk34');
 });
 
@@ -301,7 +366,7 @@ test('Delta ยังไม่นับยอดส่งเลย — ยอด
   expect(await rowOf(page, PN_A, 'TUE-U'), 'หักแล้วตรงกันพอดี').toContain('ตรงกันทุกใบ');
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
   expect(cmp, 'การ์ดบอกยอดในไฟล์').toContain('ไฟล์ 6,000');
   expect(cmp, 'และบอกว่าหักส่วนที่ Delta ยังไม่นับไปเท่าไหร่').toContain('Delta ยังไม่นับ 3,500');
 });
@@ -318,7 +383,7 @@ test('Delta นับยอดส่งไปแล้วบางส่วน �
     .toBe('2,000');
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  expect(await page.locator('#fgCardCmp tbody').innerText()).toContain('Delta ยังไม่นับ 1,000');
+  expect(await cmpOf(page, PN_A, 'TUE-U').innerText()).toContain('Delta ยังไม่นับ 1,000');
 });
 
 test('Delta นับยอดส่งมากกว่าที่เราคีย์ — ไม่หักอะไร และยังต้องเห็นว่าต่าง เพราะเราอาจลืมคีย์ยอดส่ง', async ({ page }) => {
@@ -332,7 +397,7 @@ test('Delta นับยอดส่งมากกว่าที่เรา�
   expect(await rowOf(page, PN_A, 'TUE-U'), 'สัญญาณว่าเราอาจลืมคีย์ยอดส่ง ต้องยังอยู่').toContain('+1,000');
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  expect(await page.locator('#fgCardCmp tbody').innerText(), 'ไม่มีอะไรให้หัก').not.toContain('ยังไม่นับ');
+  expect(await cmpOf(page, PN_A, 'TUE-U').innerText(), 'ไม่มีอะไรให้หัก').not.toContain('ยังไม่นับ');
 });
 
 test('ยอดที่แก้มือเป็นฐานของหน้า FG — แล้วค่อยหักส่วนที่ Delta ยังไม่นับ (เจ้าของสั่ง 15 ก.ย. 2026)', async ({ page }) => {
@@ -345,9 +410,9 @@ test('ยอดที่แก้มือเป็นฐานของหน�
 
   expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) = แก้มือ 3,000 − ยังไม่นับ 500').toBe('2,500');
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
   expect(cmp, 'ต้องบอกว่าฐานมาจากการแก้มือ ไม่ใช่จากไฟล์').toContain('แก้มือ 3,000 − Delta ยังไม่นับ 500');
-  await expect(page.locator('#fgCardCmp .fg-dw-edit'), 'การ์ดต้องมีปุ่มแก้').toHaveCount(1);
+  await expect(subOf(page, PN_A, 'TUE-U').locator('.fg-dw-edit'), 'การ์ดต้องมีปุ่มแก้').toHaveCount(1);
 });
 
 /** อ่านค่าในช่องหนึ่งของแถว — เจาะจงกว่าการดูข้อความทั้งแถว

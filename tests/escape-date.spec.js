@@ -92,13 +92,16 @@ test('G3 — ตารางยกเลิกใบสั่ง', async ({ page
   await expectNotPwned(page, 'ตารางยกเลิกใบสั่ง');
 });
 
-test('G3 — การ์ดยอดคงคลัง FG', async ({ page }) => {
+test('G3 — รายการที่กางจากแถวของหน้ายอดคงคลัง FG', async ({ page }) => {
   const o = order('TM5267H179', '2870327301', 800, '2026-08-03');
   await open(page, [o], [rec('R1', o.id, 'inspection', 500, EVIL)]);
   await page.click('.tab-btn[data-tab="fg"]');
   await page.click('#fgTable tr.fg-row[data-pn="2870327301"][data-unit="TUE-U"]');
-  await expect(page.locator('#fgCardTable tbody tr').first()).toContainText(SHOWN);
-  await expectNotPwned(page, 'การ์ด FG');
+  const sub = page.locator('#fgTable tr.fg-sub[data-pn="2870327301"][data-unit="TUE-U"]');
+  // ⚠️ ต้องกดกางกล่องก่อนอ่าน — innerText ของของที่ซ่อนอยู่คืนค่าว่าง
+  await sub.locator('details.fg-moves summary').click();
+  await expect(sub.locator('table.fg-mv tbody tr').first()).toContainText(SHOWN);
+  await expectNotPwned(page, 'รายการที่กางจากแถวของหน้า FG');
 });
 
 test('G3 — หน้าจอใบส่งสินค้า', async ({ page }) => {
