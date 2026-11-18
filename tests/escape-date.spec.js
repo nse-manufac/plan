@@ -123,6 +123,7 @@ test('G3 — คอลัมน์ PO Date ของแถวที่กาง�
     'PO Date ของตารางการเคลื่อนไหว').toHaveText(SHOWN);
   await expectNotPwned(page, 'คอลัมน์ PO Date ของแถวที่กางในหน้า FG');
 });
+
 test('G3 — หน้าจอใบส่งสินค้า', async ({ page }) => {
   await open(page, [order('TM5267H179', '2870327301', 800, EVIL)]);
   await page.click('.tab-btn[data-tab="delivery"]');

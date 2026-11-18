@@ -95,6 +95,9 @@
   details.fg-moves{margin-top:12px;}
   details.fg-moves summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--primary);}
   details.fg-moves .table-wrap{margin-top:8px;max-width:760px;}
+  /* หัวคอลัมน์ `คงเหลือ` ต้องบอกว่าเป็นยอดของทั้งกลุ่ม ไม่ใช่ของใบในแถวนั้น (เหตุผลเต็มอยู่ที่
+     fgMovesHtml ใน app.js) · ขึ้นบรรทัดใหม่เพื่อไม่ให้คอลัมน์กว้างขึ้น — กระดาษ A4 เหลือที่ 16px */
+  .fg-mv th .hint{display:block;font-weight:400;}
   /* หน้าใบส่งสินค้า — เลียนหน้าตาของใบจริง (เจ้าของขอ 3 ก.ย. 2026 ว่าอ่านยาก)
      ช่องที่ merge คร่อมทุกใบสั่งของ P/N เดียวกัน = ช่องที่ merge ไว้ในกระดาษ
      เส้นหนาคั่นระหว่างกลุ่ม = เส้นตารางในกระดาษ ทำให้กวาดตาหากลุ่มได้เร็ว */

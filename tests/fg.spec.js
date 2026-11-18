@@ -407,8 +407,15 @@ test('การเคลื่อนไหวรายวันต้องบ�
   await sub.locator('details.fg-moves summary').click();
 
   const heads = await sub.locator('table.fg-mv thead th').allInnerTexts();
-  expect(heads, 'หัวตารางต้องเรียงเหมือนตารางราย PO').toEqual(
-    ['วันที่', 'PO No.', 'PO Date', 'PO qty.', 'รับเข้า', 'ส่งออก', 'คงเหลือ']);
+  expect(heads.slice(0, 6), 'หัวตารางต้องเรียงเหมือนตารางราย PO').toEqual(
+    ['วันที่', 'PO No.', 'PO Date', 'PO qty.', 'รับเข้า', 'ส่งออก']);
+  /* 🚨 คอลัมน์สุดท้ายต้องบอกว่าเป็นยอดของ "ทั้งกลุ่ม" — ตารางราย PO ข้างบนมีคอลัมน์
+     `FG คงเหลือ` ซึ่งเป็นของใบเดียว ส่วนเลขนี้เป็นยอดวิ่งของทุกใบรวมกัน
+     แถวนี้มี `PO No.`/`PO qty.` กำกับอยู่ด้วย คนจึงอ่านว่าเป็นของใบนั้นได้ง่าย
+     แล้วสรุปว่า "ยอดไม่ตรง" ทั้งที่ทั้งคู่ถูก (ผู้ตรวจ #142 รอบ 10 รันวัดได้ 700 vs 1,200)
+     ⚠️ ต้องเป็นข้อความบนจอ ไม่ใช่ `title` — `title` ไม่ติดกระดาษและแป้นพิมพ์อ่านไม่ได้ */
+  expect(heads[6].replace(/\s+/g, ' ').trim(), 'หัวคอลัมน์สุดท้ายต้องกำกับว่าเป็นของทั้งกลุ่ม')
+    .toBe('คงเหลือ (ทั้งกลุ่ม)');
 
   const rows = sub.locator('table.fg-mv tbody tr');
   const cells = async i => (await rows.nth(i).locator('td').allInnerTexts()).map(s=> s.trim());
