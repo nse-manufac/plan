@@ -48,10 +48,12 @@ async function openDaily(page, orders, records = [], date = D1, processes = null
   await page.waitForTimeout(250);
 }
 
-// ลำดับคอลัมน์ — # · สัปดาห์ · PO · P/N · Sub-Name · Order Qty · สะสม · คงเหลือ · ยอดวันนั้น · หมายเหตุ · Order Date · Aging
-/* ⚠️ 13 พ.ย. 2569 เจ้าของสั่งเปลี่ยนคอลัมน์สุดท้ายจากป้ายสถานะเป็น Aging แล้วเติม Order Date
-      ไว้ข้าง ๆ · สถานะยังอยู่ แต่ไปอยู่ใน `title` ของช่อง Aging ไม่ใช่ข้อความในช่อง */
-const COL = { qty: 5, cum: 6, rem: 7, today: 8, note: 9, orderDate: 10, aging: 11 };
+// ลำดับคอลัมน์ — # · สัปดาห์ · PO · P/N · Sub-Name · Order Qty · สะสม · คงเหลือ · ยอดวันนั้น · Aging
+/* ⚠️ 13 พ.ย. 2569 เจ้าของสั่งเปลี่ยนคอลัมน์สุดท้ายจากป้ายสถานะเป็น Aging
+      สถานะยังอยู่ แต่ไปอยู่ใน `title` ของช่อง Aging ไม่ใช่ข้อความในช่อง
+   ⚠️ 18 พ.ย. 2569 เจ้าของสั่งถอด "หมายเหตุ" กับ "Order Date" ออก — วันที่สั่งอยู่ท้ายช่อง
+      "สัปดาห์" อยู่แล้ว (`WK 43 28.10.26`) จึงไม่ต้องมีคอลัมน์ของตัวเอง */
+const COL = { qty: 5, cum: 6, rem: 7, today: 8, aging: 9 };
 const rowOf = (page, po) => page.locator('#dayTable tbody tr', { hasText: po });
 const cellOf = (page, po, col) => rowOf(page, po).locator('td').nth(COL[col]);
 // แถวรวมมีช่องแรกเป็น colspan="8" ช่องยอดรวมจึงเป็น td ตัวที่ 1
@@ -116,8 +118,9 @@ test('ยอดส่งของที่มาจากใบส่งสิ�
   expect(await procNum(page, 'shipping')).toBe('500');
   await pick(page, 'shipping');
   expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('500');
-  // คำบอกที่มาของยอดต้องอ่านออกบนจอ ไม่ใช่ซ่อนไว้
-  expect(await cellOf(page, 'PO-1', 'note').innerText()).toContain('ใบส่งสินค้า');
+  /* คำบอกที่มาของยอด (`note`) เคยอ่านได้ที่คอลัมน์หมายเหตุของหน้านี้ · คอลัมน์นั้นถูกถอดออก
+     18 พ.ย. 2569 ตามคำสั่งเจ้าของ · ที่ที่ยังอ่านได้คือคอลัมน์ "แหล่งที่มา" ของหน้าแก้ไขรายการ
+     ตรงนี้จึงเหลือแค่ข้อเดิมว่า "ยอดของขั้นส่งของต้องอ่านได้ที่หน้านี้" */
 });
 
 // ── 2. หัวใจข้อที่ 1: ยอดของวันนั้น ไม่ใช่ยอดสะสม ────────────────────
@@ -147,27 +150,36 @@ test('เปลี่ยนวันไปวันที่ไม่ได้�
 
 // ── 3. หัวใจข้อที่ 2: "—" กับ "0" ต่างกัน ──────────────────────────
 
-test('ยอด 0 ที่มีคนคีย์ไว้ ต้องขึ้นเป็น 0 ไม่ใช่ขีด', async ({ page }) => {
+test('ยอด 0 ที่มีคนคีย์ไว้ ต้องขึ้นเป็น 0 ไม่ใช่ขีด — ที่ "แสดงทุกใบ"', async ({ page }) => {
   // record ยอด 0 เกิดได้เองจากการเลือกเหตุผลตอนยังไม่มียอด (เจ้าของเลือก 27 ต.ค. 2026)
   // และมันแปลว่า "วันนี้ผลิต 0" ซึ่งเป็นข้อมูล ไม่ใช่ความว่าง
+  // ⚠️ ตั้งแต่ 18 พ.ย. 2569 ใบแบบนี้ถูกซ่อนจากค่าตั้งต้น จึงต้องติ๊กสวิตช์ก่อนถึงจะเห็น
+  //    แต่ "ซ่อนจากค่าตั้งต้น" กับ "กลายเป็นขีด" คนละเรื่อง — ข้อนี้กันเรื่องหลัง
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 0, D1, { note: 'เครื่องเสีย' })]);
+  await page.check('#dayShowAll');
+  await page.waitForTimeout(250);
   await expect(rowOf(page, 'PO-1')).toHaveCount(1);
   expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('0');
+  // ใบที่ไม่มีใครคีย์เลยยังต้องเป็นขีด — สองอย่างนี้ห้ามถูกรวบเป็นอันเดียวกัน
+  expect(await cellOf(page, 'PO-2', 'today').innerText()).toBe('—');
 });
 
-test('ใบที่มีแต่ยอด 0 ต้องนับว่า "วันนั้นมีการคีย์" และขึ้นในตารางตั้งต้น', async ({ page }) => {
-  // record ยอด 0 เกิดเองได้จากการเลือกเหตุผลตอนยังไม่มียอด (27 ต.ค. 2026)
-  // ถ้านับว่า "ไม่มีการคีย์" ใบที่หยุดงานพร้อมเหตุผลจะหายไปจากหน้านี้ทั้งใบ
+test('ใบที่คีย์ไว้ว่าผลิต 0 ต้องไม่ขึ้นในตารางตั้งต้น และข้อความตอนว่างต้องไม่โกหก', async ({ page }) => {
+  /* เจ้าของสั่ง 18 พ.ย. 2569 — การเลือกเหตุผลตอนยังไม่มียอดสร้าง record ยอด 0 ให้เอง
+     (คำตัดสิน 27 ต.ค. 2026) ของจริงจึงมีใบที่ "ไม่ได้ผลิต" ปนมาวันละหลายสิบใบ
+     ⚠️ ข้อความตอนตารางว่างต้องแยก "คีย์ไว้ว่าผลิต 0" ออกจาก "ไม่มีใครคีย์เลย" —
+        เลขบนปุ่มขึ้น "0" อยู่ตรงนั้นพอดี ถ้าข้อความบอกว่ายังไม่มีการคีย์ สองอย่างจะขัดกันเอง */
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 0, D1, { note: 'เครื่องเสีย' })]);
-  await expect(rowOf(page, 'PO-1')).toHaveCount(1);
-  expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('0');
-  expect(await cellOf(page, 'PO-1', 'note').innerText()).toBe('เครื่องเสีย');
-  await expect(rowOf(page, 'PO-2')).toHaveCount(0);
+  await expect(rowOf(page, 'PO-1')).toHaveCount(0);
+  expect(await procNum(page, 'winding'), 'ปุ่มยังนับใบที่ผลิต 0 เหมือนเดิม').toBe('0');
+  const msg = await page.locator('#dayTable tbody').innerText();
+  expect(msg).toContain('คีย์ไว้ว่าผลิต 0');
+  expect(msg, 'มีคนคีย์ไว้จริง จะบอกว่ายังไม่มีการคีย์ไม่ได้').not.toContain('ยังไม่มีการคีย์ยอด');
 });
 
 // ── 4. สวิตช์ "แสดงทุกใบ" (เจ้าของเลือก 3 พ.ย. 2026) ────────────────
 
-test('ค่าตั้งต้นโชว์เฉพาะใบที่วันนั้นมีการคีย์', async ({ page }) => {
+test('ค่าตั้งต้นโชว์เฉพาะใบที่วันนั้นผลิตได้จริง', async ({ page }) => {
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 100, D1)]);
   await expect(rowOf(page, 'PO-1')).toHaveCount(1);
   await expect(rowOf(page, 'PO-2')).toHaveCount(0);
@@ -521,12 +533,13 @@ test('ช่อง Aging และสถานะใน title ต้องคิ
     'title ต้องมีสถานะจริง ไม่ใช่หัวข้อเปล่า').toBeGreaterThan(2);
 });
 
-test('คอลัมน์ Order Date ต้องโชว์วันที่สั่งแบบไทย และอ่านคู่กับ Aging ได้', async ({ page }) => {
-  /* เจ้าของขอเพิ่มคอลัมน์นี้ 13 พ.ย. 2569 · วางติดกับ Aging เพราะ Aging คือ
-     "วันนี้ ลบ วันในช่องนี้" — สองช่องอ่านคู่กันแล้วตรวจกันเองได้ */
-  /* ⚠️ ต้องประกอบวันจากเวลา **เครื่อง** ไม่ใช่ `toISOString()` ซึ่งเป็น UTC —
-     ไทยเป็น UTC+7 ช่วงเที่ยงคืนถึงเจ็ดโมงเช้า UTC ยังเป็นเมื่อวาน เทสจะแดงเองวันละเจ็ดชั่วโมง
-     (แดงจริงตอนรันข้ามเที่ยงคืนคืนวันที่ 13) · แอปใช้ `todayISO()` ซึ่งเป็นเวลาเครื่อง */
+test('คอลัมน์หมายเหตุกับ Order Date ต้องไม่มีแล้ว และจำนวนช่องต้องตรงกับหัวตารางทุกแถว', async ({ page }) => {
+  /* เจ้าของสั่งถอดสองคอลัมน์นี้ 18 พ.ย. 2569 — Order Date ซ้ำกับวันที่ท้ายช่อง "สัปดาห์"
+     ⚠️ ต้องนับช่องด้วย ไม่ใช่แค่ดูว่าชื่อคอลัมน์หายไปแล้ว — `colspan` ของแถวรวมกับของ
+        `emptyRow()` ต้องตามมาแก้ทุกครั้งที่จำนวนคอลัมน์เปลี่ยน ลืมแล้วตารางเพี้ยนเงียบ ๆ
+        ในแบบที่เทส "ไม่มีคำว่า Order Date" จับไม่ได้เลย
+     ⚠️ ต้องประกอบวันจากเวลา **เครื่อง** ไม่ใช่ `toISOString()` ซึ่งเป็น UTC —
+        ไทยเป็น UTC+7 ช่วงเที่ยงคืนถึงเจ็ดโมงเช้า UTC ยังเป็นเมื่อวาน เทสจะแดงเองวันละเจ็ดชั่วโมง */
   const days = n => {
     const x = new Date(); x.setDate(x.getDate() - n);
     return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
@@ -534,11 +547,26 @@ test('คอลัมน์ Order Date ต้องโชว์วันที�
   const o1 = Object.assign(order('PO-1', 4000), { orderDate: days(12) });
   await openDaily(page, [o1], [rec('r1', 'PO-1', 'winding', 100)]);
 
-  const [yy, mm, dd] = days(12).split('-');
-  expect((await cellOf(page, 'PO-1', 'orderDate').innerText()).trim(),
-    'ต้องเป็น dd/mm/yyyy แบบเดียวกับที่อื่นในแอป').toBe(`${dd}/${mm}/${yy}`);
-  expect((await cellOf(page, 'PO-1', 'aging').innerText()).trim(),
-    'Aging ต้องเท่ากับจำนวนวันจากช่อง Order Date ถึงวันนี้').toBe('12');
+  const heads = await page.locator('#dayTable thead th').allInnerTexts();
+  expect(heads.join('|')).not.toContain('Order Date');
+  expect(heads.join('|')).not.toContain('หมายเหตุ');
+  // Aging ยังต้องอ่านได้ และวันที่ที่ใช้คิดยังอยู่ท้ายช่อง "สัปดาห์" ให้ตรวจคู่กันได้
+  expect((await cellOf(page, 'PO-1', 'aging').innerText()).trim()).toBe('12');
+
+  expect(await rowOf(page, 'PO-1').locator('td').count(),
+    'แถวข้อมูลต้องมีช่องเท่าหัวตาราง').toBe(heads.length);
+  let span = 0;
+  for (const td of await page.locator('#dayTable tfoot td').all())
+    span += Number(await td.getAttribute('colspan') || 1);
+  expect(span, 'แถวรวมต้องกว้างเท่าหัวตาราง ไม่งั้นช่องยอดรวมเลื่อนไปอยู่ใต้คอลัมน์อื่น')
+    .toBe(heads.length);
+  expect(await footTotal(page).innerText(), 'ช่องยอดรวมต้องยังอยู่ใต้ "ยอดวันนั้น"').toBe('100');
+
+  // แถวข้อความตอนตารางว่างก็ต้องกว้างเท่ากัน
+  await page.fill('#dayDate', '2026-08-25');
+  await page.waitForTimeout(200);
+  expect(await page.locator('#dayTable tbody td.empty-hint').getAttribute('colspan'))
+    .toBe(String(heads.length));
 });
 
 test('A3 — ขั้นที่ถูกซ่อนต้องไม่มีปุ่ม และต้องมีขั้นที่ถูกเลือกอยู่หนึ่งขั้นเสมอ', async ({ page }) => {
@@ -617,18 +645,22 @@ test('G3 — ชื่อขั้นที่เป็นสคริปต์�
   expect(await page.locator('#dayTable tbody').innerText()).toContain(EVIL);
 });
 
-test('G3 — วันที่สั่งที่เป็นสคริปต์ต้องไม่ทำงานในช่อง Order Date', async ({ page }) => {
+test('G3 — วันที่สั่งที่เป็นสคริปต์ต้องไม่ทำงาน แม้คอลัมน์ Order Date จะถูกถอดไปแล้ว', async ({ page }) => {
   /* ⚠️ `orderDate` เป็นค่าที่ซิงค์ข้ามเครื่องมาได้ และ **ไม่มีด่านรูปแบบ** —
-     `normalizeDateOnly()` คืนสตริงที่ไม่ตรงรูปแบบกลับไปตามเดิม แล้ว `fmtDateTH()`
-     แค่สลับที่ y/m/d ไม่ได้กรองอักขระเลย · ช่องนี้จึงต้องผ่าน `escapeHtml()`
-     (ผู้ตรวจ #135 รอบ 2 รันพิสูจน์ว่าถอดออกแล้วสคริปต์ทำงานจริง) */
+     `normalizeDateOnly()` คืนสตริงที่ไม่ตรงรูปแบบกลับไปตามเดิม
+     (ผู้ตรวจ #135 รอบ 2 รันพิสูจน์ว่าถอด escape ออกแล้วสคริปต์ทำงานจริง)
+     ⚠️ ตั้งแต่ถอดคอลัมน์ Order Date (18 พ.ย. 2569) ค่าดิบยังลง DOM อยู่อีกหนึ่งที่ คือ
+        `title` ของป้าย "วันที่ผิด" ใน `agingCell()` · ข้อนี้จึงย้ายมาวัดตรงนั้น
+        ทิ้งไปเฉย ๆ ไม่ได้ เพราะทางที่ค่าดิบลง `innerHTML` ยังเหลืออยู่จริง */
   const EVIL = '2026-01-<img src=x onerror=window.__od=1>';
   const o1 = Object.assign(order('PO-1', 4000), { orderDate: EVIL });
   await openDaily(page, [o1], [rec('r1', 'PO-1', 'winding', 100)]);
   await expect(page.locator('#dayTable tbody img')).toHaveCount(0);
   expect(await page.evaluate(() => window.__od)).toBeUndefined();
-  // และต้องยังอ่านค่าดิบออกเป็นตัวหนังสือ ไม่ใช่แถวหายไปทั้งแถว
-  expect(await cellOf(page, 'PO-1', 'orderDate').innerText()).toContain('<img');
+  // และต้องยังอ่านค่าดิบออกได้ ไม่ใช่โดนกลืนหายทั้งแถว
+  await expect(cellOf(page, 'PO-1', 'aging').locator('.badge')).toHaveText('วันที่ผิด');
+  await expect(cellOf(page, 'PO-1', 'aging').locator('.badge'))
+    .toHaveAttribute('title', /<img/);
 });
 
 test('G3 — ชื่อสั้นของขั้นที่เป็นสคริปต์ ต้องแตก title ของช่อง Aging ไม่ได้', async ({ page }) => {

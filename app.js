@@ -2938,7 +2938,8 @@ function renderFgCard(pn, unit){
  * หน้าอ่านอย่างเดียวสำหรับคนอ่านตัวจริง (คุณพ่อของเจ้าของ · ใช้คอมไม่เก่ง)
  * **อ่าน CLAUDE.md §1 บล็อกของหน้านี้ให้จบก่อนแก้** — มีคำตัดสินที่ลองแล้วตกมาสองรูปแบบ
  * สิ่งที่ห้ามพังสั้น ๆ: เลขบนปุ่ม = ยอดรวมของวันนั้นทุกขั้น (ห้ามยุบทิ้ง) · ตารางดูทีละขั้น ·
- * ขั้นยอด 0 ยังมีปุ่ม · ห้ามใส่ช่องกรอก · "—" ไม่ใช่ "0" · สถานะเป็นของทั้งใบ ณ วันนี้ */
+ * ขั้นยอด 0 ยังมีปุ่ม · ห้ามใส่ช่องกรอก · "—" ไม่ใช่ "0" · สถานะเป็นของทั้งใบ ณ วันนี้
+ * ตั้งต้นโชว์เฉพาะใบที่ "ผลิตได้จริง" ของวันนั้น (18 พ.ย. 2569) — ใบที่ผลิต 0 อยู่หลัง "แสดงทุกใบ" */
 
 /** ขั้นที่หน้านี้กำลังดู · คนละตัวกับ `currentProcess` ของหน้าคีย์ยอดโดยตั้งใจ (G2) */
 let dayProcess = null;
@@ -2953,7 +2954,6 @@ function renderDayTable(){
   if(!PROCESSES.includes(dayProcess)) dayProcess = MAIN_PROCESSES[0];
 
   const recIndex = buildRecordIndex(state.records);
-  const noteIndex = buildNoteIndex(state.records);
   const allCum = buildCumMap(state.records);
   const ref = todayISO();
 
@@ -2994,19 +2994,26 @@ function renderDayTable(){
 
   const procLabel = PROCESS_BY_ID[dayProcess].label;
   const dash = '<span class="none">—</span>';
-  let total = null, n = 0, rowsHtml = '';
+  let total = null, n = 0, zeroN = 0, rowsHtml = '';
   orders.forEach(o=>{
     const v = recIndex[o.id+'|'+dayProcess+'|'+date];
     const todayVal = (v==null || v==='') ? null : v;   // "—" ไม่ใช่ "0" — ห้ามเขียน !v
-    if(todayVal==null && !showAll) return;
+    /* ตั้งต้นโชว์เฉพาะใบที่ "ผลิตได้จริง" ของวันนั้น — ใบที่คีย์ไว้ว่า 0 คือใบที่ไม่ได้ผลิต
+       (เจ้าของสั่ง 18 พ.ย. 2569) · การเลือกเหตุผลตอนยังไม่มียอดสร้าง record ยอด 0 ให้เอง
+       ตามคำตัดสิน 27 ต.ค. 2026 ของจริงจึงมีใบที่ไม่ได้ผลิตปนมาวันละหลายสิบใบ
+       ⚠️ ซ่อนจากค่าตั้งต้นเท่านั้น ไม่ได้ตัดทิ้ง — ติ๊ก "แสดงทุกใบ" ยังเห็นครบ และตรงนั้น
+          ช่องต้องขึ้น "0" ไม่ใช่ "—" เพราะสองอย่างนี้คนละความหมาย (กฎเดิมของหน้านี้ ยังอยู่ครบ)
+       ⚠️ เทียบ `!== 0` ไม่ใช่ `> 0` — ยอดติดลบหรือค่าที่อ่านเป็นเลขไม่ได้ต้องยังโผล่ให้เห็น
+          ไม่ใช่หายไปพร้อมกับศูนย์ (หลักเดียวกับ fgRows: ครอบแล้วข้อมูลที่คีย์ผิดจะหาย) */
+    const zeroDay = todayVal!=null && Number(todayVal)===0;
+    if(zeroDay) zeroN++;
+    if((todayVal==null || zeroDay) && !showAll) return;
     if(todayVal!=null) total = (total||0) + (Number(todayVal)||0);   // ช่องขีดไม่ใช่ศูนย์ จึงไม่บวก
     const cum = (allCum[o.id] && allCum[o.id][dayProcess]) || 0;
     const st = computeStatus(o, allCum[o.id] || emptyCum(), computeDeadlines(o), ref);
     /* ⚠️ `data-aging` กับ `agingCell(` ต้องอยู่บรรทัดเดียวกัน — เทสกันสูตรซ้ำใน
        `tests/entry-ui.spec.js` อ่านทีละบรรทัด แยกคนละบรรทัดแล้วมันฟ้องว่าเขียนสูตรขึ้นใหม่ */
     const stTip = `สถานะของใบนี้ ณ วันนี้: ${escapeHtml(st.label)}`;
-    const odTxt = escapeHtml(fmtDateTH(o.orderDate));
-    const note = (noteIndex[o.id+'|'+dayProcess+'|'+date] || '').trim();
     n++;
     rowsHtml += `<tr><td>${n}</td>`
       + `<td class="left">${escapeHtml(o.week)}</td><td class="left">${escapeHtml(o.poNo)}</td>`
@@ -3014,13 +3021,6 @@ function renderDayTable(){
       + `<td>${numFmt(o.orderQty)}</td><td>${numFmt(cum)}</td>`
       + `<td class="rem">${numFmt(Math.max(0, o.orderQty - cum))}</td>`
       + `<td>${todayVal==null ? dash : `<b>${numFmt(todayVal)}</b>`}</td>`
-      + `<td class="left">${note ? escapeHtml(note) : dash}</td>`
-      /* ⚠️ วางติดกับ Aging โดยตั้งใจ — Aging คือ "วันนี้ ลบ วันในช่องนี้" สองช่องจึงอ่านคู่กัน
-         ⚠️ วันที่รูปแบบถูกแต่เป็นไปไม่ได้ (ปี 1901) โชว์ค่าดิบ ห้ามกลบเป็นขีด —
-            หลักเดียวกับ fgRows: ครอบแล้วข้อมูลที่คีย์ผิดจะหาย · ช่อง Aging ข้าง ๆ ฟ้องให้อยู่แล้ว
-         ⚠️ แต่ค่าที่ `fmtDateTH()` อ่านไม่ออกเลย (เซลล์เป็นตัวเลข · สตริงมั่ว) มันคืน `-`
-            ซึ่งเป็นขีดคนละตัวกับช่องอื่นในแถว จึงแปลงเป็น `dash` ตัวเดียวกัน (ผู้ตรวจ #135 รอบ 2) */
-      + `<td>${odTxt === '-' ? dash : odTxt}</td>`
       /* ⚠️ ส่ง `ref` ตัวเดียวกับหน้าคีย์ยอด (= วันนี้) ไม่ใช่วันที่เลือกบนจอ
          ไม่งั้นใบเดียวกันขึ้นอายุงานไม่ตรงกันสองหน้า ทุกครั้งที่มีคนคีย์ย้อนหลัง
          ⚠️ สถานะของใบยังคิดอยู่ เพราะ `agingCell()` ใช้ `st.code` ตัดสินสีของใบที่ส่งครบแล้ว
@@ -3030,21 +3030,29 @@ function renderDayTable(){
 
   /* ข้อความต้องตัดสินจาก "มีใบที่ตรงกี่ใบ" ไม่ใช่จากปุ่มที่ถูกกด และต้องแนะทางที่กดแล้วได้ผล
    * (ผู้ตรวจ #118 จับสองรอบ · เลขบนปุ่มบอกเองว่าขั้นไหนมีของ จึงชี้ไปที่ปุ่มด้วย) */
+  /* ⚠️ ต้องแยกกรณี "คีย์ไว้ว่าผลิต 0 ทุกใบ" ออกจาก "ไม่มีใครคีย์เลย" ตั้งแต่ใบที่ผลิต 0
+     ถูกซ่อนจากค่าตั้งต้น — เขียนว่า "ยังไม่มีการคีย์ยอด" ทั้งที่มีคนคีย์ไว้ คือข้อความที่
+     ขัดกับเลขบนปุ่มซึ่งขึ้น "0" อยู่ตรงนั้นพอดี (ปุ่มยังนับใบที่ผลิต 0 เหมือนเดิม) */
   const emptyMsg = orders.length
-    ? `ขั้น ${escapeHtml(procLabel)} ของวันนั้นยังไม่มีการคีย์ยอด — ดูเลขบนปุ่มด้านบนว่าขั้นไหนมีของ `
-      + `· ติ๊ก "แสดงทุกใบ" เพื่อดูทั้ง ${numFmt(orders.length)} ใบ · หรือเลือกวันอื่น`
+    ? zeroN
+      ? `ขั้น ${escapeHtml(procLabel)} ของวันนั้นไม่มีใบไหนผลิตได้ — มี ${numFmt(zeroN)} ใบที่คีย์ไว้ว่าผลิต 0 `
+        + `· ติ๊ก "แสดงทุกใบ" เพื่อดูทั้ง ${numFmt(orders.length)} ใบ · หรือเลือกวันอื่น`
+      : `ขั้น ${escapeHtml(procLabel)} ของวันนั้นยังไม่มีการคีย์ยอด — ดูเลขบนปุ่มด้านบนว่าขั้นไหนมีของ `
+        + `· ติ๊ก "แสดงทุกใบ" เพื่อดูทั้ง ${numFmt(orders.length)} ใบ · หรือเลือกวันอื่น`
     : (search || weekFilter || subFilter)
       ? 'ไม่มีใบที่ตรงกับตัวกรองที่ตั้งไว้ — ล้างช่องค้นหา สัปดาห์ หรือ Sub-Name แล้วดูอีกครั้ง'
       : 'ไม่พบบรรทัดแผนงาน — นำเข้าแผนงานก่อน';
   document.getElementById('dayTable').innerHTML = `<thead><tr>`
     + `<th style="width:52px" title="ลำดับของแถวที่เห็นอยู่ตอนนี้ — เปลี่ยนตัวกรองแล้วเลขเปลี่ยนตาม">Item No.</th>`
     + `<th>สัปดาห์</th><th>PO No.</th><th>P/N</th><th>Sub-Name</th><th>Order Qty</th>`
-    + `<th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนั้น</th><th>หมายเหตุ</th>`
-    + `<th title="วันที่สั่งซื้อจากไฟล์แผนงาน · ช่อง Aging ข้าง ๆ คือจำนวนวันนับจากวันในช่องนี้ถึงวันนี้">Order Date</th>`
-    + `<th title="อายุงาน — จำนวนวันนับจากวันที่สั่งถึง &quot;วันนี้&quot; ไม่ใช่ถึงวันที่เลือกดู · สีมาจากกำหนดส่ง · เอาเมาส์ชี้ที่ช่องเพื่อดูสถานะของใบ">Aging</th></tr></thead>`
-    + `<tbody>${rowsHtml || emptyRow(12, emptyMsg)}</tbody><tfoot><tr>`
+    + `<th>สะสม ${escapeHtml(procLabel)}</th><th>คงเหลือ</th><th>ยอดวันนั้น</th>`
+    /* ⚠️ คอลัมน์ "หมายเหตุ" กับ "Order Date" ถูกถอดออกเมื่อ 18 พ.ย. 2569 (เจ้าของสั่ง)
+       Order Date ซ้ำกับวันที่ท้ายช่อง "สัปดาห์" (`WK 43 28.10.26`) ซึ่งเป็นวันเดียวกัน
+       Aging ยังต้องมีวันให้อ่านคู่กันเพื่อตรวจตัวเองได้ `title` จึงชี้ไปที่ช่องนั้นแทน */
+    + `<th title="อายุงาน — จำนวนวันนับจากวันที่สั่ง (วันที่ท้ายช่อง &quot;สัปดาห์&quot;) ถึง &quot;วันนี้&quot; ไม่ใช่ถึงวันที่เลือกดู · สีมาจากกำหนดส่ง · เอาเมาส์ชี้ที่ช่องเพื่อดูสถานะของใบ">Aging</th></tr></thead>`
+    + `<tbody>${rowsHtml || emptyRow(10, emptyMsg)}</tbody><tfoot><tr>`
     + `<td colspan="8">รวมขั้น ${escapeHtml(procLabel)} ของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ</td>`
-    + `<td>${total!=null ? numFmt(total) : '—'}</td><td colspan="3"></td></tr></tfoot>`;
+    + `<td>${total!=null ? numFmt(total) : '—'}</td><td></td></tr></tfoot>`;
 }
 
 /* ---------- ของที่ใช้ร่วมกัน: รายการใบย้อนแย้ง · ยอดรายวัน · กราฟแท่งกลุ่ม ----------
