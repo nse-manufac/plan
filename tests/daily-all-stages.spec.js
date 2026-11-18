@@ -195,6 +195,31 @@ test('ยอดที่อ่านเป็นเลขไม่ได้ ต�
   expect(await cellOf(page, 'PO-2', 'today').innerText()).toBe('-5');
 });
 
+test('มีใบที่ผลิตจริงปนอยู่ — แถวรวมต้องบอกว่าซ่อนใบที่ผลิต 0 ไว้กี่ใบ', async ({ page }) => {
+  /* ข้อความคงที่ใต้หัวข้อบอก "กติกา" แต่ไม่ได้บอก "ของวันนี้มีกี่ใบ"
+     ก่อนมีบรรทัดนี้ ฉากนี้ทั้งแท็บไม่มีเลข 2 อยู่ที่ไหนเลย (ผู้ตรวจ #143 รอบ 3 รันเจอ)
+     ⚠️ ต้องมีแถวที่ผลิตจริงปนอยู่ — ฉากที่ทุกใบเป็น 0 ไปโผล่ที่ "ข้อความตอนตารางว่าง" แทน
+        ซึ่งเป็นคนละทางของโค้ด เทสจะเขียวโดยไม่ได้ตรวจแถวรวมเลย */
+  const three = [order('PO-1', 4000), order('PO-2', 5000, 'TUE-H', 'WK 35'),
+    order('PO-3', 6000, 'TUE-H', 'WK 35')];
+  await openDaily(page, three, [
+    rec('r1', 'PO-1', 'winding', 120, D1),
+    rec('r2', 'PO-2', 'winding', 0, D1),
+    rec('r3', 'PO-3', 'winding', 0, D1)
+  ]);
+  await expect(page.locator('#dayTable tbody tr')).toHaveCount(1);
+  const foot = () => page.locator('#dayTable tfoot td').first().innerText();
+  const shown = await foot();
+  expect(shown, 'ต้องยังบอกจำนวนใบที่เห็นอยู่ตามเดิม').toContain('1 ใบ');
+  expect(shown, 'และต้องบอกจำนวนใบที่ถูกซ่อน').toContain('2 ใบ');
+
+  /* ⚠️ ติ๊กแสดงทุกใบแล้วไม่มีอะไรถูกซ่อน ข้อความนี้ต้องหายไป
+        ไม่งั้นเป็นคำโกหกที่ค้างอยู่บนแถวที่คนใช้อ่านยอดรวม */
+  await page.check('#dayShowAll');
+  await page.waitForTimeout(250);
+  expect(await foot(), 'ไม่มีอะไรถูกซ่อนแล้ว ห้ามเหลือคำว่าซ่อน').not.toContain('ซ่อน');
+});
+
 test('ค่าตั้งต้นโชว์เฉพาะใบที่วันนั้นผลิตได้จริง', async ({ page }) => {
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', 100, D1)]);
   await expect(rowOf(page, 'PO-1')).toHaveCount(1);
