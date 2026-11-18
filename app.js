@@ -2973,6 +2973,18 @@ function fgSubInner(g){
   </div>`;
 }
 
+/** วันที่สั่งของใบ — ใบที่ไม่มีวัน (หรือวันที่อ่านไม่ออก) ต้องได้ขีด **ตัวเดียวกับช่องอื่นในแถว**
+ *  `fmtDateTH()` คืน `-` (hyphen) ส่วนช่องว่างอื่นของสองตารางนี้ใช้ `—` (em dash)
+ *  ปล่อยไว้แล้วแถวเดียวมีขีดสองชนิดคนละความยาว (ผู้ตรวจ #142 รอบ 7 ทัก)
+ *  ⚠️ ทำที่นี่ ห้ามไปแก้ `fmtDateTH()` — มันถูกใช้กับ textContent ด้วย
+ *     (กฎนี้เขียนไว้ที่หัว `tests/escape-date.spec.js`)
+ *     หน้ายอดรายวันทุกขั้นทำแบบเดียวกันอยู่แล้ว (`odTxt === '-' ? dash : odTxt`)
+ *  🚨 ยัง escape เหมือนเดิม — ค่าวันที่ที่เพี้ยนไปลง innerHTML ได้จริง (G3) */
+function fgDate(v){
+  const s = escapeHtml(fmtDateTH(v));
+  return s === '-' ? '—' : s;
+}
+
 /** หนึ่งใบสั่งในแถวที่กางออกมา
  *  PO Date มาจาก `orderDate` ช่องเดียวกับที่หน้าคีย์ยอดใช้คิด Aging — ไม่ได้เพิ่มข้อมูลใหม่ */
 function fgPoRow({o, inQty, outQty, ourWip, delta, dw}){
@@ -2988,7 +3000,7 @@ function fgPoRow({o, inQty, outQty, ourWip, delta, dw}){
       + ` title="แก้ Wip bal. ของ Delta ด้วยมือ — ต้องใส่เหตุผลและชื่อผู้แก้">✎ แก้</button>` : '');
   return `<tr>
     <td class="left">${escapeHtml(o.poNo)}</td>
-    <td>${escapeHtml(fmtDateTH(o.orderDate))}</td>
+    <td>${fgDate(o.orderDate)}</td>
     <td>${numFmt(Number(o.orderQty)||0)}</td>
     <td>${numFmt(inQty)}</td>
     <td>${numFmt(outQty)}</td>
@@ -3022,7 +3034,7 @@ function fgMovesHtml(g){
     + (moves.map(m=>`<tr>
         <td>${escapeHtml(fmtDateTH(m.date))}</td>
         <td class="left">${escapeHtml(m.po)}</td>
-        <td>${escapeHtml(fmtDateTH(m.poDate))}</td>
+        <td>${fgDate(m.poDate)}</td>
         <td>${numFmt(m.poQty)}</td>
         <td>${m.kind==='inspection' ? numFmt(m.qty) : ''}</td>
         <td>${m.kind==='shipping' ? numFmt(m.qty) : ''}</td>

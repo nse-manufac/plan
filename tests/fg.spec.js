@@ -420,6 +420,26 @@ test('การเคลื่อนไหวรายวันต้องบ�
   expect(await cells(2), 'แถวส่งออกของ PO-A1 ก็ต้องพก PO Date กับ PO qty. มาด้วย').toEqual(
     ['22/08/2026', 'PO-A1', '03/08/2026', '5,000', '', '1,200', '3,300']);
 });
+test('ใบที่ไม่มีวันสั่ง — PO Date ต้องเป็นขีดชนิดเดียวกับช่องว่างอื่นในแถว', async ({ page }) => {
+  /* `fmtDateTH()` คืน `-` (hyphen) ส่วนช่องว่างอื่นของสองตารางนี้ใช้ `—` (em dash)
+     ปล่อยไว้แล้วแถวเดียวมีขีดสองชนิดคนละความยาว (ผู้ตรวจ #142 รอบ 7 ทัก)
+     ⚠️ ต้องวัดทั้งสองตาราง — `fgDate()` มีผู้เรียกสองที่ แก้ที่เดียวแล้วอีกที่ค้าง
+     ⚠️ และต้องเทียบกับขีดของช่อง `งวด` ในแถวเดียวกันจริง ๆ ไม่ใช่เทียบกับตัวอักษรที่เขียนในเทส
+        ไม่งั้นวันหนึ่งที่ช่องนั้นเปลี่ยนขีด เทสจะยังเขียวทั้งที่แถวกลับไปมีสองชนิด */
+  const o = Object.assign(order('PO-A1', PN_A, 5000), { orderDate: '' });
+  await open(page, [o], [rec('r1', o.id, 'inspection', 3000, '2026-08-20')]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+
+  const cmpTds = sub.locator('table.fg-cmp tbody tr').first().locator('td');
+  const weekDash = (await cmpTds.nth(8).innerText()).trim();   // ช่อง `งวด` ของใบที่ไม่มียอดของ Delta
+  expect(weekDash, 'ฉากนี้ต้องมีช่องว่างอื่นให้เทียบจริง').toBe('—');
+  expect((await cmpTds.nth(1).innerText()).trim(), 'PO Date ของตารางราย PO').toBe(weekDash);
+
+  await sub.locator('details.fg-moves summary').click();
+  const mvTds = sub.locator('table.fg-mv tbody tr').first().locator('td');
+  expect((await mvTds.nth(2).innerText()).trim(), 'PO Date ของตารางการเคลื่อนไหว').toBe(weekDash);
+});
 test('กางแถวค้างไว้แล้วหน้าวาดใหม่ ต้องไม่หุบเอง', async ({ page }) => {
   /* renderAll() วาดหน้านี้ใหม่ทุกรอบซิงค์ (20 วิ) ถ้าเปิดแท็บนี้ค้างไว้ — ไม่จำสถานะการกางไว้
      แถวที่คนเพิ่งกางจะหุบเองกลางที่กำลังอ่าน และโฟกัสตกไป BODY (G2)
