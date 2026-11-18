@@ -278,6 +278,15 @@
        ⚠️ ตัวนี้เป็น element จริง (`span.fg-caret`) ไม่ใช่ `::after` จึงใช้ `display` ได้
           ต่างจากลูกศร ▾ ของบรรทัดข้างบนซึ่งเป็น generated content ต้องล้างด้วย `content` */
     .fg-caret{display:none !important;}
+    /* และของที่กดไม่ได้อีกสองชิ้นในแถวที่กาง (ผู้ตรวจ #142 รอบ 4 เปิดดูกระดาษจริงแล้วเจอ)
+       · ลูกศรของ <details> หัวกล่องการเคลื่อนไหว — ตัวนี้เป็น marker ของเบราว์เซอร์
+         `.wtexp` ซ่อนมันบนจออยู่แล้วจึงไม่มีปัญหา ของหน้านี้ใช้ marker จริง ต้องซ่อนตอนพิมพ์เอง
+       · ปุ่ม ✎ แก้ ในช่องของ Delta — กฎเดียวกับช่องติ๊ก/ปุ่มลบของหน้าแก้ไขรายการข้างล่าง
+       🚨 ซ่อนแค่ปุ่ม ห้ามซ่อนทั้งช่อง — ยอด Wip bal. กับป้าย "แก้มือ" อยู่ใน <td> เดียวกัน
+          และเป็นเลขที่คนอ่านกระดาษต้องเห็น (มีเทสคุมว่าเลขยังพิมพ์ติด) */
+    details.fg-moves > summary{list-style:none;}
+    details.fg-moves > summary::-webkit-details-marker{display:none;}
+    .fg-dw-edit{display:none !important;}
     /* บนจอตารางอยู่ในกรอบสูง 70vh แล้วเลื่อนดู ถ้าไม่ปลดล็อกจะพิมพ์ได้แค่แถวที่มองเห็น */
     .table-wrap{overflow:visible;max-height:none;}
     table{font-size:10.5px;}

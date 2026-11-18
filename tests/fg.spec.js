@@ -279,6 +279,38 @@ test('โหมดพิมพ์ต้องไม่มีลูกศรต�
   expect(await page.locator(`#fgTable tr.fg-row[data-pn="${PN_A}"] .fg-caret`).first().isVisible(),
     'บนจอต้องยังเห็นลูกศร — มันคือสิ่งเดียวที่บอกว่าแถวนี้กดได้').toBe(true);
 });
+test('โหมดพิมพ์: แถวที่กางต้องไม่พิมพ์ของที่กดไม่ได้ แต่เลขต้องติดครบ', async ({ page }) => {
+  /* ผู้ตรวจ #142 รอบ 4 เปิดดูกระดาษจริงแล้วเจอของที่กดไม่ได้อีกสองชิ้นในแถวที่กาง —
+     ลูกศรของ <details> หัวกล่องการเคลื่อนไหว และปุ่ม ✎ แก้ ในช่องของ Delta
+     🚨 ของที่ต้องไม่หายคือ "เลข" — ยอด Wip bal. อยู่ใน <td> เดียวกับปุ่ม ซ่อนทั้งช่องแล้ว
+        เลขที่คนอ่านกระดาษต้องเห็นหายไปด้วย ซึ่งแย่กว่ามีปุ่มเกินมาก (ข้อนี้จึงวัดสองทิศ)
+     ⚠️ ลูกศรของ <details> เป็น marker ของเบราว์เซอร์ ไม่ใช่ข้อความ อ่านจาก innerText ไม่เจอ
+        จึงวัดที่ `list-style-type` ซึ่งเป็นสิ่งที่ทำให้มันหาย — วัดถัดจากตัวจริงหนึ่งขั้น
+        แต่เป็นที่เดียวที่จับได้ด้วยโปรแกรม (ภาพหน้าจอเป็นของคนดู) */
+  await open(page, [order('PO-A1', PN_A, 5000)],
+    [rec('r1', 'PO-A1|' + PN_A, 'shipping', 1000, '2026-08-28')],
+    [deltaRow('PO-A1|' + PN_A, 35, 4000)]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+  await sub.locator('details.fg-moves summary').click();
+  await expect(sub.locator('.fg-dw-edit'),
+    'ฉากนี้ต้องมีปุ่มแก้จริง ไม่งั้นข้อที่วัดปุ่มแก้ไม่ได้ตรวจอะไร').toHaveCount(1);
+
+  await page.emulateMedia({ media: 'print' });
+  expect(await sub.locator('.fg-dw-edit').first().isVisible(),
+    'ปุ่ม ✎ แก้ ต้องไม่ติดกระดาษ').toBe(false);
+  expect(await sub.locator('table.fg-cmp tbody tr td').nth(7).innerText(),
+    'แต่ยอด Wip bal. ของ Delta ในช่องเดียวกันต้องยังพิมพ์ติด').toContain('4,000');
+  expect(await sub.locator('details.fg-moves > summary')
+      .evaluate(el=> getComputedStyle(el).listStyleType),
+    'marker ของ <details> ต้องถูกปิดตอนพิมพ์').toBe('none');
+  expect(await sub.locator('details.fg-moves > summary').innerText(),
+    'แต่หัวกล่องต้องยังพิมพ์ติด มันทำหน้าที่เป็นหัวข้อย่อยบนกระดาษ').toContain('การเคลื่อนไหวรายวัน');
+
+  await page.emulateMedia({ media: 'screen' });
+  expect(await sub.locator('.fg-dw-edit').first().isVisible(),
+    'บนจอต้องยังกดปุ่มแก้ได้').toBe(true);
+});
 test('เนื้อในของแถวที่พับอยู่ต้องว่าง — ห้ามวาดไว้ล่วงหน้าแล้วซ่อน', async ({ page }) => {
   /* fgMovesHtml() เรียก fgMoves() ซึ่งเดินผ่าน record ทั้งก้อนหนึ่งรอบ **ต่อกลุ่ม**
      ของจริง 180 กลุ่ม × ~14,000 รายการ = จ่ายทุกรอบซิงค์ (20 วิ) โดยไม่มีใครดู
