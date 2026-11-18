@@ -440,6 +440,25 @@ test('ใบที่ไม่มีวันสั่ง — PO Date ต้อ�
   const mvTds = sub.locator('table.fg-mv tbody tr').first().locator('td');
   expect((await mvTds.nth(2).innerText()).trim(), 'PO Date ของตารางการเคลื่อนไหว').toBe(weekDash);
 });
+test('record ที่วันที่อ่านไม่ออก — ช่อง วันที่ ก็ต้องเป็นขีดชนิดเดียวกัน', async ({ page }) => {
+  /* ช่อง `วันที่` อยู่ติดกับ `PO Date` ในแถวเดียวกัน · แก้แต่ `PO Date` แล้วอาการเดิม
+     (ขีดสองชนิดคนละความยาวในแถวเดียว) ย้ายไปอยู่คอลัมน์ข้าง ๆ (ผู้ตรวจ #142 รอบ 8 รันเจอ
+     ได้แถว ["-","PO-A1","—","5,000"])
+     ⚠️ เกิดได้เฉพาะเมื่อ `record.date` เพี้ยน (ทางชีต หรือรวมข้อมูลจากไฟล์ — ทางเดียวกับที่
+        `escape-date.spec.js` จำลอง) ข้อมูลที่คีย์เองช่องนี้ไม่เคยว่าง
+     ⚠️ ต้องเป็นสตริงที่ `split('-')` ไม่ได้สามชิ้น ไม่งั้น `fmtDateTH()` คืนค่าที่ประกอบได้
+        แล้วไม่มีขีดให้วัด (ลองแล้ว) */
+  const o = order('PO-A1', PN_A, 5000);
+  await open(page, [o], [rec('r1', o.id, 'inspection', 3000, 'ไม่ใช่วันที่')]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+  await sub.locator('details.fg-moves summary').click();
+
+  const tds = sub.locator('table.fg-mv tbody tr').first().locator('td');
+  const poDate = (await tds.nth(2).innerText()).trim();
+  expect(poDate, 'ฉากนี้ PO Date ต้องมีวันจริง ไม่งั้นไม่ได้เทียบสองชนิด').toBe('03/08/2026');
+  expect((await tds.nth(0).innerText()).trim(), 'ช่องวันที่ต้องเป็น em dash ไม่ใช่ hyphen').toBe('—');
+});
 test('กางแถวค้างไว้แล้วหน้าวาดใหม่ ต้องไม่หุบเอง', async ({ page }) => {
   /* renderAll() วาดหน้านี้ใหม่ทุกรอบซิงค์ (20 วิ) ถ้าเปิดแท็บนี้ค้างไว้ — ไม่จำสถานะการกางไว้
      แถวที่คนเพิ่งกางจะหุบเองกลางที่กำลังอ่าน และโฟกัสตกไป BODY (G2)

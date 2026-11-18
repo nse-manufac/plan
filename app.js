@@ -3032,7 +3032,7 @@ function fgMovesHtml(g){
     + `<th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>`
     + `<th style="width:110px">คงเหลือ</th></tr></thead><tbody>`
     + (moves.map(m=>`<tr>
-        <td>${escapeHtml(fmtDateTH(m.date))}</td>
+        <td>${fgDate(m.date)}</td>
         <td class="left">${escapeHtml(m.po)}</td>
         <td>${fgDate(m.poDate)}</td>
         <td>${numFmt(m.poQty)}</td>
