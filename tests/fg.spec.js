@@ -311,6 +311,59 @@ test('โหมดพิมพ์: แถวที่กางต้องไม
   expect(await sub.locator('.fg-dw-edit').first().isVisible(),
     'บนจอต้องยังกดปุ่มแก้ได้').toBe(true);
 });
+test('G2 — วาดตารางใหม่ต้องไม่ลากตำแหน่งที่เลื่อนอ่านกลับ (preventScroll)', async ({ page }) => {
+  /* el.focus() เปล่า ๆ เลื่อนของที่โฟกัสเข้ามาในจอให้ด้วย และของที่ fgRefocus() คืนโฟกัส
+     อยู่ "ใน" .table-wrap ที่คนใช้เลื่อนอ่าน (กรอบ 70vh) → จอเด้งกลับไปที่แถวนั้นเอง
+     ผู้ตรวจ #142 รอบ 5 รันวัดได้ 874 → 274 (เด้งขึ้น 600px) กลางที่กำลังอ่าน
+     ทริกเกอร์เกิดจริงทุกวัน: renderAll() วาดใหม่ทุกครั้งที่รอบซิงค์ดึงแถวลงมา = ทุกครั้งที่
+     เครื่องอื่นคีย์ยอด ขณะที่หน้านี้คือหน้าที่คนนั่งเทียบกับไฟล์ Call In ทีละบรรทัด
+
+     🚨 ต้องวัด scrollTop — เทสข้อโฟกัสข้างบนวัดแค่ activeElement จึงเขียวทั้งก่อนและหลังแก้
+     🚨 และต้องวัด "โฟกัสยังอยู่" คู่กันไป ไม่งั้นถอดการคืนโฟกัสทิ้งก็ผ่านข้อนี้ได้
+        ซึ่งเป็นการแลกบั๊กหนึ่งกับอีกบั๊กหนึ่ง (ผู้ตรวจรอบ 1 ทักเรื่องโฟกัสตกมาก่อน)
+     ⚠️ ต้องมีกลุ่มมากพอให้กรอบเลื่อนได้จริง — 30 กลุ่มที่จอ 1024x700 (กรอบ 70vh ≈ 490px)
+        น้อยกว่านี้ตารางไม่ล้นกรอบ scrollTop เป็น 0 ทั้งก่อนและหลัง ด่านจะเขียวเอง */
+  await page.setViewportSize({ width: 1024, height: 700 });
+  const os = [], rs = [];
+  for(let i = 0; i < 30; i++){
+    const pn = '9100' + String(i).padStart(6, '0');
+    os.push(order('PO-' + i, pn, 5000));
+    rs.push(rec('r' + i, 'PO-' + i + '|' + pn, 'inspection', 3000, '2026-08-20'));
+    rs.push(rec('s' + i, 'PO-' + i + '|' + pn, 'shipping', 1000, '2026-08-21'));
+  }
+  await open(page, os, rs);
+
+  const wrap = () => page.evaluate(()=>
+    document.getElementById('fgTable').closest('.table-wrap').scrollTop);
+  const scrollTo = y => page.evaluate(y=>{
+    document.getElementById('fgTable').closest('.table-wrap').scrollTop = y;
+  }, y);
+  const active = () => page.evaluate(()=>{
+    const a = document.activeElement;
+    return a.tagName === 'SUMMARY' ? 'summary' : (a.className || a.tagName);
+  });
+
+  // ── ฉากที่ 1: กางกลุ่มกลางตาราง กดหัวกล่องการเคลื่อนไหว แล้วเลื่อนลงไปอ่านท้ายกล่อง
+  const pn10 = '9100' + String(10).padStart(6, '0');
+  await page.click(`#fgTable tr.fg-row[data-pn="${pn10}"][data-unit="TUE-U"]`);
+  await subOf(page, pn10, 'TUE-U').locator('details.fg-moves summary').click();
+  await scrollTo(700);
+  const before1 = await wrap();
+  expect(before1, 'กรอบต้องเลื่อนได้จริง ไม่งั้นข้อนี้ไม่ได้วัดอะไร').toBeGreaterThan(300);
+  await page.evaluate(()=> renderFg());
+  expect(await wrap(), 'ตำแหน่งที่เลื่อนอ่านต้องไม่ขยับ').toBe(before1);
+  expect(await active(), 'และโฟกัสต้องยังอยู่ที่หัวกล่องเดิม').toBe('summary');
+
+  // ── ฉากที่ 2: โฟกัสปุ่ม P/N ของแถวแรก แล้วเลื่อนไปท้ายตาราง (ของที่โฟกัสอยู่นอกจอไปแล้ว)
+  const pn0 = '9100' + String(0).padStart(6, '0');
+  await page.locator(`#fgTable tr.fg-row[data-pn="${pn0}"][data-unit="TUE-U"] .fg-pn`).focus();
+  await scrollTo(900);
+  const before2 = await wrap();
+  expect(before2, 'ต้องเลื่อนไปได้ไกลจริง').toBeGreaterThan(300);
+  await page.evaluate(()=> renderFg());
+  expect(await wrap(), 'ของที่โฟกัสอยู่นอกจอก็ต้องไม่ลากจอกลับไปหา').toBe(before2);
+  expect(await active(), 'โฟกัสยังอยู่ที่ปุ่ม P/N เดิม').toContain('fg-pn');
+});
 test('เนื้อในของแถวที่พับอยู่ต้องว่าง — ห้ามวาดไว้ล่วงหน้าแล้วซ่อน', async ({ page }) => {
   /* fgMovesHtml() เรียก fgMoves() ซึ่งเดินผ่าน record ทั้งก้อนหนึ่งรอบ **ต่อกลุ่ม**
      ของจริง 180 กลุ่ม × ~14,000 รายการ = จ่ายทุกรอบซิงค์ (20 วิ) โดยไม่มีใครดู
