@@ -382,7 +382,7 @@ test('ใบที่ยกเลิกแล้ว ต้องไม่โผ�
   expect(units, 'ส่วนหน่วยที่ยังมีใบใช้งานอยู่ ต้องยังอยู่').toContain('TUE-U');
 });
 
-test('การ์ดต้องเทียบราย PO และบอกว่ายอดของ Delta มาจากงวดไหน', async ({ page }) => {
+test('แถวที่กางต้องเทียบราย PO และบอกว่ายอดของ Delta มาจากงวดไหน', async ({ page }) => {
   await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 5000)], [],
                    [deltaRow('PO-A1|' + PN_A, 34, 5000)]);
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
@@ -413,7 +413,7 @@ test('ยอดค้างของ Delta นับเฉพาะงวดล�
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
   const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
-  expect(cmp, 'การ์ดต้องไม่อ้างยอดของงวดเก่า').not.toContain('wk34');
+  expect(cmp, 'ตารางราย PO ต้องไม่อ้างยอดของงวดเก่า').not.toContain('wk34');
 });
 
 /* ── หน้า FG หักยอดที่เราส่งแล้วแต่ Delta ยังไม่นับ (เจ้าของเลือก 15 ก.ย. 2026) ─────────────
@@ -434,7 +434,7 @@ test('Delta ยังไม่นับยอดส่งเลย — ยอด
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
   const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
-  expect(cmp, 'การ์ดบอกยอดในไฟล์').toContain('ไฟล์ 6,000');
+  expect(cmp, 'ตารางราย PO บอกยอดในไฟล์').toContain('ไฟล์ 6,000');
   expect(cmp, 'และบอกว่าหักส่วนที่ Delta ยังไม่นับไปเท่าไหร่').toContain('Delta ยังไม่นับ 3,500');
 });
 
@@ -479,7 +479,7 @@ test('ยอดที่แก้มือเป็นฐานของหน�
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
   const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
   expect(cmp, 'ต้องบอกว่าฐานมาจากการแก้มือ ไม่ใช่จากไฟล์').toContain('แก้มือ 3,000 − Delta ยังไม่นับ 500');
-  await expect(subOf(page, PN_A, 'TUE-U').locator('.fg-dw-edit'), 'การ์ดต้องมีปุ่มแก้').toHaveCount(1);
+  await expect(subOf(page, PN_A, 'TUE-U').locator('.fg-dw-edit'), 'แถวที่กางต้องมีปุ่มแก้').toHaveCount(1);
 });
 
 /** อ่านค่าในช่องหนึ่งของแถว — เจาะจงกว่าการดูข้อความทั้งแถว
