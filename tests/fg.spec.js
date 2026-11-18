@@ -334,6 +334,39 @@ test('เนื้อในของแถวที่พับอยู่ต�
   await page.click(row);
   expect(await len(), 'กางซ้ำต้องสร้างกลับมาได้').toBeGreaterThan(100);
 });
+test('การเคลื่อนไหวรายวันต้องบอก PO Date กับ PO qty. ของใบนั้น ๆ ด้วย', async ({ page }) => {
+  /* เจ้าของขอ 18 พ.ย. 2569 — ตารางราย PO ข้างบนมีสองคอลัมน์นี้แล้ว ตารางการเคลื่อนไหวยังไม่มี
+     คนที่ไล่ทีละบรรทัดเทียบกับไฟล์ Call In จึงต้องเลื่อนกลับขึ้นไปดูว่าใบนั้นสั่งเท่าไหร่
+     ⚠️ ฉากนี้ต้องมี **สองใบที่ `orderDate` และ `orderQty` ต่างกัน** และมี record คนละวัน
+        ไม่งั้นการหยิบค่าจากใบผิด (เช่นใบแรกเสมอ) จะให้ผลถูกพอดี แล้วเทสเขียวทั้งที่พัง
+     ⚠️ และต้องเรียงคอลัมน์เหมือนตารางราย PO (PO No. → PO Date → PO qty.) เพราะสองตาราง
+        อยู่ในแถวเดียวกัน คนกวาดตาลงมาต้องเจอของเดิมที่ตำแหน่งเดิม */
+  const osA = order('PO-A1', PN_A, 5000);
+  // ยอดสั่งเป็นสตริงโดยเจตนา — เครื่องที่ซิงค์มาได้ค่าแบบนี้ (กฎเดียวกับ synced-numeric)
+  const osB = Object.assign(order('PO-A2', PN_A, '1234567'), { orderDate: '2026-09-15' });
+  await open(page, [osA, osB], [
+    rec('r1', osA.id, 'inspection', 3000, '2026-08-20'),
+    rec('r2', osB.id, 'inspection', 1500, '2026-08-21'),
+    rec('r3', osA.id, 'shipping',   1200, '2026-08-22')
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+  await sub.locator('details.fg-moves summary').click();
+
+  const heads = await sub.locator('table.fg-mv thead th').allInnerTexts();
+  expect(heads, 'หัวตารางต้องเรียงเหมือนตารางราย PO').toEqual(
+    ['วันที่', 'PO No.', 'PO Date', 'PO qty.', 'รับเข้า', 'ส่งออก', 'คงเหลือ']);
+
+  const rows = sub.locator('table.fg-mv tbody tr');
+  const cells = async i => (await rows.nth(i).locator('td').allInnerTexts()).map(s=> s.trim());
+  // เรียงตามวัน: 20 (A1 รับเข้า) · 21 (A2 รับเข้า) · 22 (A1 ส่งออก)
+  expect(await cells(0), 'แถวของ PO-A1').toEqual(
+    ['20/08/2026', 'PO-A1', '03/08/2026', '5,000', '3,000', '', '3,000']);
+  expect(await cells(1), 'แถวของ PO-A2 ต้องได้วันกับยอดของใบตัวเอง ไม่ใช่ของใบแรก').toEqual(
+    ['21/08/2026', 'PO-A2', '15/09/2026', '1,234,567', '1,500', '', '4,500']);
+  expect(await cells(2), 'แถวส่งออกของ PO-A1 ก็ต้องพก PO Date กับ PO qty. มาด้วย').toEqual(
+    ['22/08/2026', 'PO-A1', '03/08/2026', '5,000', '', '1,200', '3,300']);
+});
 test('กางแถวค้างไว้แล้วหน้าวาดใหม่ ต้องไม่หุบเอง', async ({ page }) => {
   /* renderAll() วาดหน้านี้ใหม่ทุกรอบซิงค์ (20 วิ) ถ้าเปิดแท็บนี้ค้างไว้ — ไม่จำสถานะการกางไว้
      แถวที่คนเพิ่งกางจะหุบเองกลางที่กำลังอ่าน และโฟกัสตกไป BODY (G2)

@@ -1469,12 +1469,20 @@ function fgMoves(pn, unit){
   const ids = new Set(activeOrders()
     .filter(o=> String(o.pn == null ? '' : o.pn) === String(pn) && String(o.subName||'') === String(unit))
     .map(o=>o.id));
+  /* เก็บทั้งใบ ไม่ใช่แค่ `poNo` — ตารางการเคลื่อนไหวโชว์ `PO Date` กับ `PO qty.` ด้วย
+     เป็นแค่ตารางค้นด้วย `id` · ใบไหนได้ขึ้นตารางตัดสินที่ `ids` ข้างบนแล้ว (เฉพาะใบที่ไม่ยกเลิก) */
   const poOf = {};
-  state.orders.forEach(o=>{ poOf[o.id] = o.poNo; });
+  state.orders.forEach(o=>{ poOf[o.id] = o; });
 
   const moves = state.records
     .filter(r=> !r.voided && ids.has(r.orderId) && (r.process==='inspection' || r.process==='shipping'))
-    .map(r=>({ date:r.date, po:poOf[r.orderId]||'', kind:r.process, qty:Number(r.qty)||0 }))
+    .map(r=>{
+      const o = poOf[r.orderId];
+      /* ครอบ Number() ที่นี่ ไม่ใช่ปล่อยให้ numFmt ครอบตอนวาด — ค่าที่ซิงค์มาเป็นสตริงได้
+         และ fgMoves() คืนข้อมูลให้ใครก็เรียกได้ ใครเอาไปบวกจะได้ '100'+100 = '100100' */
+      return { date:r.date, po:(o && o.poNo) || '', poDate:(o && o.orderDate) || '',
+        poQty:Number(o && o.orderQty)||0, kind:r.process, qty:Number(r.qty)||0 };
+    })
     .sort((a,b)=> a.date.localeCompare(b.date) || (a.kind==='inspection'? -1 : 1));
 
   let bal = 0;
@@ -2992,16 +3000,24 @@ function fgMovesHtml(g){
   const open = fgOpen.get(fgKey(g.pn, g.unit)) ? ' open' : '';
   return `<details class="fg-moves"${open}>`
     + `<summary>การเคลื่อนไหวรายวัน (${numFmt(moves.length)} รายการ)</summary>`
+    /* `PO Date` · `PO qty.` ใช้คำอังกฤษตามไฟล์ Call In ของ Delta เหมือนตารางราย PO ข้างบน
+       และเรียงต่อจาก `PO No.` ลำดับเดียวกัน — สองตารางอยู่ในแถวเดียวกัน คนกวาดตาลงมา
+       ต้องเจอคอลัมน์เดิมที่ตำแหน่งเดิม ไม่ต้องไล่อ่านหัวตารางใหม่
+       ⚠️ สองค่านี้เป็นของ "ใบ" ไม่ใช่ของ "วัน" จึงซ้ำทุกแถวของใบเดียวกันโดยธรรมชาติ
+          ตารางนี้ไม่มีแถวรวม จึงไม่มีที่ไหนชวนให้เอามาบวกกัน (ยอดรวมของใบอยู่ที่ตารางข้างบน) */
     + `<div class="table-wrap"><table class="fg-mv"><thead><tr><th style="width:110px">วันที่</th><th class="left">PO No.</th>`
+    + `<th style="width:110px">PO Date</th><th style="width:110px">PO qty.</th>`
     + `<th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>`
     + `<th style="width:110px">คงเหลือ</th></tr></thead><tbody>`
     + (moves.map(m=>`<tr>
         <td>${escapeHtml(fmtDateTH(m.date))}</td>
         <td class="left">${escapeHtml(m.po)}</td>
+        <td>${escapeHtml(fmtDateTH(m.poDate))}</td>
+        <td>${numFmt(m.poQty)}</td>
         <td>${m.kind==='inspection' ? numFmt(m.qty) : ''}</td>
         <td>${m.kind==='shipping' ? numFmt(m.qty) : ''}</td>
         <td><b>${numFmt(m.balance)}</b></td>
-      </tr>`).join('') || emptyRow(5, 'ยังไม่มีการเคลื่อนไหว'))
+      </tr>`).join('') || emptyRow(7, 'ยังไม่มีการเคลื่อนไหว'))
     + `</tbody></table></div></details>`;
 }
 
