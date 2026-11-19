@@ -92,13 +92,36 @@ test('G3 — ตารางยกเลิกใบสั่ง', async ({ page
   await expectNotPwned(page, 'ตารางยกเลิกใบสั่ง');
 });
 
-test('G3 — การ์ดยอดคงคลัง FG', async ({ page }) => {
+test('G3 — รายการที่กางจากแถวของหน้ายอดคงคลัง FG', async ({ page }) => {
   const o = order('TM5267H179', '2870327301', 800, '2026-08-03');
   await open(page, [o], [rec('R1', o.id, 'inspection', 500, EVIL)]);
   await page.click('.tab-btn[data-tab="fg"]');
   await page.click('#fgTable tr.fg-row[data-pn="2870327301"][data-unit="TUE-U"]');
-  await expect(page.locator('#fgCardTable tbody tr').first()).toContainText(SHOWN);
-  await expectNotPwned(page, 'การ์ด FG');
+  const sub = page.locator('#fgTable tr.fg-sub[data-pn="2870327301"][data-unit="TUE-U"]');
+  // ⚠️ ต้องกดกางกล่องก่อนอ่าน — innerText ของของที่ซ่อนอยู่คืนค่าว่าง
+  await sub.locator('details.fg-moves summary').click();
+  await expect(sub.locator('table.fg-mv tbody tr').first()).toContainText(SHOWN);
+  await expectNotPwned(page, 'รายการที่กางจากแถวของหน้า FG');
+});
+
+test('G3 — คอลัมน์ PO Date ของแถวที่กางในหน้ายอดคงคลัง FG', async ({ page }) => {
+  /* สองคอลัมน์ `PO Date` (ตารางราย PO และตารางการเคลื่อนไหว) อ่านจาก `order.orderDate`
+     ซึ่งเข้ามาทางชีตและทางรวมข้อมูลจากไฟล์ได้เหมือน `record.date`
+     ⚠️ ข้อข้างบนยิง payload ที่ `record.date` ซึ่งไปโผล่คอลัมน์ `วันที่` — **คนละช่องกัน**
+        (ผู้ตรวจ #142 รอบ 7 ทักว่าเป็นช่องว่างของเทส) */
+  const o = order('TM5267H179', '2870327301', 800, EVIL);
+  await open(page, [o], [rec('R1', o.id, 'inspection', 500, '2026-08-20')]);
+  await page.click('.tab-btn[data-tab="fg"]');
+  await page.click('#fgTable tr.fg-row[data-pn="2870327301"][data-unit="TUE-U"]');
+  const sub = page.locator('#fgTable tr.fg-sub[data-pn="2870327301"][data-unit="TUE-U"]');
+  // ตารางราย PO: PO No. · PO Date · ... → ช่องที่สอง
+  await expect(sub.locator('table.fg-cmp tbody tr').first().locator('td').nth(1),
+    'PO Date ของตารางราย PO').toHaveText(SHOWN);
+  await sub.locator('details.fg-moves summary').click();
+  // ตารางการเคลื่อนไหว: วันที่ · PO No. · PO Date · ... → ช่องที่สาม
+  await expect(sub.locator('table.fg-mv tbody tr').first().locator('td').nth(2),
+    'PO Date ของตารางการเคลื่อนไหว').toHaveText(SHOWN);
+  await expectNotPwned(page, 'คอลัมน์ PO Date ของแถวที่กางในหน้า FG');
 });
 
 test('G3 — หน้าจอใบส่งสินค้า', async ({ page }) => {

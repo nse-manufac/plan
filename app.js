@@ -1469,13 +1469,30 @@ function fgMoves(pn, unit){
   const ids = new Set(activeOrders()
     .filter(o=> String(o.pn == null ? '' : o.pn) === String(pn) && String(o.subName||'') === String(unit))
     .map(o=>o.id));
+  /* เก็บทั้งใบ ไม่ใช่แค่ `poNo` — ตารางการเคลื่อนไหวโชว์ `PO Date` กับ `PO qty.` ด้วย
+     เป็นแค่ตารางค้นด้วย `id` · ใบไหนได้ขึ้นตารางตัดสินที่ `ids` ข้างบนแล้ว (เฉพาะใบที่ไม่ยกเลิก) */
   const poOf = {};
-  state.orders.forEach(o=>{ poOf[o.id] = o.poNo; });
+  state.orders.forEach(o=>{ poOf[o.id] = o; });
 
   const moves = state.records
     .filter(r=> !r.voided && ids.has(r.orderId) && (r.process==='inspection' || r.process==='shipping'))
-    .map(r=>({ date:r.date, po:poOf[r.orderId]||'', kind:r.process, qty:Number(r.qty)||0 }))
-    .sort((a,b)=> a.date.localeCompare(b.date) || (a.kind==='inspection'? -1 : 1));
+    .map(r=>{
+      const o = poOf[r.orderId];
+      /* ครอบ Number() ที่นี่ ไม่ใช่ปล่อยให้ numFmt ครอบตอนวาด — ค่าที่ซิงค์มาเป็นสตริงได้
+         และ fgMoves() คืนข้อมูลให้ใครก็เรียกได้ ใครเอาไปบวกจะได้ '100'+100 = '100100' */
+      return { date:r.date, po:(o && o.poNo) || '', poDate:(o && o.orderDate) || '',
+        poQty:Number(o && o.orderQty)||0, kind:r.process, qty:Number(r.qty)||0 };
+    })
+    /* รับเข้าก่อนส่งออกในวันเดียวกัน — ยอดวิ่งจึงไม่ติดลบกลางวัน
+       🚨 ต้องมีชั้นที่สาม (`cmpText(a.po, b.po)`) ไม่งั้นตัวเทียบ **ไม่สอดคล้องกันเอง**
+          วันเท่ากันและขั้นเท่ากันจะคืน −1 ทั้งสองทิศ → ลำดับขึ้นกับอัลกอริทึมของ V8 ไม่ใช่ขึ้นกับข้อมูล
+          ผู้ตรวจ #142 รอบ 11 รันวัด: ใส่ `rA 100 · rB 200 · rC 300` วันเดียวกัน จอขึ้น **กลับทาง**
+       ⚠️ เครื่องที่นำเข้าไฟล์เองกับเครื่องที่ซิงค์มาได้ลำดับในอาร์เรย์คนละแบบ สองคนเปิดเทียบกัน
+          จะไล่บรรทัดตรงกันไม่ได้ (กฎเดียวกับรายการใบย้อนแย้งและหน้ายอดรายวันทุกขั้น)
+       ⚠️ ต้องเป็น `cmpText` ไม่ใช่ `localeCompare` ตรง ๆ — รหัส PO ที่เป็นเลขล้วนซิงค์มาเป็น `number` ได้
+          แล้วตัวเลขไม่มีเมธอดนั้น จะ throw กลางการวาดจอ (ทั้งตารางไม่ขึ้นเลย) */
+    .sort((a,b)=> a.date.localeCompare(b.date)
+      || (a.kind === b.kind ? cmpText(a.po, b.po) : (a.kind === 'inspection' ? -1 : 1)));
 
   let bal = 0;
   moves.forEach(m=>{ bal += (m.kind==='inspection' ? m.qty : -m.qty); m.balance = bal; });
@@ -2827,10 +2844,35 @@ function fgDiffCell(g){
        + (partial ? ` <span class="hint">${cover}</span>` : '');
 }
 
+/* กลุ่มที่กางรายการ PO ออกมาอยู่ — ของเครื่องใครเครื่องมัน ไม่เก็บลง state (E1–E4 · กฎเดียวกับ dayProcess)
+ *
+ * 🚨 ต้องจำข้ามการวาดใหม่ — renderAll() วาดหน้านี้ใหม่ทุกครั้งที่รอบซิงค์ดึงแถวลงมาได้
+ *    (`if(pulledCount > 0 || processesChanged)`) คือทุกครั้งที่เครื่องอื่นคีย์ยอด ไม่ใช่ทุก 20 วิเสมอ
+ *    ไม่จำแล้วแถวที่คนเพิ่งกางจะหุบเองกลางที่กำลังอ่าน แบบเดียวกับกล่องคำอธิบายของหน้ายอดค้างรายวัน (G2)
+ * กุญแจคือ `pn|unit` ตัวเดียวกับที่ fgRows() ใช้จัดกลุ่ม · ค่าคือ "กล่องการเคลื่อนไหวเปิดอยู่ไหม" */
+const fgOpen = new Map();
+function fgKey(pn, unit){ return pn + '|' + unit; }
+
 function renderFg(){
   fillSelect('fgUnit', uniqueSorted(activeOrders().map(o=>o.subName)));
   const unit = fgUnit(), q = fgQuery();
   const hideZero = document.getElementById('fgHideZero').checked;
+
+  /* 🚨 สองบล็อกนี้ต้องอ่าน DOM **ก่อน** สร้าง html ข้างล่าง — ของที่กางอยู่ถูกเขียนลงไปในนั้นแล้ว
+        (เขียนไว้ใกล้ ๆ จุดเขียนทับตอนแรก แล้วกล่องการเคลื่อนไหวหุบทุกครั้ง เทสจับได้) */
+  /* จำของที่โฟกัสอยู่ไว้คืนให้ที่ท้ายฟังก์ชัน — ตารางนี้ถูกวาดใหม่ทุกรอบซิงค์ถ้าเปิดแท็บนี้ค้างไว้
+     ไม่คืนแล้วคนที่ไล่ด้วยแป้นพิมพ์ตกไป BODY กลางคัน ต้อง Tab จากต้นหน้าใหม่ (G2)
+     🚨 ต้องครบทั้งสามชิ้นที่กดได้ในตารางนี้ ไม่ใช่แค่ปุ่ม P/N — ปุ่ม ✎ แก้ กับหัวกล่องการเคลื่อนไหว
+        อยู่ในแถวที่กาง ซึ่งอยู่ในตารางเดียวกัน จึงถูกเขียนทับพร้อมกัน
+        (ของเดิมปุ่ม ✎ แก้ อยู่ในการ์ดที่ renderAll() ไม่เคยวาดใหม่ โฟกัสจึงรอด · ผู้ตรวจ #142) */
+  const focused = fgFocusOf(document.activeElement);
+  /* สถานะของกล่องการเคลื่อนไหวอ่านจาก DOM ไม่พึ่ง event `toggle` ของ <details>
+     ซึ่งเบราว์เซอร์ยิงเป็น task แยก จึงมาทีหลังการวาดใหม่ที่เกิดติด ๆ กันได้ */
+  document.querySelectorAll('#fgTable tr.fg-sub').forEach(sub=>{
+    const k = fgKey(sub.dataset.pn, sub.dataset.unit);
+    const d = sub.querySelector('details.fg-moves');
+    if(d && fgOpen.has(k)) fgOpen.set(k, d.open);
+  });
 
   const all = fgRows();
   let rows = all;
@@ -2843,8 +2885,9 @@ function renderFg(){
     const neg = g.fg < 0
       ? ' <span class="badge red" title="ส่งออกมากกว่าที่ผ่าน Inspection — น่าจะคีย์ย้อนหลังหรือคีย์ผิดลำดับ">⚠ ติดลบ</span>'
       : '';
-    return `<tr class="fg-row" data-pn="${escapeHtml(g.pn)}" data-unit="${escapeHtml(g.unit)}" style="cursor:pointer">
-      <td class="left"><b>${escapeHtml(g.pn)}</b></td>
+    const open = fgOpen.has(fgKey(g.pn, g.unit));
+    return `<tr class="fg-row${open ? ' open' : ''}" data-pn="${escapeHtml(g.pn)}" data-unit="${escapeHtml(g.unit)}" style="cursor:pointer">
+      <td class="left"><button type="button" class="fg-pn" aria-expanded="${open}"><span class="fg-caret" aria-hidden="true">▶</span>${escapeHtml(g.pn)}</button></td>
       <td class="left">${escapeHtml(g.unit)}</td>
       <td>${numFmt(g.inQty)}</td>
       <td>${numFmt(g.outQty)}</td>
@@ -2852,7 +2895,7 @@ function renderFg(){
       <td>${numFmt(g.ourWip)}</td>
       <td>${g.deltaHave ? numFmt(g.deltaWip) : '—'}</td>
       <td>${fgDiffCell(g)}</td>
-    </tr>`;
+    </tr>` + fgSubRow(g, open);
   }).join('');
 
   document.getElementById('fgTable').innerHTML =
@@ -2869,68 +2912,202 @@ function renderFg(){
     `${numFmt(all.length)} กลุ่ม · <b>FG รวมทั้งหมด ${numFmt(totalFg)} ชิ้น</b>` +
     (rows.length !== all.length ? ` · แสดงอยู่ ${numFmt(rows.length)} กลุ่ม` : '') +
     (mismatch ? ` · <b style="color:var(--warn)">${numFmt(mismatch)} กลุ่มยอดค้างไม่ตรงกับ Delta</b>` : '') +
-    ` · กดที่แถวเพื่อดูการเคลื่อนไหว`;
+    ` · กดที่แถวเพื่อดูใบสั่งของ P/N นั้น`;
 
-  document.querySelectorAll('#fgTable .fg-row').forEach(tr=>{
-    tr.addEventListener('click', ()=> renderFgCard(tr.dataset.pn, tr.dataset.unit));
+  document.querySelectorAll('#fgTable tr.fg-row').forEach(tr=>{
+    tr.addEventListener('click', ev=>{
+      /* 🚨 ลากเลือกตัวเลขบนแถวต้องไม่พลิกแถว — เบราว์เซอร์ยิง `click` ให้การลากด้วย
+         หน้านี้คือหน้าที่คนก๊อปเลขไปเทียบกับไฟล์ Call In ของ Delta ทีละบรรทัด
+         ลากคลุมเลขแล้วแถวที่กางอยู่หุบทิ้งทันที (ผู้ตรวจ #142 รอบ 11 รันวัด)
+         ⚠️ เป็นของใหม่จากใบนี้ — ตัวจับเดิมเรียก `renderFgCard()` ซึ่งกดซ้ำได้ไม่เปลี่ยนอะไร
+            ตัวนี้สลับกาง/พับ จึงเสียของที่คนกางไว้
+         ⚠️ ไม่ย้ายตัวจับไปที่ปุ่ม `.fg-pn` อย่างเดียว เพราะ `#fgSummary` เขียนชวนว่า "กดที่แถว"
+         🚨 `ev.detail` ต้องมาก่อน — `ev.detail === 0` คือคลิกที่เกิดจาก **แป้นพิมพ์**
+            (Enter/Space บนปุ่ม) ซึ่งไม่เกี่ยวกับการลากเมาส์เลย · ไม่เช็กแล้วใครที่กด Ctrl+A ไว้
+            จะกด Enter กางแถวไม่ได้จนกว่าจะคลิกที่อื่น (G2 · ผู้ตรวจ #142 รอบ 12 รันวัด) */
+      if(ev.detail && !document.getSelection().isCollapsed) return;
+      fgToggle(tr.dataset.pn, tr.dataset.unit);
+    });
   });
+  document.querySelectorAll('#fgTable tr.fg-sub').forEach(sub=>{ if(!sub.hidden) fgBindSub(sub); });
+
+  if(focused) fgRefocus(focused);
 }
 
-/** การ์ดรายตัว — ระดับที่ Delta ถามมาจริง เขาถามเป็นราย PO */
-function renderFgCard(pn, unit){
-  const g = fgRows().find(x=> x.pn === pn && x.unit === unit);
-  if(!g) return;
-  const moves = fgMoves(pn, unit);
+/** สิ่งที่โฟกัสอยู่ในตาราง FG — คืนค่าที่พาหาตัวมันกลับมาได้หลังวาดใหม่ หรือ null
+ *  ⚠️ ต้องจำว่าเป็นชิ้นไหน ไม่ใช่จำแค่ว่าอยู่กลุ่มไหน — คืนให้ผิดชิ้นก็ยังเหวี่ยงคนที่ไล่ด้วยแป้นพิมพ์
+ *  `.fg-dw-edit` ระบุด้วย `data-dw` เพราะกลุ่มหนึ่งมีได้หลายใบ · หัวกล่องการเคลื่อนไหวมีแถวละอัน */
+function fgFocusOf(el){
+  if(!el || !el.closest) return null;
+  const row = el.closest('tr.fg-row, tr.fg-sub');
+  if(!row || !row.closest('#fgTable')) return null;   // <details> ที่อื่นของแอปต้องไม่เข้ามา
+  const at = el.classList.contains('fg-pn') ? 'pn'
+    : el.classList.contains('fg-dw-edit') ? 'dw'
+    : el.tagName === 'SUMMARY' ? 'moves' : null;
+  return at ? {pn: row.dataset.pn, unit: row.dataset.unit, at, dw: el.dataset.dw || ''} : null;
+}
 
-  document.getElementById('fgCardTitle').textContent = `P/N ${pn} · ${unit}`;
-  document.getElementById('fgCardSummary').innerHTML =
-    `รับเข้าสะสม <b>${numFmt(g.inQty)}</b> · ส่งออกสะสม <b>${numFmt(g.outQty)}</b>`
-    + ` · คงเหลือ <b>${numFmt(g.fg)}</b> ชิ้น · ${numFmt(g.orders.length)} ใบสั่ง`;
+/** คืนโฟกัสให้ชิ้นเดิมหลังวาดใหม่ — หาไม่เจอให้ถอยไปที่ปุ่ม P/N ของกลุ่มนั้น
+ *  ปุ่ม ✎ แก้ หายได้จริงเมื่อ Delta ตัดใบนั้นออกจากไฟล์งวดใหม่ (deltaWipOf คืนเฉพาะงวดล่าสุด) */
+function fgRefocus(f){
+  const find = cls => Array.from(document.querySelectorAll('#fgTable tr.' + cls))
+    .find(tr=> tr.dataset.pn === f.pn && tr.dataset.unit === f.unit) || null;
+  const row = find('fg-row'), sub = find('fg-sub');
+  let el = null;
+  /* หาปุ่มด้วยการไล่ `dataset` ไม่ใช่ attribute selector — ค่านี้ซิงค์มาได้
+     ใส่ลง selector ตรง ๆ แล้วพังตอนมีอักขระพิเศษ (หลักเดียวกับ G3) */
+  if(f.at === 'dw' && sub) el = Array.from(sub.querySelectorAll('.fg-dw-edit')).find(b=> b.dataset.dw === f.dw) || null;
+  else if(f.at === 'moves' && sub) el = sub.querySelector('details.fg-moves > summary');
+  if(!el && row) el = row.querySelector('.fg-pn');
+  /* 🚨 preventScroll ห้ามถอด — el.focus() เปล่า ๆ เลื่อนของที่โฟกัสเข้ามาในจอให้ด้วย
+     และของที่คืนโฟกัสคราวนี้อยู่ "ใน" .table-wrap ที่คนใช้เลื่อนอ่าน (กรอบ 70vh)
+     → จอกระโดดกลับไปที่แถวนั้นเองกลางที่กำลังอ่าน · ผู้ตรวจ #142 รอบ 5 รันวัดได้ 874 → 274
+     (เด้งขึ้น 600px) ตอนโฟกัสอยู่ที่หัวกล่องการเคลื่อนไหว และ 953 → 0 ตอนอยู่ที่ปุ่ม P/N แถวแรก
+     ⚠️ หน้ายอดรายวันทุกขั้นคืนโฟกัสให้ปุ่มขั้นแบบเดียวกันแต่ไม่เจออาการนี้ เพราะปุ่มนั้น
+        อยู่ "นอก" กรอบที่เลื่อน — เส้นแบ่งคือของที่โฟกัสอยู่ในกรอบที่เลื่อนหรือไม่
+     ⚠️ เทสที่วัดแค่ activeElement จับข้อนี้ไม่ได้ (เขียวทั้งก่อนและหลังแก้) ต้องวัด scrollTop */
+  if(el) el.focus({preventScroll:true});
+}
 
-  document.getElementById('fgCardTable').innerHTML =
-    `<thead><tr><th style="width:110px">วันที่</th><th>PO No.</th>
-      <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>
-      <th style="width:110px">คงเหลือ</th></tr></thead><tbody>` +
-    (moves.map(m=>`<tr>
-      <td>${escapeHtml(fmtDateTH(m.date))}</td>
-      <td class="left">${escapeHtml(m.po)}</td>
-      <td>${m.kind==='inspection' ? numFmt(m.qty) : ''}</td>
-      <td>${m.kind==='shipping' ? numFmt(m.qty) : ''}</td>
-      <td><b>${numFmt(m.balance)}</b></td>
-    </tr>`).join('') || emptyRow(5, 'ยังไม่มีการเคลื่อนไหว')) + '</tbody>';
+/** แถวที่กางออกมาใต้แถวของกลุ่ม — ราย PO ของ P/N นั้น ระดับที่ Delta ถามมาจริง
+ *
+ *  ⚠️ เนื้อในวาดเฉพาะตอนกางอยู่ ไม่ใช่วาดไว้ล่วงหน้าแล้วซ่อน — fgMovesHtml() เดินผ่าน record
+ *     ทั้งก้อนหนึ่งรอบต่อกลุ่ม ของจริง 180 กลุ่ม × ~14,000 รายการ = จ่ายทุกรอบซิงค์โดยไม่มีใครดู */
+function fgSubRow(g, open){
+  return `<tr class="fg-sub" data-pn="${escapeHtml(g.pn)}" data-unit="${escapeHtml(g.unit)}"${open ? '' : ' hidden'}>`
+    + `<td colspan="8">${open ? fgSubInner(g) : ''}</td></tr>`;
+}
 
-  document.getElementById('fgCardCmp').innerHTML =
-    `<thead><tr><th>PO No.</th><th style="width:110px">ค้างส่ง (เรา)</th>
-      <th style="width:110px">ค้างส่ง (Delta)</th><th style="width:90px">งวด</th>
-      <th style="width:100px">ต่าง</th></tr></thead><tbody>` +
-    g.orders.map(({o, ourWip, delta, dw})=>{
-      const d = delta ? delta.left : null;
-      const diff = d == null ? null : ourWip - d;
-      // ยอดฐานของการหักคือยอดที่แก้มือถ้ามี (deltaWipNum) — บอกให้ชัดว่าเลขนั้นมาจากไฟล์หรือจากคนแก้
-      const edited = dw && deltaWipOverride(dw) != null;
-      const cut = delta && delta.uncounted > 0
-        ? `<div class="hint" title="ยอดสั่ง − Wip bal. = Delta นับส่งแล้ว ${numFmt(delta.counted)} · เราส่งมากกว่านั้น ${numFmt(delta.uncounted)}">`
-          + `${edited ? 'แก้มือ' : 'ไฟล์'} ${numFmt(delta.raw)} − Delta ยังไม่นับ ${numFmt(delta.uncounted)}</div>` : '';
-      const tools = (edited ? `<div><span class="badge amber" title="${escapeHtml(deltaOverrideTip(dw))}">แก้มือ</span></div>` : '')
-        + (dw ? `<button type="button" class="btn-mini fg-dw-edit" data-dw="${escapeHtml(dw.id)}"`
-          + ` title="แก้ Wip bal. ของ Delta ด้วยมือ — ต้องใส่เหตุผลและชื่อผู้แก้">✎ แก้</button>` : '');
-      return `<tr>
-        <td class="left">${escapeHtml(o.poNo)}</td>
-        <td>${numFmt(ourWip)}</td>
-        <td>${(d == null ? '<span class="hint">ไม่มี</span>' : numFmt(d) + cut) + tools}</td>
-        <td>${delta && delta.week ? 'wk'+escapeHtml(delta.week) : '—'}</td>
-        <td>${diff == null ? '—'
-             : diff === 0 ? '<span class="badge green">ตรง</span>'
-             : `<span class="badge amber">${diff>0?'+':''}${numFmt(diff)}</span>`}</td>
-      </tr>`;
-    }).join('') + '</tbody>';
-  document.querySelectorAll('#fgCardCmp .fg-dw-edit').forEach(el=>{
-    // renderAll() ไม่ได้วาดการ์ดนี้ใหม่ — แก้เสร็จต้องวาดเองให้เห็นเลขที่แก้ทันที
-    el.addEventListener('click', function(){ if(editDeltaWip(this.dataset.dw)) renderFgCard(pn, unit); });
+function fgSubInner(g){
+  // ⚠️ ครอบ Number() ทุกครั้งที่บวกยอดสั่ง — ค่าที่ซิงค์มาเป็นสตริงได้ แล้ว '100' + 100 = '100100'
+  const qty = g.orders.reduce((n,x)=> n + (Number(x.o.orderQty)||0), 0);
+  return `<div class="fg-sub-wrap">
+    <div class="fg-sub-head">ใบสั่งของ P/N ${escapeHtml(g.pn)} · ${numFmt(g.orders.length)} ใบ
+      <span class="hint">PO qty. รวม ${numFmt(qty)} ชิ้น · FG คงเหลือของกลุ่ม ${numFmt(g.fg)} ชิ้น</span></div>
+    <div class="table-wrap"><table class="fg-cmp"><thead><tr>
+      <th class="left">PO No.</th><th style="width:105px">PO Date</th><th style="width:100px">PO qty.</th>
+      <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th><th style="width:110px">FG คงเหลือ</th>
+      <th style="width:110px">ค้างส่ง (เรา)</th><th style="width:140px">ค้างส่ง (Delta)</th>
+      <th style="width:70px">งวด</th><th style="width:90px">ต่าง</th>
+    </tr></thead><tbody>${g.orders.map(fgPoRow).join('')}</tbody></table></div>
+    ${fgMovesHtml(g)}
+  </div>`;
+}
+
+/** วันที่สั่งของใบ — ใบที่ไม่มีวัน (หรือวันที่อ่านไม่ออก) ต้องได้ขีด **ตัวเดียวกับช่องอื่นในแถว**
+ *  `fmtDateTH()` คืน `-` (hyphen) ส่วนช่องว่างอื่นของสองตารางนี้ใช้ `—` (em dash)
+ *  ปล่อยไว้แล้วแถวเดียวมีขีดสองชนิดคนละความยาว (ผู้ตรวจ #142 รอบ 7 ทัก)
+ *  ⚠️ ทำที่นี่ ห้ามไปแก้ `fmtDateTH()` — มันถูกใช้กับ textContent ด้วย
+ *     (กฎนี้เขียนไว้ที่หัว `tests/escape-date.spec.js`)
+ *  ⚠️ เคยอ้างหน้ายอดรายวันทุกขั้นเป็นแบบอย่าง (`odTxt === '-' ? dash : odTxt`) — **โค้ดนั้นหายไป
+ *     แล้วตอน #143 ถอดคอลัมน์ `Order Date` ออกจากหน้านั้น** กฎข้อนี้จึงยืนด้วยเหตุผลของตัวเอง
+ *     ไม่ใช่ด้วยการชี้ไปที่โค้ดที่อื่น (ป้ายที่ชี้ไปที่ที่ไม่มีอะไร แย่กว่าไม่มีป้าย)
+ *  🚨 ยัง escape เหมือนเดิม — ค่าวันที่ที่เพี้ยนไปลง innerHTML ได้จริง (G3) */
+function fgDate(v){
+  const s = escapeHtml(fmtDateTH(v));
+  return s === '-' ? '—' : s;
+}
+
+/** หนึ่งใบสั่งในแถวที่กางออกมา
+ *  PO Date มาจาก `orderDate` ช่องเดียวกับที่หน้าคีย์ยอดใช้คิด Aging — ไม่ได้เพิ่มข้อมูลใหม่ */
+function fgPoRow({o, inQty, outQty, ourWip, delta, dw}){
+  const d = delta ? delta.left : null;
+  const diff = d == null ? null : ourWip - d;
+  // ยอดฐานของการหักคือยอดที่แก้มือถ้ามี (deltaWipNum) — บอกให้ชัดว่าเลขนั้นมาจากไฟล์หรือจากคนแก้
+  const edited = dw && deltaWipOverride(dw) != null;
+  const cut = delta && delta.uncounted > 0
+    ? `<div class="hint" title="ยอดสั่ง − Wip bal. = Delta นับส่งแล้ว ${numFmt(delta.counted)} · เราส่งมากกว่านั้น ${numFmt(delta.uncounted)}">`
+      + `${edited ? 'แก้มือ' : 'ไฟล์'} ${numFmt(delta.raw)} − Delta ยังไม่นับ ${numFmt(delta.uncounted)}</div>` : '';
+  const tools = (edited ? `<div><span class="badge amber" title="${escapeHtml(deltaOverrideTip(dw))}">แก้มือ</span></div>` : '')
+    + (dw ? `<button type="button" class="btn-mini fg-dw-edit" data-dw="${escapeHtml(dw.id)}"`
+      + ` title="แก้ Wip bal. ของ Delta ด้วยมือ — ต้องใส่เหตุผลและชื่อผู้แก้">✎ แก้</button>` : '');
+  return `<tr>
+    <td class="left">${escapeHtml(o.poNo)}</td>
+    <td>${fgDate(o.orderDate)}</td>
+    <td>${numFmt(Number(o.orderQty)||0)}</td>
+    <td>${numFmt(inQty)}</td>
+    <td>${numFmt(outQty)}</td>
+    <td><b>${numFmt(inQty - outQty)}</b></td>
+    <td>${numFmt(ourWip)}</td>
+    <td>${(d == null ? '<span class="hint">ไม่มี</span>' : numFmt(d) + cut) + tools}</td>
+    <td>${delta && delta.week ? 'wk'+escapeHtml(delta.week) : '—'}</td>
+    <td>${diff == null ? '—'
+         : diff === 0 ? '<span class="badge green">ตรง</span>'
+         : `<span class="badge amber">${diff>0?'+':''}${numFmt(diff)}</span>`}</td>
+  </tr>`;
+}
+
+/** การเคลื่อนไหวรายวันของกลุ่ม — พับไว้ เพราะคนเปิดแถวมาเพื่อดูราย PO ก่อน */
+function fgMovesHtml(g){
+  const moves = fgMoves(g.pn, g.unit);
+  const open = fgOpen.get(fgKey(g.pn, g.unit)) ? ' open' : '';
+  return `<details class="fg-moves"${open}>`
+    + `<summary>การเคลื่อนไหวรายวัน (${numFmt(moves.length)} รายการ)</summary>`
+    /* `PO Date` · `PO qty.` ใช้คำอังกฤษตามไฟล์ Call In ของ Delta เหมือนตารางราย PO ข้างบน
+       และเรียงต่อจาก `PO No.` ลำดับเดียวกัน — สองตารางอยู่ในแถวเดียวกัน คนกวาดตาลงมา
+       ต้องเจอคอลัมน์เดิมใน "ลำดับ" เดิม ไม่ต้องไล่อ่านหัวตารางใหม่
+       ⚠️ ตรงกันแค่ลำดับ ไม่ใช่ตำแหน่ง — ตารางนี้มี `วันที่` นำหน้า คอลัมน์จึงเลื่อนไปทางขวาทั้งแถบ
+          (ผู้ตรวจ #142 รอบ 6 วัดที่จอ 819: `PO No.` 60 vs 166 · `PO Date` 151 vs 257)
+       ⚠️ สองค่านี้เป็นของ "ใบ" ไม่ใช่ของ "วัน" จึงซ้ำทุกแถวของใบเดียวกันโดยธรรมชาติ
+          ตารางนี้ไม่มีแถวรวม จึงไม่มีที่ไหนชวนให้เอามาบวกกัน (ยอดรวมของใบอยู่ที่ตารางข้างบน) */
+    + `<div class="table-wrap"><table class="fg-mv"><thead><tr><th style="width:110px">วันที่</th><th class="left">PO No.</th>`
+    + `<th style="width:110px">PO Date</th><th style="width:110px">PO qty.</th>`
+    + `<th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th>`
+    /* 🚨 ต้องเขียนว่า "ทั้งกลุ่ม" — เลขนี้เป็นยอดวิ่งของ **ทุกใบใน P/N + หน่วยนี้รวมกัน**
+       ขณะที่ตารางราย PO ข้างบนมีคอลัมน์ `FG คงเหลือ` ซึ่งเป็น **ของใบนั้นใบเดียว**
+       สองเลขอยู่ในแถวที่กางเดียวกัน และแถวนี้มี `PO No.`/`PO qty.` กำกับอยู่ด้วย
+       คนจึงอ่านว่าเป็นของใบนั้นได้ง่าย แล้วสรุปว่า "ยอดไม่ตรง" ทั้งที่ทั้งคู่ถูกตามนิยามของตัวเอง
+       (ฉาก 2 ใบ: ราย PO ของ PO-A1 = 700 · ยอดวิ่งแถวเดียวกัน = 1,200 · ผู้ตรวจ #142 รอบ 10 รันวัด)
+       ⚠️ ใส่เป็นข้อความบนจอ ไม่ใช่ `title` — `title` ไม่ติดกระดาษและคนไล่ด้วยแป้นพิมพ์อ่านไม่ได้
+          (บทเรียนเดียวกับป้ายสถานะที่ย้ายเข้า `title` ของหน้ายอดรายวันทุกขั้น)
+       ⚠️ แยกบรรทัดด้วย `<span class="hint">` เพื่อไม่ให้คอลัมน์กว้างขึ้น — กระดาษ A4 เหลือที่ 16px */
+    + `<th style="width:110px">คงเหลือ<span class="hint">(ทั้งกลุ่ม)</span></th></tr></thead><tbody>`
+    + (moves.map(m=>`<tr>
+        <td>${fgDate(m.date)}</td>
+        <td class="left">${escapeHtml(m.po)}</td>
+        <td>${fgDate(m.poDate)}</td>
+        <td>${numFmt(m.poQty)}</td>
+        <td>${m.kind==='inspection' ? numFmt(m.qty) : ''}</td>
+        <td>${m.kind==='shipping' ? numFmt(m.qty) : ''}</td>
+        <td><b>${numFmt(m.balance)}</b></td>
+      </tr>`).join('') || emptyRow(7, 'ยังไม่มีการเคลื่อนไหว'))
+    + `</tbody></table></div></details>`;
+}
+
+/** กาง/พับกลุ่มหนึ่ง — แก้แค่สองแถวนั้น ไม่วาดทั้งตารางใหม่
+ *  โฟกัสของปุ่มที่เพิ่งกดจึงไม่ตก และการกางไม่ต้องจ่ายค่าวาดทั้งตาราง (G2) */
+function fgToggle(pn, unit){
+  const find = cls => Array.from(document.querySelectorAll('#fgTable tr.' + cls))
+    .find(tr=> tr.dataset.pn === pn && tr.dataset.unit === unit) || null;
+  const row = find('fg-row'), sub = find('fg-sub');
+  if(!row || !sub) return;
+  const k = fgKey(pn, unit);
+  if(fgOpen.has(k)){
+    fgOpen.delete(k);
+    sub.hidden = true;
+    sub.firstElementChild.innerHTML = '';   // คืนแรงให้การวาดรอบหน้า ไม่ต้องคิดของแถวที่พับแล้ว
+  } else {
+    const g = fgRows().find(x=> x.pn === pn && x.unit === unit);
+    if(!g) return;
+    fgOpen.set(k, false);
+    sub.firstElementChild.innerHTML = fgSubInner(g);
+    sub.hidden = false;
+    fgBindSub(sub);
+  }
+  const open = fgOpen.has(k);
+  row.classList.toggle('open', open);
+  row.querySelector('.fg-pn').setAttribute('aria-expanded', String(open));
+}
+
+/** ผูกปุ่มในแถวที่กางออกมา
+ *  (กล่องการเคลื่อนไหวไม่ต้องผูกอะไร — renderFg() อ่านสถานะของมันจาก DOM ก่อนวาดใหม่) */
+function fgBindSub(sub){
+  sub.querySelectorAll('.fg-dw-edit').forEach(el=>{
+    /* แก้แล้วเลขของแถวกลุ่มข้างบนเปลี่ยนด้วย ต้องวาดทั้งตาราง — editDeltaWip() เรียก renderAll()
+       ซึ่งเรียก renderFg() ให้อยู่แล้วเมื่อเปิดแท็บนี้อยู่ · แถวที่กางค้างไว้กลับมาเองจาก fgOpen
+       (ของเดิมวาดใหม่แค่การ์ด เลขบนแถวกลุ่มจึงค้างของเก่าจนกว่าจะสลับแท็บ) */
+    el.addEventListener('click', function(e){ e.stopPropagation(); editDeltaWip(this.dataset.dw); });
   });
-
-  document.getElementById('fgCardPanel').style.display = '';
-  document.getElementById('fgCardPanel').scrollIntoView({block:'nearest'});
 }
 
 /* ---------- Render: ยอดรายวันทุกขั้น ----------
@@ -6173,9 +6350,6 @@ document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
   document.getElementById(id).addEventListener('change', renderFg));
 // ช่องค้นหาอยู่นอกตาราง การวาดใหม่จึงไม่แย่งโฟกัส พิมพ์รัวได้ (INVARIANTS G2)
 document.getElementById('fgSearch').addEventListener('input', renderFg);
-document.getElementById('btnFgCardClose').addEventListener('click', ()=>{
-  document.getElementById('fgCardPanel').style.display = 'none';
-});
 
 document.getElementById('dnDate').addEventListener('change', renderDeliveryNote);
 // ช่องค้นหาอยู่นอกตาราง การวาดตารางใหม่จึงไม่แย่งโฟกัสไปจากมัน พิมพ์รัวได้ (INVARIANTS G2)

@@ -54,6 +54,12 @@ async function open(page, orders, records = [], deltaWip = []) {
 const rowOf = (page, pn, unit) =>
   page.locator(`#fgTable tr.fg-row[data-pn="${pn}"][data-unit="${unit}"]`).innerText();
 
+/** แถวที่กางออกมาใต้แถวของกลุ่ม — ต้องกดแถวนั้นก่อน ไม่งั้นเนื้อในยังไม่ถูกวาด (ดู fgSubRow) */
+const subOf = (page, pn, unit) =>
+  page.locator(`#fgTable tr.fg-sub[data-pn="${pn}"][data-unit="${unit}"]`);
+/** ตารางเทียบราย PO ในแถวที่กางออกมา */
+const cmpOf = (page, pn, unit) => subOf(page, pn, unit).locator('table.fg-cmp tbody');
+
 const ORDERS = [
   order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 5000),
   order('PO-B1', PN_A, 3000, 'TUE-H'), order('PO-C1', PN_B, 4000)
@@ -205,13 +211,407 @@ test('กดที่แถวแล้วต้องเห็นการเ�
     rec('r2', 'PO-A1|' + PN_A, 'shipping', 1200, '2026-08-22')
   ]);
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  await expect(page.locator('#fgCardPanel')).toBeVisible();
+  await expect(subOf(page, PN_A, 'TUE-U')).toBeVisible();
 
-  const rows = await page.locator('#fgCardTable tbody tr').allInnerTexts();
+  // ⚠️ ต้องกดกางกล่องก่อนอ่าน — innerText ของของที่ซ่อนอยู่คืนค่าว่าง
+  await subOf(page, PN_A, 'TUE-U').locator('details.fg-moves summary').click();
+  const rows = await subOf(page, PN_A, 'TUE-U').locator('table.fg-mv tbody tr').allInnerTexts();
   expect(rows.length, 'สามการเคลื่อนไหว').toBe(3);
   expect(rows[0], 'ยอดสะสมหลังรับเข้าครั้งแรก').toContain('3,000');
   expect(rows[1], 'บวกอีก 1,500').toContain('4,500');
   expect(rows[2], 'หักที่ส่งออก 1,200').toContain('3,300');
+});
+
+test('แถวที่กางออกมาต้องบอก PO Date กับ PO qty. ของแต่ละใบ', async ({ page }) => {
+  /* เจ้าของขอสองช่องนี้เมื่อ 17 พ.ย. 2569 เพื่อเทียบกับไฟล์ Call In ของ Delta ได้ทีละบรรทัด
+     ไฟล์ของเขามีคอลัมน์ PO NO กับ PO QTY อยู่แล้ว จึงใช้คำเดียวกัน ไม่แปลเป็นไทย
+     PO Date มาจาก orderDate ช่องเดียวกับที่หน้าคีย์ยอดใช้คิด Aging ไม่ได้เพิ่มข้อมูลใหม่ */
+  await open(page, [order('PO-A1', PN_A, 5000)]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  const head = await subOf(page, PN_A, 'TUE-U').locator('table.fg-cmp thead').innerText();
+  expect(head, 'ใช้คำเดียวกับไฟล์ของ Delta').toContain('PO qty.');
+  expect(head).toContain('PO Date');
+
+  const td = cmpOf(page, PN_A, 'TUE-U').locator('tr').first().locator('td');
+  expect(await td.nth(1).innerText(), 'วันที่ของใบสั่ง รูปแบบเดียวกับทั้งแอป').toBe('03/08/2026');
+  expect(await td.nth(2).innerText(), 'ยอดสั่งของใบนั้น').toBe('5,000');
+});
+
+test('ยอดราย PO ที่กางออกมา บวกกันต้องเท่ากับเลขบนแถวของกลุ่ม', async ({ page }) => {
+  /* แถวของกลุ่มกับรายการที่กางออกมาอยู่ติดกัน คนจะบวกตามด้วยตาทันที
+     ถ้าสองชั้นคิดคนละชุดใบ จะได้เลขไม่ตรงกันโดยไม่มีอะไรฟ้อง แล้วเลิกเชื่อทั้งหน้า
+     (หลักเดียวกับแถบข้อมูลย้อนแย้งกับรายการที่กางจากมัน) */
+  await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 3000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000, '2026-08-20'),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22'),
+    rec('r3', 'PO-A2|' + PN_A, 'inspection', 1500, '2026-08-21')
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  const num = s => Number(String(s).replace(/,/g, ''));
+  let qtySum = 0, inSum = 0, outSum = 0;
+  for(const r of await cmpOf(page, PN_A, 'TUE-U').locator('tr').all()){
+    const td = r.locator('td');
+    qtySum += num(await td.nth(2).innerText());
+    inSum  += num(await td.nth(3).innerText());
+    outSum += num(await td.nth(4).innerText());
+  }
+  expect(qtySum, 'PO qty. ของสองใบรวมกัน').toBe(8000);
+  expect(inSum, 'รับเข้ารวม').toBe(4500);
+  expect(outSum, 'ส่งออกรวม').toBe(1200);
+  expect(await cellOf(page, PN_A, 'TUE-U', 2), 'ต้องตรงกับช่องรับเข้าของแถวกลุ่ม').toBe('4,500');
+  expect(await cellOf(page, PN_A, 'TUE-U', 3), 'ต้องตรงกับช่องส่งออกของแถวกลุ่ม').toBe('1,200');
+});
+
+test('โหมดพิมพ์ต้องไม่มีลูกศรติดไปหน้าชื่อ P/N', async ({ page }) => {
+  /* บนกระดาษไม่มีอะไรให้กด ลูกศรจึงเป็นขยะที่ไปเกาะหน้าชื่อ P/N — ผู้ตรวจ #142 รอบ 3
+     รันวัดได้ว่าช่องนั้นมีลูกศรนำหน้าชื่อ P/N ขณะที่ก่อนใบนี้เป็นชื่อ P/N ล้วน
+     repo ตัดลูกศรของ .wtexp ทิ้งบนกระดาษอยู่แล้ว ข้อนี้คือกฎเดียวกันของหน้านี้
+     ⚠️ ต้องอ่านชื่อ P/N ว่ายังอยู่ด้วย ไม่ใช่วัดแค่ว่าไม่มีลูกศร — ซ่อนทั้งปุ่มก็ผ่านข้อนั้นได้
+        แล้วชื่อ P/N หายจากกระดาษเงียบ ๆ ซึ่งแย่กว่ามีลูกศรเกินมาก */
+  await open(page, [order('PO-A1', PN_A, 5000)]);
+  await page.emulateMedia({ media: 'print' });
+  const cell = await page.locator(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"] td`).first().innerText();
+  expect(cell, 'ลูกศรต้องไม่ติดไปบนกระดาษ').not.toContain('▶');
+  expect(cell, 'แต่ชื่อ P/N ต้องยังพิมพ์ติดครบ').toContain(PN_A);
+  await page.emulateMedia({ media: 'screen' });
+  expect(await page.locator(`#fgTable tr.fg-row[data-pn="${PN_A}"] .fg-caret`).first().isVisible(),
+    'บนจอต้องยังเห็นลูกศร — มันคือสิ่งเดียวที่บอกว่าแถวนี้กดได้').toBe(true);
+});
+test('โหมดพิมพ์: แถวที่กางต้องไม่พิมพ์ของที่กดไม่ได้ แต่เลขต้องติดครบ', async ({ page }) => {
+  /* ผู้ตรวจ #142 รอบ 4 เปิดดูกระดาษจริงแล้วเจอของที่กดไม่ได้อีกสองชิ้นในแถวที่กาง —
+     ลูกศรของ <details> หัวกล่องการเคลื่อนไหว และปุ่ม ✎ แก้ ในช่องของ Delta
+     🚨 ของที่ต้องไม่หายคือ "เลข" — ยอด Wip bal. อยู่ใน <td> เดียวกับปุ่ม ซ่อนทั้งช่องแล้ว
+        เลขที่คนอ่านกระดาษต้องเห็นหายไปด้วย ซึ่งแย่กว่ามีปุ่มเกินมาก (ข้อนี้จึงวัดสองทิศ)
+     ⚠️ ลูกศรของ <details> เป็น marker ของเบราว์เซอร์ ไม่ใช่ข้อความ อ่านจาก innerText ไม่เจอ
+        จึงวัดที่ `list-style-type` ซึ่งเป็นสิ่งที่ทำให้มันหาย — วัดถัดจากตัวจริงหนึ่งขั้น
+        แต่เป็นที่เดียวที่จับได้ด้วยโปรแกรม (ภาพหน้าจอเป็นของคนดู) */
+  await open(page, [order('PO-A1', PN_A, 5000)],
+    [rec('r1', 'PO-A1|' + PN_A, 'shipping', 1000, '2026-08-28')],
+    [deltaRow('PO-A1|' + PN_A, 35, 4000)]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+  await sub.locator('details.fg-moves summary').click();
+  await expect(sub.locator('.fg-dw-edit'),
+    'ฉากนี้ต้องมีปุ่มแก้จริง ไม่งั้นข้อที่วัดปุ่มแก้ไม่ได้ตรวจอะไร').toHaveCount(1);
+
+  await page.emulateMedia({ media: 'print' });
+  expect(await sub.locator('.fg-dw-edit').first().isVisible(),
+    'ปุ่ม ✎ แก้ ต้องไม่ติดกระดาษ').toBe(false);
+  expect(await sub.locator('table.fg-cmp tbody tr td').nth(7).innerText(),
+    'แต่ยอด Wip bal. ของ Delta ในช่องเดียวกันต้องยังพิมพ์ติด').toContain('4,000');
+  expect(await sub.locator('details.fg-moves > summary')
+      .evaluate(el=> getComputedStyle(el).listStyleType),
+    'marker ของ <details> ต้องถูกปิดตอนพิมพ์').toBe('none');
+  expect(await sub.locator('details.fg-moves > summary').innerText(),
+    'แต่หัวกล่องต้องยังพิมพ์ติด มันทำหน้าที่เป็นหัวข้อย่อยบนกระดาษ').toContain('การเคลื่อนไหวรายวัน');
+
+  await page.emulateMedia({ media: 'screen' });
+  expect(await sub.locator('.fg-dw-edit').first().isVisible(),
+    'บนจอต้องยังกดปุ่มแก้ได้').toBe(true);
+});
+test('G2 — วาดตารางใหม่ต้องไม่ลากตำแหน่งที่เลื่อนอ่านกลับ (preventScroll)', async ({ page }) => {
+  /* el.focus() เปล่า ๆ เลื่อนของที่โฟกัสเข้ามาในจอให้ด้วย และของที่ fgRefocus() คืนโฟกัส
+     อยู่ "ใน" .table-wrap ที่คนใช้เลื่อนอ่าน (กรอบ 70vh) → จอเด้งกลับไปที่แถวนั้นเอง
+     ผู้ตรวจ #142 รอบ 5 รันวัดได้ 874 → 274 (เด้งขึ้น 600px) กลางที่กำลังอ่าน
+     ทริกเกอร์เกิดจริงทุกวัน: renderAll() วาดใหม่ทุกครั้งที่รอบซิงค์ดึงแถวลงมา = ทุกครั้งที่
+     เครื่องอื่นคีย์ยอด ขณะที่หน้านี้คือหน้าที่คนนั่งเทียบกับไฟล์ Call In ทีละบรรทัด
+
+     🚨 ต้องวัด scrollTop — เทสข้อโฟกัสข้างบนวัดแค่ activeElement จึงเขียวทั้งก่อนและหลังแก้
+     🚨 และต้องวัด "โฟกัสยังอยู่" คู่กันไป ไม่งั้นถอดการคืนโฟกัสทิ้งก็ผ่านข้อนี้ได้
+        ซึ่งเป็นการแลกบั๊กหนึ่งกับอีกบั๊กหนึ่ง (ผู้ตรวจรอบ 1 ทักเรื่องโฟกัสตกมาก่อน)
+     ⚠️ ต้องมีกลุ่มมากพอให้กรอบเลื่อนได้จริง — 30 กลุ่มที่จอ 1024x700 (กรอบ 70vh ≈ 490px)
+        น้อยกว่านี้ตารางไม่ล้นกรอบ scrollTop เป็น 0 ทั้งก่อนและหลัง ด่านจะเขียวเอง */
+  await page.setViewportSize({ width: 1024, height: 700 });
+  const os = [], rs = [];
+  for(let i = 0; i < 30; i++){
+    const pn = '9100' + String(i).padStart(6, '0');
+    os.push(order('PO-' + i, pn, 5000));
+    rs.push(rec('r' + i, 'PO-' + i + '|' + pn, 'inspection', 3000, '2026-08-20'));
+    rs.push(rec('s' + i, 'PO-' + i + '|' + pn, 'shipping', 1000, '2026-08-21'));
+  }
+  await open(page, os, rs);
+
+  const wrap = () => page.evaluate(()=>
+    document.getElementById('fgTable').closest('.table-wrap').scrollTop);
+  const scrollTo = y => page.evaluate(y=>{
+    document.getElementById('fgTable').closest('.table-wrap').scrollTop = y;
+  }, y);
+  const active = () => page.evaluate(()=>{
+    const a = document.activeElement;
+    return a.tagName === 'SUMMARY' ? 'summary' : (a.className || a.tagName);
+  });
+
+  // ── ฉากที่ 1: กางกลุ่มกลางตาราง กดหัวกล่องการเคลื่อนไหว แล้วเลื่อนลงไปอ่านท้ายกล่อง
+  const pn10 = '9100' + String(10).padStart(6, '0');
+  await page.click(`#fgTable tr.fg-row[data-pn="${pn10}"][data-unit="TUE-U"]`);
+  await subOf(page, pn10, 'TUE-U').locator('details.fg-moves summary').click();
+  await scrollTo(700);
+  const before1 = await wrap();
+  expect(before1, 'กรอบต้องเลื่อนได้จริง ไม่งั้นข้อนี้ไม่ได้วัดอะไร').toBeGreaterThan(300);
+  await page.evaluate(()=> renderFg());
+  expect(await wrap(), 'ตำแหน่งที่เลื่อนอ่านต้องไม่ขยับ').toBe(before1);
+  expect(await active(), 'และโฟกัสต้องยังอยู่ที่หัวกล่องเดิม').toBe('summary');
+
+  // ── ฉากที่ 2: โฟกัสปุ่ม P/N ของแถวแรก แล้วเลื่อนไปท้ายตาราง (ของที่โฟกัสอยู่นอกจอไปแล้ว)
+  const pn0 = '9100' + String(0).padStart(6, '0');
+  await page.locator(`#fgTable tr.fg-row[data-pn="${pn0}"][data-unit="TUE-U"] .fg-pn`).focus();
+  await scrollTo(900);
+  const before2 = await wrap();
+  expect(before2, 'ต้องเลื่อนไปได้ไกลจริง').toBeGreaterThan(300);
+  await page.evaluate(()=> renderFg());
+  expect(await wrap(), 'ของที่โฟกัสอยู่นอกจอก็ต้องไม่ลากจอกลับไปหา').toBe(before2);
+  expect(await active(), 'โฟกัสยังอยู่ที่ปุ่ม P/N เดิม').toContain('fg-pn');
+});
+test('เนื้อในของแถวที่พับอยู่ต้องว่าง — ห้ามวาดไว้ล่วงหน้าแล้วซ่อน', async ({ page }) => {
+  /* fgMovesHtml() เรียก fgMoves() ซึ่งเดินผ่าน record ทั้งก้อนหนึ่งรอบ **ต่อกลุ่ม**
+     ของจริง 180 กลุ่ม × ~14,000 รายการ = จ่ายทุกครั้งที่รอบซิงค์ดึงแถวลงมา โดยไม่มีใครดู
+     fgToggle() จึงสร้างเนื้อในตอนกด และล้างทิ้งตอนพับ
+     ⚠️ กฎข้อนี้เคยเหลือแต่คอมเมนต์ใน fgSubRow() (ผู้ตรวจ #142 รอบ 3 ทัก) ซึ่ง CLAUDE.md
+        เตือนเองว่าเป็นกฎที่หลุดรอบถัดไป — หลักเดียวกับด่านตกกลับของ dayProcess
+     🚨 ต้องวัดความยาวของ innerHTML ห้ามใช้ toBeVisible() — ของที่วาดไว้แล้วซ่อนก็ไม่ visible
+        เหมือนกัน ด่านจะเขียวทั้งที่ราคายังจ่ายอยู่ ซึ่งเป็นสิ่งเดียวที่กฎข้อนี้มีไว้กัน
+     ⚠️ และต้องกางซ้ำรอบสอง — ล้างแล้วสร้างกลับมาไม่ได้ พังหนักกว่าจ่ายแรงเกิน */
+  await open(page, [order('PO-A1', PN_A, 5000)],
+    [rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000, '2026-08-20')]);
+  const row = `#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`;
+  // `> td` ไม่ใช่ `td` เฉย ๆ — ตารางราย PO ข้างในมี td ของตัวเองสิบกว่าช่อง (เจอตอนรันครั้งแรก)
+  const len = () => subOf(page, PN_A, 'TUE-U').locator(':scope > td').evaluate(el=> el.innerHTML.length);
+
+  expect(await len(), 'ตั้งแต่เปิดมายังไม่มีใครกด ต้องว่าง').toBe(0);
+  await page.click(row);
+  expect(await len(), 'กดแล้วต้องมีเนื้อในจริง ไม่งั้นข้อนี้วัดของว่างกับของว่าง').toBeGreaterThan(100);
+  await page.click(row);
+  expect(await len(), 'พับแล้วต้องล้างทิ้ง ไม่ใช่ซ่อนไว้').toBe(0);
+  await page.click(row);
+  expect(await len(), 'กางซ้ำต้องสร้างกลับมาได้').toBeGreaterThan(100);
+});
+test('การเคลื่อนไหวรายวันต้องบอก PO Date กับ PO qty. ของใบนั้น ๆ ด้วย', async ({ page }) => {
+  /* เจ้าของขอ 18 พ.ย. 2569 — ตารางราย PO ข้างบนมีสองคอลัมน์นี้แล้ว ตารางการเคลื่อนไหวยังไม่มี
+     คนที่ไล่ทีละบรรทัดเทียบกับไฟล์ Call In จึงต้องเลื่อนกลับขึ้นไปดูว่าใบนั้นสั่งเท่าไหร่
+     ⚠️ ฉากนี้ต้องมี **สองใบที่ `orderDate` และ `orderQty` ต่างกัน** และมี record คนละวัน
+        ไม่งั้นการหยิบค่าจากใบผิด (เช่นใบแรกเสมอ) จะให้ผลถูกพอดี แล้วเทสเขียวทั้งที่พัง
+     ⚠️ และต้องเรียงคอลัมน์เหมือนตารางราย PO (PO No. → PO Date → PO qty.) เพราะสองตาราง
+        อยู่ในแถวเดียวกัน คนกวาดตาลงมาต้องเจอของเดิมที่ตำแหน่งเดิม */
+  const osA = order('PO-A1', PN_A, 5000);
+  // ยอดสั่งเป็นสตริงโดยเจตนา — เครื่องที่ซิงค์มาได้ค่าแบบนี้ (กฎเดียวกับ synced-numeric)
+  const osB = Object.assign(order('PO-A2', PN_A, '1234567'), { orderDate: '2026-09-15' });
+  await open(page, [osA, osB], [
+    rec('r1', osA.id, 'inspection', 3000, '2026-08-20'),
+    rec('r2', osB.id, 'inspection', 1500, '2026-08-21'),
+    rec('r3', osA.id, 'shipping',   1200, '2026-08-22')
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+  await sub.locator('details.fg-moves summary').click();
+
+  const heads = await sub.locator('table.fg-mv thead th').allInnerTexts();
+  expect(heads.slice(0, 6), 'หัวตารางต้องเรียงเหมือนตารางราย PO').toEqual(
+    ['วันที่', 'PO No.', 'PO Date', 'PO qty.', 'รับเข้า', 'ส่งออก']);
+  /* 🚨 คอลัมน์สุดท้ายต้องบอกว่าเป็นยอดของ "ทั้งกลุ่ม" — ตารางราย PO ข้างบนมีคอลัมน์
+     `FG คงเหลือ` ซึ่งเป็นของใบเดียว ส่วนเลขนี้เป็นยอดวิ่งของทุกใบรวมกัน
+     แถวนี้มี `PO No.`/`PO qty.` กำกับอยู่ด้วย คนจึงอ่านว่าเป็นของใบนั้นได้ง่าย
+     แล้วสรุปว่า "ยอดไม่ตรง" ทั้งที่ทั้งคู่ถูก (ผู้ตรวจ #142 รอบ 10 รันวัดได้ 700 vs 1,200)
+     ⚠️ ต้องเป็นข้อความบนจอ ไม่ใช่ `title` — `title` ไม่ติดกระดาษและแป้นพิมพ์อ่านไม่ได้ */
+  expect(heads[6].replace(/\s+/g, ' ').trim(), 'หัวคอลัมน์สุดท้ายต้องกำกับว่าเป็นของทั้งกลุ่ม')
+    .toBe('คงเหลือ (ทั้งกลุ่ม)');
+
+  const rows = sub.locator('table.fg-mv tbody tr');
+  const cells = async i => (await rows.nth(i).locator('td').allInnerTexts()).map(s=> s.trim());
+  // เรียงตามวัน: 20 (A1 รับเข้า) · 21 (A2 รับเข้า) · 22 (A1 ส่งออก)
+  expect(await cells(0), 'แถวของ PO-A1').toEqual(
+    ['20/08/2026', 'PO-A1', '03/08/2026', '5,000', '3,000', '', '3,000']);
+  expect(await cells(1), 'แถวของ PO-A2 ต้องได้วันกับยอดของใบตัวเอง ไม่ใช่ของใบแรก').toEqual(
+    ['21/08/2026', 'PO-A2', '15/09/2026', '1,234,567', '1,500', '', '4,500']);
+  expect(await cells(2), 'แถวส่งออกของ PO-A1 ก็ต้องพก PO Date กับ PO qty. มาด้วย').toEqual(
+    ['22/08/2026', 'PO-A1', '03/08/2026', '5,000', '', '1,200', '3,300']);
+});
+test('ใบที่ไม่มีวันสั่ง — PO Date ต้องเป็นขีดชนิดเดียวกับช่องว่างอื่นในแถว', async ({ page }) => {
+  /* `fmtDateTH()` คืน `-` (hyphen) ส่วนช่องว่างอื่นของสองตารางนี้ใช้ `—` (em dash)
+     ปล่อยไว้แล้วแถวเดียวมีขีดสองชนิดคนละความยาว (ผู้ตรวจ #142 รอบ 7 ทัก)
+     ⚠️ ต้องวัดทั้งสองตาราง — `fgDate()` มีผู้เรียกสองที่ แก้ที่เดียวแล้วอีกที่ค้าง
+     ⚠️ และต้องเทียบกับขีดของช่อง `งวด` ในแถวเดียวกันจริง ๆ ไม่ใช่เทียบกับตัวอักษรที่เขียนในเทส
+        ไม่งั้นวันหนึ่งที่ช่องนั้นเปลี่ยนขีด เทสจะยังเขียวทั้งที่แถวกลับไปมีสองชนิด */
+  const o = Object.assign(order('PO-A1', PN_A, 5000), { orderDate: '' });
+  await open(page, [o], [rec('r1', o.id, 'inspection', 3000, '2026-08-20')]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+
+  const cmpTds = sub.locator('table.fg-cmp tbody tr').first().locator('td');
+  const weekDash = (await cmpTds.nth(8).innerText()).trim();   // ช่อง `งวด` ของใบที่ไม่มียอดของ Delta
+  expect(weekDash, 'ฉากนี้ต้องมีช่องว่างอื่นให้เทียบจริง').toBe('—');
+  expect((await cmpTds.nth(1).innerText()).trim(), 'PO Date ของตารางราย PO').toBe(weekDash);
+
+  await sub.locator('details.fg-moves summary').click();
+  const mvTds = sub.locator('table.fg-mv tbody tr').first().locator('td');
+  expect((await mvTds.nth(2).innerText()).trim(), 'PO Date ของตารางการเคลื่อนไหว').toBe(weekDash);
+});
+test('record ที่วันที่อ่านไม่ออก — ช่อง วันที่ ก็ต้องเป็นขีดชนิดเดียวกัน', async ({ page }) => {
+  /* ช่อง `วันที่` อยู่ติดกับ `PO Date` ในแถวเดียวกัน · แก้แต่ `PO Date` แล้วอาการเดิม
+     (ขีดสองชนิดคนละความยาวในแถวเดียว) ย้ายไปอยู่คอลัมน์ข้าง ๆ (ผู้ตรวจ #142 รอบ 8 รันเจอ
+     ได้แถว ["-","PO-A1","—","5,000"])
+     ⚠️ เกิดได้เฉพาะเมื่อ `record.date` เพี้ยน (ทางชีต หรือรวมข้อมูลจากไฟล์ — ทางเดียวกับที่
+        `escape-date.spec.js` จำลอง) ข้อมูลที่คีย์เองช่องนี้ไม่เคยว่าง
+     ⚠️ ต้องเป็นสตริงที่ `split('-')` ไม่ได้สามชิ้น ไม่งั้น `fmtDateTH()` คืนค่าที่ประกอบได้
+        แล้วไม่มีขีดให้วัด (ลองแล้ว) */
+  const o = order('PO-A1', PN_A, 5000);
+  await open(page, [o], [rec('r1', o.id, 'inspection', 3000, 'ไม่ใช่วันที่')]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+  await sub.locator('details.fg-moves summary').click();
+
+  const tds = sub.locator('table.fg-mv tbody tr').first().locator('td');
+  const poDate = (await tds.nth(2).innerText()).trim();
+  expect(poDate, 'ฉากนี้ PO Date ต้องมีวันจริง ไม่งั้นไม่ได้เทียบสองชนิด').toBe('03/08/2026');
+  expect((await tds.nth(0).innerText()).trim(), 'ช่องวันที่ต้องเป็น em dash ไม่ใช่ hyphen').toBe('—');
+});
+test('ลากเลือกตัวเลขบนแถวกลุ่ม — แถวที่กางอยู่ต้องไม่หุบ', async ({ page }) => {
+  /* เบราว์เซอร์ยิง `click` ให้การลากเมาส์ด้วย และตัวจับผูกไว้ทั้งแถว
+     หน้านี้คือหน้าที่คนก๊อปเลขไปเทียบกับไฟล์ Call In ของ Delta ทีละบรรทัด
+     ลากคลุมเลขแล้วแถวที่กางอยู่หุบทิ้งทันที = เสียของที่เพิ่งกางกลางที่กำลังอ่าน
+     (ผู้ตรวจ #142 รอบ 11 รันวัด · เป็นของใหม่จากใบนี้ ตัวจับเดิมเรียก renderFgCard() ซึ่งกดซ้ำได้)
+     ⚠️ ต้องลากด้วยเมาส์จริง (down → move → up) ไม่ใช่ setSelection ด้วยสคริปต์
+        ทางสคริปต์ไม่ยิง click จึงไม่มีอะไรให้ด่านกัน
+     ⚠️ และต้องวัดว่าได้ข้อความที่เลือกจริง — ลากไม่ติดแล้วด่านจะเขียวเพราะไม่มี selection
+        ไม่ใช่เพราะโค้ดถูก */
+  await open(page, [order('PO-A1', PN_A, 5000)],
+    [rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000, '2026-08-20')]);
+  const row = page.locator(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  await row.click();
+  await expect(subOf(page, PN_A, 'TUE-U'), 'ต้องกางได้ก่อน').toBeVisible();
+
+  // ลากคลุมเลขในช่อง FG คงเหลือ ของแถวกลุ่ม
+  const cell = row.locator('td').nth(4);
+  const b = await cell.boundingBox();
+  await page.mouse.move(b.x + 4, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width - 4, b.y + b.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  expect((await page.evaluate(()=> document.getSelection().toString())).trim(),
+    'ต้องลากเลือกได้จริง ไม่งั้นด่านนี้ไม่ได้ตรวจอะไร').not.toBe('');
+  await expect(subOf(page, PN_A, 'TUE-U'), 'แถวที่กางไว้ต้องยังกางอยู่').toBeVisible();
+
+  /* 🚨 แต่ด่านนั้นต้องไม่กันคลิกที่มาจากแป้นพิมพ์ — `Enter`/`Space` บนปุ่มก็ยิง `click` เหมือนกัน
+     แต่ `ev.detail === 0` · คนที่กด Ctrl+A ไว้ (หรือมี selection ค้างอยู่จากเหตุใดก็ตาม)
+     ต้องยังกางแถวด้วยแป้นพิมพ์ได้ ไม่ใช่ติดล็อกจนกว่าจะคลิกที่อื่น (G2 · ผู้ตรวจ #142 รอบ 12)
+     ⚠️ ต้องเลือกข้อความให้ค้างไว้จริงก่อนกด ไม่งั้นด่านไม่เคยถูกเรียก เทสจะเขียวเอง */
+  await page.locator(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"] .fg-pn`).focus();
+  await page.keyboard.press('Control+a');
+  expect(await page.evaluate(()=> document.getSelection().isCollapsed),
+    'ต้องมี selection ค้างอยู่จริง ไม่งั้นด่านไม่เคยถูกเรียก').toBe(false);
+  await page.keyboard.press('Enter');
+  await expect(subOf(page, PN_A, 'TUE-U'), 'กด Enter ต้องพับได้ แม้มี selection ค้าง').toBeHidden();
+  await page.keyboard.press('Enter');
+  await expect(subOf(page, PN_A, 'TUE-U'), 'และกางกลับได้').toBeVisible();
+});
+
+test('การเคลื่อนไหววันเดียวกันหลายใบ ต้องเรียงด้วย PO ไม่ใช่ตามลำดับในอาร์เรย์', async ({ page }) => {
+  /* ตัวเทียบเดิม (`a.kind==='inspection' ? -1 : 1`) คืน −1 ทั้งสองทิศเมื่อวันกับขั้นเท่ากัน
+     = ไม่สอดคล้องกันเอง ลำดับจึงขึ้นกับอัลกอริทึมของ V8 · ผู้ตรวจ #142 รอบ 11 รันวัดได้ **กลับทาง**
+     ⚠️ เครื่องที่นำเข้าไฟล์เองกับเครื่องที่ซิงค์มาได้ลำดับในอาร์เรย์คนละแบบ สองคนเปิดเทียบกัน
+        จะไล่บรรทัดตรงกันไม่ได้ (กฎเดียวกับรายการใบย้อนแย้งและหน้ายอดรายวันทุกขั้น)
+     ⚠️ ต้องใส่ record แบบ **สลับลำดับ** โดยเจตนา ถ้าใส่เรียงตาม PO มาแล้วจะเขียวเองทั้งที่ไม่มีชั้นที่สาม
+     ⚠️ และ PO ต้องเป็นเลขล้วนหนึ่งใบ — ค่าที่ซิงค์มาเป็น `number` ได้ แล้ว `localeCompare` ตรง ๆ
+        จะ throw ทำให้ทั้งตารางไม่ขึ้น (กฎ cmpText) */
+  // 300 เป็น **ตัวเลขจริง** ไม่ใช่สตริง — เครื่องที่ซิงค์มาได้ค่าแบบนี้ และตัวเลขไม่มี localeCompare
+  const os = [300, 'PO-A2', 'PO-A1'].map(no => order(no, PN_A, 5000));
+  await open(page, os, [
+    rec('r3', 'PO-A1|' + PN_A, 'inspection', 300, '2026-08-20'),
+    rec('r1', '300|' + PN_A,   'inspection', 100, '2026-08-20'),
+    rec('r2', 'PO-A2|' + PN_A, 'inspection', 200, '2026-08-20')
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+  await sub.locator('details.fg-moves summary').click();
+
+  const rows = sub.locator('table.fg-mv tbody tr');
+  const po = async i => (await rows.nth(i).locator('td').nth(1).innerText()).trim();
+  expect([await po(0), await po(1), await po(2)], 'เรียงตามรหัส PO').toEqual(['300', 'PO-A1', 'PO-A2']);
+  // ยอดวิ่งต้องยังบวกครบทุกรายการ ไม่ว่าจะเรียงอย่างไร
+  expect((await rows.nth(2).locator('td').nth(6).innerText()).trim(), 'ยอดวิ่งตัวสุดท้าย').toBe('600');
+});
+test('กางแถวค้างไว้แล้วหน้าวาดใหม่ ต้องไม่หุบเอง', async ({ page }) => {
+  /* renderAll() วาดหน้านี้ใหม่ทุกครั้งที่รอบซิงค์ดึงแถวลงมา ถ้าเปิดแท็บนี้ค้างไว้ — ไม่จำสถานะการกางไว้
+     แถวที่คนเพิ่งกางจะหุบเองกลางที่กำลังอ่าน และโฟกัสตกไป BODY (G2)
+     ข้อนี้ยิงผ่านช่องค้นหา ซึ่งเรียก renderFg() ตัวเดียวกับที่ซิงค์เรียก */
+  await open(page, [order('PO-A1', PN_A, 5000)]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  await subOf(page, PN_A, 'TUE-U').locator('details.fg-moves summary').click();
+
+  await page.fill('#fgSearch', PN_A.slice(0, 4));
+  await page.waitForTimeout(150);
+  await expect(subOf(page, PN_A, 'TUE-U'), 'แถวที่กางไว้ต้องยังกางอยู่').toBeVisible();
+  await expect(subOf(page, PN_A, 'TUE-U').locator('details.fg-moves'),
+    'กล่องการเคลื่อนไหวที่เพิ่งเปิดก็ต้องไม่หุบตาม').toHaveAttribute('open', '');
+});
+test('กางแถวค้างไว้แล้วหน้าวาดใหม่ โฟกัสต้องไม่ตกไป BODY (G2)', async ({ page }) => {
+  /* ของที่กดได้ในตารางนี้มีสามชิ้น และทั้งสามอยู่ใน #fgTable ซึ่งถูกเขียนทับทั้งก้อนทุกรอบซิงค์
+     ปุ่ม ✎ แก้ เคยอยู่ในการ์ดที่ renderAll() ไม่เคยวาดใหม่ โฟกัสจึงรอด — ย้ายเข้าตารางแล้วไม่รอด
+     (ผู้ตรวจ #142 วัดได้ BODY ทั้งปุ่มแก้และหัวกล่องการเคลื่อนไหว)
+     🚨 ต้องเรียก renderFg() ตรง ๆ ห้ามยิงผ่านช่องค้นหาเหมือนข้อข้างบน — การพิมพ์ลงช่องนั้น
+        ย้ายโฟกัสไปที่ช่องค้นหาเอง ด่านจึงไม่มีฟันเลย · รอบซิงค์ของจริงวาดใหม่โดยไม่แตะโฟกัสใคร */
+  await open(page, [order('PO-A1', PN_A, 5000)],
+    [rec('r1', 'PO-A1|' + PN_A, 'shipping', 1000, '2026-08-28')],
+    [deltaRow('PO-A1|' + PN_A, 35, 4000)]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+  await sub.locator('details.fg-moves summary').click();
+  await expect(sub.locator('.fg-dw-edit'),
+    'ฉากนี้ต้องมีปุ่มแก้จริง ไม่งั้นข้อที่วัดปุ่มแก้ไม่ได้ตรวจอะไร').toHaveCount(1);
+
+  /** โฟกัสของในแถวที่กาง แล้วให้หน้าวาดใหม่ แล้วบอกว่าโฟกัสไปอยู่ที่อะไร */
+  const after = async sel => {
+    await sub.locator(sel).focus();
+    await page.evaluate(()=> renderFg());
+    return page.evaluate(()=> {
+      const a = document.activeElement;
+      return a.tagName === 'SUMMARY' ? 'summary' : (a.className || a.tagName);
+    });
+  };
+
+  expect(await after('details.fg-moves summary'), 'หัวกล่องการเคลื่อนไหว').toBe('summary');
+  expect(await after('.fg-dw-edit'), 'ปุ่ม ✎ แก้').toContain('fg-dw-edit');
+
+  // ปุ่ม P/N อยู่บนแถวของกลุ่ม ไม่ได้อยู่ในแถวที่กาง — ของเดิม ตรึงไว้ไม่ให้หลุดตอนแก้
+  await page.locator(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"] .fg-pn`).focus();
+  await page.evaluate(()=> renderFg());
+  expect(await page.evaluate(()=> document.activeElement.className), 'ปุ่ม P/N').toContain('fg-pn');
+});
+test('กางแถวแล้วต้องไม่ดันตารางของกลุ่มให้กว้างขึ้น (จอ 819)', async ({ page }) => {
+  /* 819 CSS px = จอ 1024 ซูม 125% ซึ่งเครื่องหน้างานตั้งจริง · ตารางกลุ่มพอดีขอบอยู่แล้ว
+     ตารางราย PO กว้างกว่านั้น ถ้าไม่รัดไว้มันจะดันตารางกลุ่มให้ล้น แล้วคอลัมน์ `ต่าง`
+     ของแถวที่กำลังอ่านเลยขอบไปตอนกาง (ผู้ตรวจ #142 วัดได้ 761 vs 737)
+     ที่รัดไว้คือ `#fgTable tr.fg-sub > td{max-width:0}` ตารางราย PO จึงเลื่อนในแถวตัวเองแทน
+     ⚠️ ต้องตั้งจอให้แคบจริง — ที่จอกว้าง (วัดที่ 1400) ไม่มีการล้นให้จับ ด่านจะเขียวเอง
+     ⚠️ และต้องใช้ข้อมูลยาวแบบของจริง (P/N มีท้าย -REV-C · ยอดเจ็ดหลัก · มีปุ่มแก้ของ Delta) */
+  await page.setViewportSize({ width: 819, height: 900 });
+  const PN = PN_A + '-REV-C';
+  const os = ['TM5267H012', 'TM5267H013', 'TM5267H014'].map(no =>
+    Object.assign(order(no, PN, 1234567), { id: no + '|' + PN }));
+  const rs = [], dws = [];
+  os.forEach((o, i) => {
+    rs.push(rec('i' + i, o.id, 'inspection', 1200000 + i, '2026-08-20'));
+    // ⚠️ ส่งต้องมากกว่าที่ Delta นับส่งแล้ว (ยอดสั่ง − Wip bal.) ช่องของ Delta จึงมีบรรทัด
+    //    "ไฟล์ … − Delta ยังไม่นับ …" ติดมา ซึ่งเป็นตัวที่ทำให้ตารางราย PO กว้างจริงแบบของจริง
+    //    ไม่มีบรรทัดนั้นแล้วตารางพอดีขอบเอง ด่านนี้จะเขียวทั้งที่ถอด max-width:0 ออก (ลองแล้ว)
+    rs.push(rec('s' + i, o.id, 'shipping', 500000 + i, '2026-08-22'));
+    dws.push(deltaRow(o.id, 35, 900000));
+  });
+  await open(page, os, rs, dws);
+
+  const width = () => page.evaluate(()=> {
+    const w = document.getElementById('fgTable').closest('.table-wrap');
+    return {scroll: w.scrollWidth, client: w.clientWidth};
+  });
+  const before = await width();
+  expect(before.scroll, 'ก่อนกางต้องพอดีขอบ ไม่งั้นข้อนี้วัดของอื่นอยู่').toBe(before.client);
+
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN}"][data-unit="TUE-U"]`);
+  await expect(subOf(page, PN, 'TUE-U').locator('.fg-dw-edit'), 'ฉากนี้ต้องมีปุ่มแก้จริง').toHaveCount(3);
+  const after = await width();
+  expect(after.scroll, 'กางแล้วตารางกลุ่มต้องไม่กว้างขึ้น').toBe(before.scroll);
 });
 
 /* ── ใบที่ยกเลิกแล้วต้องไม่ถูกนับในหน้า FG ────────────────────────────
@@ -250,12 +650,12 @@ test('ใบที่ยกเลิกแล้ว ต้องไม่โผ�
   expect(units, 'ส่วนหน่วยที่ยังมีใบใช้งานอยู่ ต้องยังอยู่').toContain('TUE-U');
 });
 
-test('การ์ดต้องเทียบราย PO และบอกว่ายอดของ Delta มาจากงวดไหน', async ({ page }) => {
+test('แถวที่กางต้องเทียบราย PO และบอกว่ายอดของ Delta มาจากงวดไหน', async ({ page }) => {
   await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 5000)], [],
                    [deltaRow('PO-A1|' + PN_A, 34, 5000)]);
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
 
-  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
   expect(cmp, 'ต้องบอกงวดของไฟล์ เพราะ Delta ถามย้อนหลังเป็นราย PO').toContain('wk34');
   expect(cmp, 'ใบที่ Delta ไม่มีข้อมูล ต้องบอกตรง ๆ ว่าไม่มี ไม่ใช่โชว์ 0').toContain('ไม่มี');
 });
@@ -280,8 +680,8 @@ test('ยอดค้างของ Delta นับเฉพาะงวดล�
     .toContain('ตรงกันทุกใบ');
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  const cmp = await page.locator('#fgCardCmp tbody').innerText();
-  expect(cmp, 'การ์ดต้องไม่อ้างยอดของงวดเก่า').not.toContain('wk34');
+  const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
+  expect(cmp, 'ตารางราย PO ต้องไม่อ้างยอดของงวดเก่า').not.toContain('wk34');
 });
 
 /* ── หน้า FG หักยอดที่เราส่งแล้วแต่ Delta ยังไม่นับ (เจ้าของเลือก 15 ก.ย. 2026) ─────────────
@@ -301,8 +701,8 @@ test('Delta ยังไม่นับยอดส่งเลย — ยอด
   expect(await rowOf(page, PN_A, 'TUE-U'), 'หักแล้วตรงกันพอดี').toContain('ตรงกันทุกใบ');
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  const cmp = await page.locator('#fgCardCmp tbody').innerText();
-  expect(cmp, 'การ์ดบอกยอดในไฟล์').toContain('ไฟล์ 6,000');
+  const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
+  expect(cmp, 'ตารางราย PO บอกยอดในไฟล์').toContain('ไฟล์ 6,000');
   expect(cmp, 'และบอกว่าหักส่วนที่ Delta ยังไม่นับไปเท่าไหร่').toContain('Delta ยังไม่นับ 3,500');
 });
 
@@ -318,7 +718,7 @@ test('Delta นับยอดส่งไปแล้วบางส่วน �
     .toBe('2,000');
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  expect(await page.locator('#fgCardCmp tbody').innerText()).toContain('Delta ยังไม่นับ 1,000');
+  expect(await cmpOf(page, PN_A, 'TUE-U').innerText()).toContain('Delta ยังไม่นับ 1,000');
 });
 
 test('Delta นับยอดส่งมากกว่าที่เราคีย์ — ไม่หักอะไร และยังต้องเห็นว่าต่าง เพราะเราอาจลืมคีย์ยอดส่ง', async ({ page }) => {
@@ -332,7 +732,7 @@ test('Delta นับยอดส่งมากกว่าที่เรา�
   expect(await rowOf(page, PN_A, 'TUE-U'), 'สัญญาณว่าเราอาจลืมคีย์ยอดส่ง ต้องยังอยู่').toContain('+1,000');
 
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  expect(await page.locator('#fgCardCmp tbody').innerText(), 'ไม่มีอะไรให้หัก').not.toContain('ยังไม่นับ');
+  expect(await cmpOf(page, PN_A, 'TUE-U').innerText(), 'ไม่มีอะไรให้หัก').not.toContain('ยังไม่นับ');
 });
 
 test('ยอดที่แก้มือเป็นฐานของหน้า FG — แล้วค่อยหักส่วนที่ Delta ยังไม่นับ (เจ้าของสั่ง 15 ก.ย. 2026)', async ({ page }) => {
@@ -345,9 +745,9 @@ test('ยอดที่แก้มือเป็นฐานของหน�
 
   expect(await cellOf(page, PN_A, 'TUE-U', 6), 'ค้างส่ง (Delta) = แก้มือ 3,000 − ยังไม่นับ 500').toBe('2,500');
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
-  const cmp = await page.locator('#fgCardCmp tbody').innerText();
+  const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
   expect(cmp, 'ต้องบอกว่าฐานมาจากการแก้มือ ไม่ใช่จากไฟล์').toContain('แก้มือ 3,000 − Delta ยังไม่นับ 500');
-  await expect(page.locator('#fgCardCmp .fg-dw-edit'), 'การ์ดต้องมีปุ่มแก้').toHaveCount(1);
+  await expect(subOf(page, PN_A, 'TUE-U').locator('.fg-dw-edit'), 'แถวที่กางต้องมีปุ่มแก้').toHaveCount(1);
 });
 
 /** อ่านค่าในช่องหนึ่งของแถว — เจาะจงกว่าการดูข้อความทั้งแถว

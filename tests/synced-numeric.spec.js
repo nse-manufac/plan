@@ -116,7 +116,8 @@ test('หน้ายอดคงคลัง FG — ต้องจัดกล
   await openTab(page, 'fg');
   expect(errs).toEqual([]);
   // สามใบคนละ P/N หน่วยเดียวกัน -> สามกลุ่ม และตัวเรียงต้องไหลลงไปถึงชั้น P/N
-  await expect(page.locator('#fgTable tbody tr')).toHaveCount(3);
+  // ⚠️ นับเฉพาะ tr.fg-row — ทุกกลุ่มมีแถวที่กางรายการ PO (tr.fg-sub) ซ่อนอยู่ใต้มันอีกแถว
+  await expect(page.locator('#fgTable tbody tr.fg-row')).toHaveCount(3);
 });
 
 test('หน้าใบส่งสินค้า — ต้องขึ้นกลุ่มได้แม้ค่าเป็นตัวเลข', async ({ page }) => {
