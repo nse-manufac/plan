@@ -1483,7 +1483,16 @@ function fgMoves(pn, unit){
       return { date:r.date, po:(o && o.poNo) || '', poDate:(o && o.orderDate) || '',
         poQty:Number(o && o.orderQty)||0, kind:r.process, qty:Number(r.qty)||0 };
     })
-    .sort((a,b)=> a.date.localeCompare(b.date) || (a.kind==='inspection'? -1 : 1));
+    /* รับเข้าก่อนส่งออกในวันเดียวกัน — ยอดวิ่งจึงไม่ติดลบกลางวัน
+       🚨 ต้องมีชั้นที่สาม (`cmpText(a.po, b.po)`) ไม่งั้นตัวเทียบ **ไม่สอดคล้องกันเอง**
+          วันเท่ากันและขั้นเท่ากันจะคืน −1 ทั้งสองทิศ → ลำดับขึ้นกับอัลกอริทึมของ V8 ไม่ใช่ขึ้นกับข้อมูล
+          ผู้ตรวจ #142 รอบ 11 รันวัด: ใส่ `rA 100 · rB 200 · rC 300` วันเดียวกัน จอขึ้น **กลับทาง**
+       ⚠️ เครื่องที่นำเข้าไฟล์เองกับเครื่องที่ซิงค์มาได้ลำดับในอาร์เรย์คนละแบบ สองคนเปิดเทียบกัน
+          จะไล่บรรทัดตรงกันไม่ได้ (กฎเดียวกับรายการใบย้อนแย้งและหน้ายอดรายวันทุกขั้น)
+       ⚠️ ต้องเป็น `cmpText` ไม่ใช่ `localeCompare` ตรง ๆ — รหัส PO ที่เป็นเลขล้วนซิงค์มาเป็น `number` ได้
+          แล้วตัวเลขไม่มีเมธอดนั้น จะ throw กลางการวาดจอ (ทั้งตารางไม่ขึ้นเลย) */
+    .sort((a,b)=> a.date.localeCompare(b.date)
+      || (a.kind === b.kind ? cmpText(a.po, b.po) : (a.kind === 'inspection' ? -1 : 1)));
 
   let bal = 0;
   moves.forEach(m=>{ bal += (m.kind==='inspection' ? m.qty : -m.qty); m.balance = bal; });
@@ -2906,7 +2915,16 @@ function renderFg(){
     ` · กดที่แถวเพื่อดูใบสั่งของ P/N นั้น`;
 
   document.querySelectorAll('#fgTable tr.fg-row').forEach(tr=>{
-    tr.addEventListener('click', ()=> fgToggle(tr.dataset.pn, tr.dataset.unit));
+    tr.addEventListener('click', ()=>{
+      /* 🚨 ลากเลือกตัวเลขบนแถวต้องไม่พลิกแถว — เบราว์เซอร์ยิง `click` ให้การลากด้วย
+         หน้านี้คือหน้าที่คนก๊อปเลขไปเทียบกับไฟล์ Call In ของ Delta ทีละบรรทัด
+         ลากคลุมเลขแล้วแถวที่กางอยู่หุบทิ้งทันที (ผู้ตรวจ #142 รอบ 11 รันวัด)
+         ⚠️ เป็นของใหม่จากใบนี้ — ตัวจับเดิมเรียก `renderFgCard()` ซึ่งกดซ้ำได้ไม่เปลี่ยนอะไร
+            ตัวนี้สลับกาง/พับ จึงเสียของที่คนกางไว้
+         ⚠️ ไม่ย้ายตัวจับไปที่ปุ่ม `.fg-pn` อย่างเดียว เพราะ `#fgSummary` เขียนชวนว่า "กดที่แถว" */
+      if(!document.getSelection().isCollapsed) return;
+      fgToggle(tr.dataset.pn, tr.dataset.unit);
+    });
   });
   document.querySelectorAll('#fgTable tr.fg-sub').forEach(sub=>{ if(!sub.hidden) fgBindSub(sub); });
 

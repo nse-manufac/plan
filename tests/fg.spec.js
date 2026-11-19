@@ -466,6 +466,58 @@ test('record ที่วันที่อ่านไม่ออก — ช�
   expect(poDate, 'ฉากนี้ PO Date ต้องมีวันจริง ไม่งั้นไม่ได้เทียบสองชนิด').toBe('03/08/2026');
   expect((await tds.nth(0).innerText()).trim(), 'ช่องวันที่ต้องเป็น em dash ไม่ใช่ hyphen').toBe('—');
 });
+test('ลากเลือกตัวเลขบนแถวกลุ่ม — แถวที่กางอยู่ต้องไม่หุบ', async ({ page }) => {
+  /* เบราว์เซอร์ยิง `click` ให้การลากเมาส์ด้วย และตัวจับผูกไว้ทั้งแถว
+     หน้านี้คือหน้าที่คนก๊อปเลขไปเทียบกับไฟล์ Call In ของ Delta ทีละบรรทัด
+     ลากคลุมเลขแล้วแถวที่กางอยู่หุบทิ้งทันที = เสียของที่เพิ่งกางกลางที่กำลังอ่าน
+     (ผู้ตรวจ #142 รอบ 11 รันวัด · เป็นของใหม่จากใบนี้ ตัวจับเดิมเรียก renderFgCard() ซึ่งกดซ้ำได้)
+     ⚠️ ต้องลากด้วยเมาส์จริง (down → move → up) ไม่ใช่ setSelection ด้วยสคริปต์
+        ทางสคริปต์ไม่ยิง click จึงไม่มีอะไรให้ด่านกัน
+     ⚠️ และต้องวัดว่าได้ข้อความที่เลือกจริง — ลากไม่ติดแล้วด่านจะเขียวเพราะไม่มี selection
+        ไม่ใช่เพราะโค้ดถูก */
+  await open(page, [order('PO-A1', PN_A, 5000)],
+    [rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000, '2026-08-20')]);
+  const row = page.locator(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  await row.click();
+  await expect(subOf(page, PN_A, 'TUE-U'), 'ต้องกางได้ก่อน').toBeVisible();
+
+  // ลากคลุมเลขในช่อง FG คงเหลือ ของแถวกลุ่ม
+  const cell = row.locator('td').nth(4);
+  const b = await cell.boundingBox();
+  await page.mouse.move(b.x + 4, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width - 4, b.y + b.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  expect((await page.evaluate(()=> document.getSelection().toString())).trim(),
+    'ต้องลากเลือกได้จริง ไม่งั้นด่านนี้ไม่ได้ตรวจอะไร').not.toBe('');
+  await expect(subOf(page, PN_A, 'TUE-U'), 'แถวที่กางไว้ต้องยังกางอยู่').toBeVisible();
+});
+
+test('การเคลื่อนไหววันเดียวกันหลายใบ ต้องเรียงด้วย PO ไม่ใช่ตามลำดับในอาร์เรย์', async ({ page }) => {
+  /* ตัวเทียบเดิม (`a.kind==='inspection' ? -1 : 1`) คืน −1 ทั้งสองทิศเมื่อวันกับขั้นเท่ากัน
+     = ไม่สอดคล้องกันเอง ลำดับจึงขึ้นกับอัลกอริทึมของ V8 · ผู้ตรวจ #142 รอบ 11 รันวัดได้ **กลับทาง**
+     ⚠️ เครื่องที่นำเข้าไฟล์เองกับเครื่องที่ซิงค์มาได้ลำดับในอาร์เรย์คนละแบบ สองคนเปิดเทียบกัน
+        จะไล่บรรทัดตรงกันไม่ได้ (กฎเดียวกับรายการใบย้อนแย้งและหน้ายอดรายวันทุกขั้น)
+     ⚠️ ต้องใส่ record แบบ **สลับลำดับ** โดยเจตนา ถ้าใส่เรียงตาม PO มาแล้วจะเขียวเองทั้งที่ไม่มีชั้นที่สาม
+     ⚠️ และ PO ต้องเป็นเลขล้วนหนึ่งใบ — ค่าที่ซิงค์มาเป็น `number` ได้ แล้ว `localeCompare` ตรง ๆ
+        จะ throw ทำให้ทั้งตารางไม่ขึ้น (กฎ cmpText) */
+  const os = ['300', 'PO-A2', 'PO-A1'].map(no => order(no, PN_A, 5000));
+  await open(page, os, [
+    rec('r3', 'PO-A1|' + PN_A, 'inspection', 300, '2026-08-20'),
+    rec('r1', '300|' + PN_A,   'inspection', 100, '2026-08-20'),
+    rec('r2', 'PO-A2|' + PN_A, 'inspection', 200, '2026-08-20')
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const sub = subOf(page, PN_A, 'TUE-U');
+  await sub.locator('details.fg-moves summary').click();
+
+  const rows = sub.locator('table.fg-mv tbody tr');
+  const po = async i => (await rows.nth(i).locator('td').nth(1).innerText()).trim();
+  expect([await po(0), await po(1), await po(2)], 'เรียงตามรหัส PO').toEqual(['300', 'PO-A1', 'PO-A2']);
+  // ยอดวิ่งต้องยังบวกครบทุกรายการ ไม่ว่าจะเรียงอย่างไร
+  expect((await rows.nth(2).locator('td').nth(6).innerText()).trim(), 'ยอดวิ่งตัวสุดท้าย').toBe('600');
+});
 test('กางแถวค้างไว้แล้วหน้าวาดใหม่ ต้องไม่หุบเอง', async ({ page }) => {
   /* renderAll() วาดหน้านี้ใหม่ทุกครั้งที่รอบซิงค์ดึงแถวลงมา ถ้าเปิดแท็บนี้ค้างไว้ — ไม่จำสถานะการกางไว้
      แถวที่คนเพิ่งกางจะหุบเองกลางที่กำลังอ่าน และโฟกัสตกไป BODY (G2)
