@@ -492,6 +492,19 @@ test('ลากเลือกตัวเลขบนแถวกลุ่ม �
   expect((await page.evaluate(()=> document.getSelection().toString())).trim(),
     'ต้องลากเลือกได้จริง ไม่งั้นด่านนี้ไม่ได้ตรวจอะไร').not.toBe('');
   await expect(subOf(page, PN_A, 'TUE-U'), 'แถวที่กางไว้ต้องยังกางอยู่').toBeVisible();
+
+  /* 🚨 แต่ด่านนั้นต้องไม่กันคลิกที่มาจากแป้นพิมพ์ — `Enter`/`Space` บนปุ่มก็ยิง `click` เหมือนกัน
+     แต่ `ev.detail === 0` · คนที่กด Ctrl+A ไว้ (หรือมี selection ค้างอยู่จากเหตุใดก็ตาม)
+     ต้องยังกางแถวด้วยแป้นพิมพ์ได้ ไม่ใช่ติดล็อกจนกว่าจะคลิกที่อื่น (G2 · ผู้ตรวจ #142 รอบ 12)
+     ⚠️ ต้องเลือกข้อความให้ค้างไว้จริงก่อนกด ไม่งั้นด่านไม่เคยถูกเรียก เทสจะเขียวเอง */
+  await page.locator(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"] .fg-pn`).focus();
+  await page.keyboard.press('Control+a');
+  expect(await page.evaluate(()=> document.getSelection().isCollapsed),
+    'ต้องมี selection ค้างอยู่จริง ไม่งั้นด่านไม่เคยถูกเรียก').toBe(false);
+  await page.keyboard.press('Enter');
+  await expect(subOf(page, PN_A, 'TUE-U'), 'กด Enter ต้องพับได้ แม้มี selection ค้าง').toBeHidden();
+  await page.keyboard.press('Enter');
+  await expect(subOf(page, PN_A, 'TUE-U'), 'และกางกลับได้').toBeVisible();
 });
 
 test('การเคลื่อนไหววันเดียวกันหลายใบ ต้องเรียงด้วย PO ไม่ใช่ตามลำดับในอาร์เรย์', async ({ page }) => {
@@ -502,7 +515,8 @@ test('การเคลื่อนไหววันเดียวกัน�
      ⚠️ ต้องใส่ record แบบ **สลับลำดับ** โดยเจตนา ถ้าใส่เรียงตาม PO มาแล้วจะเขียวเองทั้งที่ไม่มีชั้นที่สาม
      ⚠️ และ PO ต้องเป็นเลขล้วนหนึ่งใบ — ค่าที่ซิงค์มาเป็น `number` ได้ แล้ว `localeCompare` ตรง ๆ
         จะ throw ทำให้ทั้งตารางไม่ขึ้น (กฎ cmpText) */
-  const os = ['300', 'PO-A2', 'PO-A1'].map(no => order(no, PN_A, 5000));
+  // 300 เป็น **ตัวเลขจริง** ไม่ใช่สตริง — เครื่องที่ซิงค์มาได้ค่าแบบนี้ และตัวเลขไม่มี localeCompare
+  const os = [300, 'PO-A2', 'PO-A1'].map(no => order(no, PN_A, 5000));
   await open(page, os, [
     rec('r3', 'PO-A1|' + PN_A, 'inspection', 300, '2026-08-20'),
     rec('r1', '300|' + PN_A,   'inspection', 100, '2026-08-20'),

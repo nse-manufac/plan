@@ -2915,14 +2915,17 @@ function renderFg(){
     ` · กดที่แถวเพื่อดูใบสั่งของ P/N นั้น`;
 
   document.querySelectorAll('#fgTable tr.fg-row').forEach(tr=>{
-    tr.addEventListener('click', ()=>{
+    tr.addEventListener('click', ev=>{
       /* 🚨 ลากเลือกตัวเลขบนแถวต้องไม่พลิกแถว — เบราว์เซอร์ยิง `click` ให้การลากด้วย
          หน้านี้คือหน้าที่คนก๊อปเลขไปเทียบกับไฟล์ Call In ของ Delta ทีละบรรทัด
          ลากคลุมเลขแล้วแถวที่กางอยู่หุบทิ้งทันที (ผู้ตรวจ #142 รอบ 11 รันวัด)
          ⚠️ เป็นของใหม่จากใบนี้ — ตัวจับเดิมเรียก `renderFgCard()` ซึ่งกดซ้ำได้ไม่เปลี่ยนอะไร
             ตัวนี้สลับกาง/พับ จึงเสียของที่คนกางไว้
-         ⚠️ ไม่ย้ายตัวจับไปที่ปุ่ม `.fg-pn` อย่างเดียว เพราะ `#fgSummary` เขียนชวนว่า "กดที่แถว" */
-      if(!document.getSelection().isCollapsed) return;
+         ⚠️ ไม่ย้ายตัวจับไปที่ปุ่ม `.fg-pn` อย่างเดียว เพราะ `#fgSummary` เขียนชวนว่า "กดที่แถว"
+         🚨 `ev.detail` ต้องมาก่อน — `ev.detail === 0` คือคลิกที่เกิดจาก **แป้นพิมพ์**
+            (Enter/Space บนปุ่ม) ซึ่งไม่เกี่ยวกับการลากเมาส์เลย · ไม่เช็กแล้วใครที่กด Ctrl+A ไว้
+            จะกด Enter กางแถวไม่ได้จนกว่าจะคลิกที่อื่น (G2 · ผู้ตรวจ #142 รอบ 12 รันวัด) */
+      if(ev.detail && !document.getSelection().isCollapsed) return;
       fgToggle(tr.dataset.pn, tr.dataset.unit);
     });
   });
