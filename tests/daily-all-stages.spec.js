@@ -198,9 +198,11 @@ test('ยอดที่อ่านเป็นเลขไม่ได้ ต�
      ช่องนั้นจึงต้องพก `title` อธิบายไว้ ไม่งั้นคนกวาดตาลงไปอ่านยอดรวมจะสรุปว่า "ยอดไม่ตรง"
      ⚠️ ฉากที่คมคือยอดที่ซิงค์มาเป็น `'1,234'` ซึ่ง **อ่านเป็นเลขได้ทั้งแถว** แต่ยอดรวมขึ้น 0
         (ผู้ตรวจ #143 รอบ 6 รันเจอ · ฉาก `'abc'` ไม่คมเท่าเพราะมันดูผิดตั้งแต่แรก) */
-  await expect(cellOf(page, 'PO-1', 'today').locator('b'))
+  /* ⚠️ อ่านที่ `<td>` ไม่ใช่ที่ `<b>` — ติดป้ายที่ตัวหนาแล้วชี้ขอบช่องนอกตัวเลขป้ายไม่ขึ้น
+        และช่อง Aging ในตารางเดียวกันก็ติดที่ `td` (ผู้ตรวจ #143 รอบ 7) */
+  await expect(cellOf(page, 'PO-1', 'today'))
     .toHaveAttribute('title', /ไม่ถูกนับในยอดรวม/);
-  expect(await cellOf(page, 'PO-2', 'today').locator('b').getAttribute('title'),
+  expect(await cellOf(page, 'PO-2', 'today').getAttribute('title'),
     'ยอดที่อ่านเป็นเลขได้ตามปกติต้องไม่มีคำอธิบายนี้ติดมาด้วย').toBeNull();
 });
 
@@ -211,7 +213,7 @@ test('ยอดที่มีลูกคิดอยู่ในสตริ�
   await openDaily(page, ORDERS, [rec('r1', 'PO-1', 'winding', '1,234', D1)]);
   expect(await cellOf(page, 'PO-1', 'today').innerText()).toBe('1,234');
   expect(await footTotal(page).innerText(), 'ยอดรวมบวกค่าที่ไม่ใช่ตัวเลขไม่ได้').toBe('0');
-  await expect(cellOf(page, 'PO-1', 'today').locator('b'))
+  await expect(cellOf(page, 'PO-1', 'today'))
     .toHaveAttribute('title', /ไม่ถูกนับในยอดรวม/);
 });
 
