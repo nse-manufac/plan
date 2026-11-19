@@ -3069,7 +3069,7 @@ function renderDayTable(){
        ⚠️ ขึ้นเฉพาะตอนที่ "ซ่อนอยู่จริง" — ติ๊กแสดงทุกใบแล้วไม่มีอะไรถูกซ่อน ข้อความนี้ต้องหายไป
           ไม่งั้นมันกลายเป็นคำโกหกที่ค้างอยู่บนแถวที่คนใช้อ่านยอดรวม */
     + `<td colspan="8">รวมขั้น ${escapeHtml(procLabel)} ของวันที่ ${escapeHtml(fmtDateTH(date))} · ${numFmt(n)} ใบ`
-      + `${(!showAll && zeroN) ? ` · ซ่อนใบที่คีย์ไว้ว่าผลิต 0 อีก ${numFmt(zeroN)} ใบ` : ''}</td>`
+      + `${(!showAll && zeroN) ? ` · ซ่อนใบที่คีย์ไว้ว่าผลิต 0 ไว้ ${numFmt(zeroN)} ใบ` : ''}</td>`
     + `<td>${total!=null ? numFmt(total) : '—'}</td><td></td></tr></tfoot>`;
 }
 
