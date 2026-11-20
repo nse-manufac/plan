@@ -892,3 +892,80 @@ test('"ส่งครบแล้ว" ต้องตัดสินจาก�
   const mid = await page.locator('#wtDue svg text').first().textContent();
   expect(mid, 'ต้องเหลือใบเดียวที่ยังไม่เสร็จ คือใบที่ยังไม่ส่งสักชิ้น').toBe('1');
 });
+
+/* ───────── ซ่อน PO ที่จบแล้วในแถวที่กางออกมา (เจ้าของสั่ง 20 พ.ย. 2569) ─────────
+   เจ้าของเปิดจอจริงแล้วถามว่า "ทำไมกดซ่อนแล้วยังแสดงอยู่" — ช่องติ๊กเดิมซ่อนเฉพาะ
+   "แถวกลุ่ม" ส่วนตารางราย PO ข้างในโชว์ทุกใบมาตลอด ทั้งตอนที่ยังเป็นการ์ดและตอนเป็นแถวที่กาง */
+
+const DONE_ORDERS = [
+  order('PO-A1', PN_A, 5000),   // ยังไม่จบ — FG 1,800 · ค้างส่ง 3,800
+  order('PO-A2', PN_A, 3000)    // จบแล้ว  — FG 0 · ค้างส่ง 0
+];
+const DONE_RECS = [
+  rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000),
+  rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22'),
+  rec('r3', 'PO-A2|' + PN_A, 'inspection', 3000, '2026-08-21'),
+  rec('r4', 'PO-A2|' + PN_A, 'shipping',   3000, '2026-08-23')
+];
+
+test('ใบที่จบแล้วต้องไม่ขึ้นในแถวที่กาง จนกว่าจะติ๊ก "แสดง PO ที่จบแล้ว"', async ({ page }) => {
+  await open(page, DONE_ORDERS, DONE_RECS);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  let txt = await cmpOf(page, PN_A, 'TUE-U').innerText();
+  expect(txt, 'ใบที่ยังค้างส่งต้องอยู่').toContain('PO-A1');
+  expect(txt, 'ใบที่จบแล้วต้องถูกซ่อนตั้งแต่แรก').not.toContain('PO-A2');
+
+  /* ⚠️ ต้องบอกด้วยว่าซ่อนไปกี่ใบ ห้ามซ่อนเงียบ ๆ — คนที่รู้ว่ากลุ่มนี้มีกี่ใบจะนึกว่าข้อมูลหาย
+     (หลักเดียวกับแถวรวมของหน้ายอดรายวันทุกขั้นที่ต้องบอกจำนวนใบที่ซ่อน) */
+  const head = () => subOf(page, PN_A, 'TUE-U').locator('.fg-sub-head').innerText();
+  expect(await head()).toContain('1 จาก 2 ใบ');
+  expect(await head()).toContain('ซ่อนใบที่จบแล้ว 1 ใบ');
+
+  await page.check('#fgShowDone');
+  await page.waitForTimeout(200);
+  txt = await cmpOf(page, PN_A, 'TUE-U').innerText();
+  expect(txt, 'ติ๊กแล้วต้องเห็นครบ').toContain('PO-A2');
+  /* ⚠️ ข้อความ "ซ่อนไว้ N ใบ" ต้องหายไปด้วย ไม่งั้นเป็นคำโกหกที่ค้างบนหัวแถวที่คนใช้อ่านยอด */
+  expect(await head(), 'ไม่มีอะไรถูกซ่อนแล้ว').not.toContain('ซ่อนใบที่จบแล้ว');
+});
+
+test('ใบที่ส่งเกินยอดสั่งต้องไม่ถูกซ่อน และเลขที่เห็นต้องยังบวกเท่าแถวกลุ่ม', async ({ page }) => {
+  /* 🚨 ด่านของเกณฑ์ "สองข้อ" — `wipBalance()` ครอบที่ 0 มาแต่เดิม ใบที่ส่งเกินยอดสั่งจึงได้
+        ค้างส่ง 0 ทั้งที่ FG ติดลบค้างอยู่ · เขียนเกณฑ์เป็น `ourWip === 0` ข้อเดียวเมื่อไหร่
+        ใบนี้หายทันที แล้ว FG ของแถวที่เห็นจะบวกได้ 1,800 ขณะที่แถวกลุ่มเขียน 800
+        = ของที่คีย์ผิดถูกกลบ และเลขสองชั้นที่วางติดกันขัดกันเอง (ลองถอดแล้วแดงจริง) */
+  await open(page, [
+    order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 3000), order('PO-A3', PN_A, 2000)
+  ], [
+    rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22'),
+    rec('r3', 'PO-A2|' + PN_A, 'inspection', 3000, '2026-08-21'),
+    rec('r4', 'PO-A2|' + PN_A, 'shipping',   3000, '2026-08-23'),
+    rec('r5', 'PO-A3|' + PN_A, 'inspection', 1000, '2026-08-21'),
+    rec('r6', 'PO-A3|' + PN_A, 'shipping',   2000, '2026-08-23')
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  const txt = await cmpOf(page, PN_A, 'TUE-U').innerText();
+  expect(txt, 'ใบที่ FG ติดลบต้องยังเห็น แม้ค้างส่งเป็น 0').toContain('PO-A3');
+  expect(txt, 'ใบที่จบจริงยังต้องถูกซ่อน').not.toContain('PO-A2');
+
+  const num = s => Number(String(s).replace(/,/g, ''));
+  let fgSum = 0, wipSum = 0;
+  for(const r of await cmpOf(page, PN_A, 'TUE-U').locator('tr').all()){
+    fgSum  += num(await r.locator('td').nth(5).innerText());
+    wipSum += num(await r.locator('td').nth(6).innerText());
+  }
+  expect(fgSum, '1,800 ของใบที่ยังค้าง บวกกับ −1,000 ของใบที่ส่งเกิน').toBe(800);
+  expect(num(await cellOf(page, PN_A, 'TUE-U', 4)), 'FG คงเหลือของแถวกลุ่ม').toBe(fgSum);
+  expect(num(await cellOf(page, PN_A, 'TUE-U', 5)), 'ค้างส่ง (เรา) ของแถวกลุ่ม').toBe(wipSum);
+});
+
+test('กลุ่มที่จบแล้วทุกใบ ต้องบอกว่าซ่อนอยู่ ไม่ใช่ตารางเปล่า', async ({ page }) => {
+  /* กลุ่มแบบนี้ขึ้นจริงเมื่อยังไม่ได้ติ๊ก "ซ่อนกลุ่มที่ไม่มีของเหลือ"
+     ปล่อยให้ตารางว่างแล้วคนจะอ่านว่าใบของ P/N นี้หายไปไหนหมด ทั้งที่มันจบแล้วทุกใบ */
+  await open(page, [DONE_ORDERS[1]], DONE_RECS.slice(2));
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  expect(await cmpOf(page, PN_A, 'TUE-U').innerText()).toContain('จบแล้วทุกใบ');
+});

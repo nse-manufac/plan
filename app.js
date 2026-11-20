@@ -2978,18 +2978,36 @@ function fgSubRow(g, open){
     + `<td colspan="8">${open ? fgSubInner(g) : ''}</td></tr>`;
 }
 
+/** ใบที่ "จบแล้ว" ของหน้านี้ — ไม่เหลือของในคลัง และไม่เหลือยอดค้างส่ง
+ *
+ *  🚨 ต้องครบสองข้อ ห้ามใช้ `ourWip === 0` ข้อเดียว — `wipBalance()` ครอบที่ 0 มาแต่เดิม
+ *     ใบที่ส่งเกินยอดสั่งจึงได้ 0 ทั้งที่ FG ติดลบค้างอยู่ · ใช้ข้อเดียวแล้วใบที่คีย์ผิด
+ *     (ป้าย `⚠ ติดลบ` ของแถวกลุ่ม) จะถูกซ่อนหายไปเงียบ ๆ ซึ่งเป็นสิ่งที่หน้านี้ตั้งใจไม่ทำมาตลอด
+ *  ⚠️ และสองข้อนี้เองที่ทำให้ `FG คงเหลือ` กับ `ค้างส่ง (เรา)` ของแถวที่เหลือ **ยังบวกเท่าแถวกลุ่ม**
+ *     เพราะแถวที่ซ่อนไปเป็น 0 ทั้งคู่ · อีกสามคอลัมน์ไม่เท่า — fgSubInner() เขียนบอกไว้บนหัวแถว */
+function fgPoDone(x){ return x.ourWip === 0 && (x.inQty - x.outQty) === 0; }
+
 function fgSubInner(g){
   // ⚠️ ครอบ Number() ทุกครั้งที่บวกยอดสั่ง — ค่าที่ซิงค์มาเป็นสตริงได้ แล้ว '100' + 100 = '100100'
   const qty = g.orders.reduce((n,x)=> n + (Number(x.o.orderQty)||0), 0);
+  /* ใบที่จบแล้วซ่อนตั้งแต่แรก · ช่องติ๊ก "แสดง PO ที่จบแล้ว" เปิดดูย้อนหลังได้ (เจ้าของสั่ง 20 พ.ย. 2569)
+     เหตุ: กลุ่มที่ทยอยส่งจบไปหลายใบ กางออกมาแล้วมีแต่แถว 0 เรียงกัน ใบที่ยังต้องตามหาไม่เจอ
+     🚨 ช่องติ๊กคุมทั้งหน้า ไม่ใช่รายแถว — กางสองกลุ่มมาเทียบกันต้องกรองด้วยเกณฑ์เดียวกันเสมอ
+        (หลักเดียวกับ Sub-Name อันเดียวที่คุมทั้งหน้ายอดค้างรายวัน) */
+  const shown = document.getElementById('fgShowDone').checked
+    ? g.orders : g.orders.filter(x=> !fgPoDone(x));
+  const hid = g.orders.length - shown.length;
   return `<div class="fg-sub-wrap">
-    <div class="fg-sub-head">ใบสั่งของ P/N ${escapeHtml(g.pn)} · ${numFmt(g.orders.length)} ใบ
-      <span class="hint">PO qty. รวม ${numFmt(qty)} ชิ้น · FG คงเหลือของกลุ่ม ${numFmt(g.fg)} ชิ้น</span></div>
+    <div class="fg-sub-head">ใบสั่งของ P/N ${escapeHtml(g.pn)} · ${hid ? `${numFmt(shown.length)} จาก ` : ''}${numFmt(g.orders.length)} ใบ
+      <span class="hint">PO qty. รวม ${numFmt(qty)} ชิ้น · FG คงเหลือของกลุ่ม ${numFmt(g.fg)} ชิ้น${
+        hid ? ` · ซ่อนใบที่จบแล้ว ${numFmt(hid)} ใบ — PO qty. · รับเข้า · ส่งออก จึงบวกไม่เท่าแถวกลุ่ม` : ''}</span></div>
     <div class="table-wrap"><table class="fg-cmp"><thead><tr>
       <th class="left">PO No.</th><th style="width:105px">PO Date</th><th style="width:100px">PO qty.</th>
       <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th><th style="width:110px">FG คงเหลือ</th>
       <th style="width:110px">ค้างส่ง (เรา)</th><th style="width:140px">ค้างส่ง (Delta)</th>
       <th style="width:70px">งวด</th><th style="width:90px">ต่าง</th>
-    </tr></thead><tbody>${g.orders.map(fgPoRow).join('')}</tbody></table></div>
+    </tr></thead><tbody>${shown.map(fgPoRow).join('')
+      || emptyRow(10, 'ใบของ P/N นี้จบแล้วทุกใบ · ติ๊ก "แสดง PO ที่จบแล้ว" เพื่อดูย้อนหลัง')}</tbody></table></div>
     ${fgMovesHtml(g)}
   </div>`;
 }
@@ -6346,7 +6364,7 @@ document.getElementById('btnRecDeleteSelected').addEventListener('click', ()=>{
   toast(`ลบแล้ว ${n} รายการ`);
 });
 
-['fgUnit','fgHideZero'].forEach(id=>
+['fgUnit','fgHideZero','fgShowDone'].forEach(id=>
   document.getElementById(id).addEventListener('change', renderFg));
 // ช่องค้นหาอยู่นอกตาราง การวาดใหม่จึงไม่แย่งโฟกัส พิมพ์รัวได้ (INVARIANTS G2)
 document.getElementById('fgSearch').addEventListener('input', renderFg);

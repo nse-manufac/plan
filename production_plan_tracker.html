@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-19.5">
+<meta name="app-version" content="2026-11-20.1">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -797,6 +797,12 @@
         <label>&nbsp;</label>
         <label style="font-weight:500;"><input type="checkbox" id="fgHideZero"> ซ่อนกลุ่มที่ไม่มีของเหลือ</label>
       </div>
+      <!-- ใบที่จบแล้วในแถวที่กางออกมา ซ่อนตั้งแต่แรก (เจ้าของสั่ง 20 พ.ย. 2569)
+           ป้ายจึงเป็น "แสดง…" ไม่ใช่ "ซ่อน…" — ค่าตั้งต้นคือไม่ติ๊ก = ซ่อนอยู่ -->
+      <div class="field">
+        <label>&nbsp;</label>
+        <label style="font-weight:500;"><input type="checkbox" id="fgShowDone"> แสดง PO ที่จบแล้ว</label>
+      </div>
     </div>
     <div class="desc" id="fgSummary"></div>
     <div class="table-wrap">
@@ -1121,7 +1127,7 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="core/dates.js?v=2026-11-19.5"></script>
-<script src="app.js?v=2026-11-19.5"></script>
+<script src="core/dates.js?v=2026-11-20.1"></script>
+<script src="app.js?v=2026-11-20.1"></script>
 </body>
 </html>
