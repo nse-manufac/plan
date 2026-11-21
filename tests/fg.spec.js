@@ -925,6 +925,8 @@ test('ใบที่จบแล้วต้องไม่ขึ้นใน�
   const head = () => subOf(page, PN_A, 'TUE-U').locator('.fg-sub-head').innerText();
   expect(await head()).toContain('1 จาก 2 ใบ');
   expect(await head()).toContain('ซ่อนใบที่จบแล้ว 1 ใบ');
+  expect(await head(), 'ใบที่ซ่อนมีเลขจริงทั้งสามช่อง ผลบวกจึงไม่เท่าแถวกลุ่ม ต้องบอก')
+    .toContain('บวกไม่เท่าแถวกลุ่ม');
 
   await page.check('#fgShowDone');
   await page.waitForTimeout(200);
@@ -1021,4 +1023,31 @@ test('ใบที่ผลิตได้เท่าไหร่ส่งห�
     'ใบที่ยังค้างส่งต้องอยู่ แม้ของในคลังจะหมดพอดี').toContain('PO-A2');
   expect(await subOf(page, PN_A, 'TUE-U').locator('.fg-sub-head').innerText(),
     'ไม่มีใบไหนเข้าเกณฑ์ "จบแล้ว" ในฉากนี้').not.toContain('ซ่อนใบที่จบแล้ว');
+});
+
+test('ใบที่ซ่อนเป็น 0 ทั้งสามช่อง — ห้ามบอกว่าผลบวกไม่เท่าแถวกลุ่ม', async ({ page }) => {
+  /* 🚨 ประโยคเตือนต้องขึ้นเฉพาะตอนที่ผลบวกไม่เท่าจริง — ใบยอดสั่ง 0 ที่ซิงค์มาและไม่เคยคีย์อะไร
+        เข้าเกณฑ์ "จบแล้ว" ครบสามข้อ จึงถูกซ่อน แต่มันไม่ได้พาเลขไหนหายไปจากผลบวกเลย
+        เตือนไว้ก่อนดูเหมือนปลอดภัย แต่บนหน้าที่มีไว้ไล่ของผิด มันส่งคนไปหาส่วนต่างที่ไม่มีอยู่
+        (ผู้ตรวจ #144 รอบ 4 รันเจอ · ของเดิมขึ้นประโยคนี้ทุกครั้งที่มีใบถูกซ่อน)
+     ⚠️ ต้องวัดคู่กับผลบวกจริง ไม่ใช่วัดแค่ว่าไม่มีประโยค — ไม่งั้นวันหนึ่งที่เลขเริ่มไม่ตรง
+        แล้วประโยคหายไปด้วย ข้อนี้จะยังเขียว */
+  await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 0)], [
+    rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22')
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  const head = await subOf(page, PN_A, 'TUE-U').locator('.fg-sub-head').innerText();
+  expect(head, 'ยังต้องบอกว่าซ่อนไปกี่ใบ').toContain('ซ่อนใบที่จบแล้ว 1 ใบ');
+  expect(head, 'แต่ห้ามบอกว่าผลบวกไม่เท่า เพราะฉากนี้มันเท่า').not.toContain('บวกไม่เท่าแถวกลุ่ม');
+
+  const num = s => Number(String(s).replace(/,/g, ''));
+  let inSum = 0, outSum = 0;
+  for(const r of await cmpOf(page, PN_A, 'TUE-U').locator('tr').all()){
+    inSum  += num(await r.locator('td').nth(3).innerText());
+    outSum += num(await r.locator('td').nth(4).innerText());
+  }
+  expect(num(await cellOf(page, PN_A, 'TUE-U', 2)), 'รับเข้าของแถวกลุ่ม').toBe(inSum);
+  expect(num(await cellOf(page, PN_A, 'TUE-U', 3)), 'ส่งออกของแถวกลุ่ม').toBe(outSum);
 });

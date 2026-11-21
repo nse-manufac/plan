@@ -3013,10 +3013,19 @@ function fgSubInner(g){
   const shown = document.getElementById('fgShowDone').checked
     ? g.orders : g.orders.filter(x=> !fgPoDone(x));
   const hid = g.orders.length - shown.length;
+  /* 🚨 ประโยค "บวกไม่เท่าแถวกลุ่ม" ต้องขึ้นเฉพาะตอนที่มันไม่เท่าจริง — ใบที่ซ่อนเป็น 0 ทั้งสามช่องได้
+     (ใบยอดสั่ง 0 ที่ซิงค์มาและไม่เคยคีย์อะไร เข้าเกณฑ์จบแล้วครบสามข้อ) แล้วผลบวกยังตรงทุกช่อง
+     เตือนไว้ก่อนดูเหมือนปลอดภัย แต่มันส่งคนไปนั่งหาส่วนต่างที่ไม่มีอยู่ บนหน้าที่มีไว้ไล่ของผิด
+     (ผู้ตรวจ #144 รอบ 4 รันเจอ) · เทียบผลบวกจริง ไม่ใช่ `.some()` ทีละแถว — สองแถวที่หักล้างกัน
+     (ยอดติดลบจากการคีย์ผิด) ก็ยังทำให้แถวกลุ่มเท่าเดิม */
+  const gone = hid ? g.orders.filter(fgPoDone) : [];
+  const lost = k => gone.reduce((n,x)=> n + k(x), 0) !== 0;
+  const sumsOff = lost(x=> Number(x.o.orderQty)||0) || lost(x=> x.inQty) || lost(x=> x.outQty);
   return `<div class="fg-sub-wrap">
     <div class="fg-sub-head">ใบสั่งของ P/N ${escapeHtml(g.pn)} · ${hid ? `${numFmt(shown.length)} จาก ` : ''}${numFmt(g.orders.length)} ใบ
       <span class="hint">PO qty. รวม ${numFmt(qty)} ชิ้น · FG คงเหลือของกลุ่ม ${numFmt(g.fg)} ชิ้น${
-        hid ? ` · ซ่อนใบที่จบแล้ว ${numFmt(hid)} ใบ — PO qty. · รับเข้า · ส่งออก จึงบวกไม่เท่าแถวกลุ่ม` : ''}</span></div>
+        hid ? ` · ซ่อนใบที่จบแล้ว ${numFmt(hid)} ใบ` : ''}${
+        sumsOff ? ` — PO qty. · รับเข้า · ส่งออก จึงบวกไม่เท่าแถวกลุ่ม` : ''}</span></div>
     <div class="table-wrap"><table class="fg-cmp"><thead><tr>
       <th class="left">PO No.</th><th style="width:105px">PO Date</th><th style="width:100px">PO qty.</th>
       <th style="width:100px">รับเข้า</th><th style="width:100px">ส่งออก</th><th style="width:110px">FG คงเหลือ</th>
