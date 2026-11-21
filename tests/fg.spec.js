@@ -969,3 +969,31 @@ test('กลุ่มที่จบแล้วทุกใบ ต้องบ�
   await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
   expect(await cmpOf(page, PN_A, 'TUE-U').innerText()).toContain('จบแล้วทุกใบ');
 });
+
+test('ใบที่บัญชีเราจบแล้ว แต่ยอดของ Delta ยังไม่ตรง ต้องไม่ถูกซ่อน', async ({ page }) => {
+  /* 🚨 ด่านของข้อที่สามใน fgPoDone() — "จบแล้ว" ต้องรวม "ฝั่ง Delta ไม่เหลืออะไรให้ตาม" ด้วย
+        ใบที่เราส่งครบแล้ว แต่ Delta ลง Wip bal. ไว้มากกว่าที่เราส่ง จะได้ `delta.left > 0`
+        → แถวกลุ่มขึ้นป้ายแดงว่ายอดไม่ตรงกับ Delta แต่ใบต้นเหตุถูกซ่อน
+        หน้าเขียนเองว่า "กดที่แถวเพื่อดูใบสั่งของ P/N นั้น" แล้วกางไปเจอตารางที่ไม่มีคำตอบ
+        = ตอบผิดแย่กว่าไม่ตอบ (หลักเดียวกับที่ openRecordsForPo() ต้องล้างตัวกรองก่อนพาไป)
+        และปุ่ม ✎ แก้ ซึ่งเป็น **ทางเดียว** ที่แก้ยอดผิดของ Delta ได้ ก็อยู่บนแถวนั้น
+     ⚠️ ฉากนี้เกิดจริงได้สองทาง — Delta ลง PO QTY มากกว่า Open Q'ty ของเรา
+        หรือมีคนใส่ตัวแก้มือ `wipOverride` มากกว่าที่เราส่ง (ผู้ตรวจ #144 รันพิสูจน์) */
+  await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 1000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22'),
+    rec('r3', 'PO-A2|' + PN_A, 'inspection', 1000, '2026-08-21'),
+    rec('r4', 'PO-A2|' + PN_A, 'shipping',   1000, '2026-08-23')   // บัญชีเราจบ: ค้างส่ง 0 · FG 0
+  ], [deltaRow('PO-A2|' + PN_A, 34, 1200)]);                       // แต่ Delta ว่ายังค้าง → left 200
+
+  expect(await rowOf(page, PN_A, 'TUE-U'), 'แถวกลุ่มฟ้องว่ายอดไม่ตรงกับ Delta').toContain('-200');
+
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
+  expect(cmp, 'ใบต้นเหตุต้องอยู่ในตาราง ไม่ใช่ซ่อนไว้หลังช่องติ๊ก').toContain('PO-A2');
+  expect(cmp, 'พร้อมปุ่มแก้ยอดของ Delta ซึ่งเป็นทางเดียวที่แก้ได้').toContain('✎ แก้');
+
+  /* ⚠️ และต้องไม่เหลืออะไรถูกซ่อนในฉากนี้เลย — ไม่งั้นข้อนี้เขียวได้ทั้งที่ซ่อนใบผิดใบ */
+  expect(await subOf(page, PN_A, 'TUE-U').locator('.fg-sub-head').innerText(),
+    'ไม่มีใบไหนเข้าเกณฑ์ "จบแล้ว" ในฉากนี้').not.toContain('ซ่อนใบที่จบแล้ว');
+});
