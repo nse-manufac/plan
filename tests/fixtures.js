@@ -124,8 +124,9 @@ async function callInWorkbook(rows, opts = {}) {
   const ws = wb.addWorksheet(opts.sheetName || "X-FRM wk34");
   anchorTopLeft(ws);
   ws.getCell('E1').value = 'DAILY CALL IN TRANSFOMER';
-  /* opts.sheets = ชีตข้อมูลเพิ่มในไฟล์เดียวกัน [{sheetName, rows}]
-     ไฟล์จริงของบ้าน A มีสองชีตข้อมูล (Choke + X'FRM) ที่ต้องนำเข้าทั้งคู่ */
+  /* opts.sheets = ชีตข้อมูลเพิ่มในไฟล์เดียวกัน [{sheetName, rows, hidden}]
+     ไฟล์จริงของบ้าน A มีสองชีตข้อมูล (Choke + X'FRM) ที่ต้องนำเข้าทั้งคู่
+     hidden:true = ชีตที่ถูกซ่อนไว้ใน Excel ซึ่งมักเป็นของเก่าที่เขาตั้งใจเก็บ */
   // ⚠️ ตำแหน่งคอลัมน์ Wip bal. ปรับได้ผ่าน opts.wipCol/opts.wipHeader — ของจริงเคยถูก
   //    แทรกคอลัมน์ใหม่เข้ามาจนเลื่อนจาก E ไป F มาแล้ว (3 ก.ย. 2026)
   //    ค่าเริ่มต้นยังเป็น E เหมือนเดิม เทสเดิมที่ไม่ส่ง opts นี้จึงไม่ต้องแก้อะไร
@@ -156,7 +157,7 @@ async function callInWorkbook(rows, opts = {}) {
   });
 
   (opts.sheets || []).forEach(extra=>{
-    const w2 = wb.addWorksheet(extra.sheetName);
+    const w2 = wb.addWorksheet(extra.sheetName, extra.hidden ? { state: 'hidden' } : undefined);
     anchorTopLeft(w2);
     const h2 = w2.getRow(6);
     [[1,'P/N'], [2,'PO  NO'], [3,'Order Date'], [4,'PO QTY'], [5,'Wip bal.'], [6,'Aging']]

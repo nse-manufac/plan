@@ -7,6 +7,7 @@
 const { test, expect } = require('@playwright/test');
 const { readSaved, waitReady } = require('./app-state');
 const { callInWorkbook } = require('./fixtures');
+const JSZip = require('jszip');
 
 const APP = '/production_plan_tracker.html';
 const K_STATE = 'tue_order_tracker_v1';
@@ -159,5 +160,93 @@ test('ติ๊กด้วยการคลิกจริงต้องใ�
 
   await page.click('#btnCallInScan');
   await expect(page.locator('#callInPreviewPanel')).toBeVisible();
+  expect(await page.locator('#callInSummary').innerText()).toContain('เทียบจาก 1 ชีต');
+});
+
+
+/* ---------- ชีตที่ซ่อนไว้ (ผู้ตรวจ #146 รันพิสูจน์) ----------
+ *
+ * 🚨 ชีตที่ถูกซ่อนคือของเก่าที่เขาตั้งใจเก็บไว้ ห้ามดึงยอดออกมาใช้ (กฎเดียวกับ isHiddenSheet())
+ *    ก่อนการติ๊กหลายชีต ชีตซ่อนก็อยู่ในรายการให้เลือกเหมือนกัน แต่คนต้องเลือกเองและเห็นชื่อ
+ *    พอติ๊กให้เองแล้วยุบรวมกับชีตจริง จึงไม่มีจังหวะไหนให้คนเห็นเลย
+ * 🚨 ฉากนี้คือ "ก๊อปชีตเก็บไว้ก่อนแก้" ซึ่งได้ชีตซ่อน **งวดเดียวกัน**
+ *    ด่าน "ชีตคนละงวด" จึงช่วยไม่ได้ และยอดเก่าชนะเพราะการยุบใบซ้ำเอาค่าของชีตท้ายสุด
+ *    เลขที่ชนะคือเลขที่ไปอยู่ช่อง Wip bal. บนกระดาษ FM-ST-07 ที่ส่งถึง Delta
+ */
+const WITH_HIDDEN = {
+  mainName: XFRM, main: [row(A1, 111)],
+  extra: [{ sheetName: 'ของเก่า WK46', rows: [row(A1, 7777)], hidden: true }]
+};
+
+test('🚨 ชีตที่ซ่อนไว้ต้องไม่ถูกติ๊กให้เอง และยอดเก่าของมันต้องไม่ทับยอดจริง', async ({ page }) => {
+  await openWith(page, [A1]);
+  await openFile(page, WITH_HIDDEN);
+
+  const list = await sheetList(page);
+  expect(list.filter(s => s.checked).map(s => s.name),
+    'ติ๊กมาให้เฉพาะชีตจริง ชีตที่ซ่อนไว้ต้องไม่ถูกติ๊ก').toEqual([XFRM]);
+  expect(list[1].text, 'ต้องมีคำว่า "ซ่อน" อยู่บนจอ ไม่ใช่ยุบรวมจนดูเหมือนชีตธรรมดา')
+    .toContain('ซ่อน');
+  expect(list[1].text, 'แต่ยังต้องบอกงวดกับจำนวนใบ คนที่ตั้งใจจะติ๊กต้องรู้ว่าข้างในมีอะไร')
+    .toContain('wk46');
+
+  await page.click('#btnCallInScan');
+  await expect(page.locator('#callInPreviewPanel')).toBeVisible();
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(250);
+  expect(await liveWip(page), 'ต้องได้ยอดของชีตจริง ไม่ใช่ยอดของชีตที่ซ่อนไว้')
+    .toEqual(['TM52AA001|9100000081@wk46=111']);
+});
+
+test('ชีตที่ซ่อนไว้ยังติ๊กได้เองถ้าคนตั้งใจ — ห้าม disabled (G1)', async ({ page }) => {
+  /* คู่กับข้อข้างบน · กันการแก้เกินไปเป็นการตัดชีตซ่อนออกจากรายการหรือกดไม่ได้
+     ไฟล์จริงเคยซ่อนชีตที่ยังใช้งานอยู่ได้ และคนที่รู้ว่าตัวเองทำอะไรต้องไปต่อได้ */
+  await openWith(page, [A1]);
+  await openFile(page, WITH_HIDDEN);
+  await page.locator('#callInSheets .cisheet').nth(1).locator('input').click();
+
+  expect((await sheetList(page)).filter(s => s.checked).map(s => s.name)).toEqual([XFRM, 'ของเก่า WK46']);
+  await page.click('#btnCallInScan');
+  await expect(page.locator('#callInPreviewPanel')).toBeVisible();
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(250);
+  expect(await liveWip(page), 'ติ๊กเองแล้วต้องได้ค่าของชีตท้ายสุดตามกฎเดิม')
+    .toEqual(['TM52AA001|9100000081@wk46=7777']);
+});
+
+test('🚨 ชีตที่อ่านแล้วพัง ต้องไม่ทำให้ทั้งไฟล์ตาย — ชีตที่ดีต้องยังเทียบได้', async ({ page }) => {
+  /* ฉากของจริง: ใครลบ entry ของชีตออกจากซิปโดยที่ workbook.xml ยังประกาศชีตนั้นไว้
+     readCallInSheet() จะ throw และลูปอ่านชีตอยู่ "นอก" try ที่ครอบการโหลดซิป
+     ผลคือปุ่มเทียบยอดยัง disabled · รายการชีตยังว่าง · toast ค้างที่ "กำลังอ่านไฟล์..."
+     = ทางตันที่ไม่บอกเหตุ ซึ่งแย่กว่าชีตนั้นขึ้นว่าอ่านไม่ได้ (G1 · ผู้ตรวจ #146 รันพิสูจน์) */
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+
+  await openWith(page, [A1, A2]);
+
+  const buf = await callInWorkbook([row(A1, 111)],
+    { sheetName: XFRM, sheets: [{ sheetName: "X'FRM เก่า", rows: [row(A2, 222)] }] });
+  const zip = await JSZip.loadAsync(buf);
+  /* หา xml ของชีตที่สองจากเลขที่อยู่ในนั้นเอง แทนการเดาว่าเป็น sheet2.xml */
+  for (const p of Object.keys(zip.files).filter(p => /worksheets\/sheet\d+\.xml$/.test(p))) {
+    if ((await zip.file(p).async('string')).includes('>222<')) zip.remove(p);
+  }
+  await page.setInputFiles('#callInFileInput', {
+    name: 'callin.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    buffer: await zip.generateAsync({ type: 'nodebuffer' })
+  });
+
+  await expect(page.locator('#btnCallInScan'),
+    'ชีตเดียวพังต้องไม่ทำให้เปิดไฟล์ไม่สำเร็จทั้งไฟล์').toBeEnabled();
+  const list = await sheetList(page);
+  expect(list.map(s => s.name)).toEqual([XFRM, "X'FRM เก่า", 'อีกชีตที่ห้ามแตะ']);
+  expect(list[1].checked, 'ชีตที่อ่านไม่ได้ต้องไม่ถูกติ๊ก').toBe(false);
+  expect(list[1].text, 'ต้องบอกว่าอ่านชีตนี้ไม่ได้ ไม่ใช่เงียบ').toContain('อ่านชีตนี้ไม่ได้');
+  expect(errors, 'ต้องไม่มี error หลุดขึ้น console').toEqual([]);
+
+  await page.click('#btnCallInScan');
+  await expect(page.locator('#callInPreviewPanel'),
+    'ชีตที่ดีต้องยังเทียบได้ตามปกติ').toBeVisible();
   expect(await page.locator('#callInSummary').innerText()).toContain('เทียบจาก 1 ชีต');
 });

@@ -1120,6 +1120,18 @@ async function sheetPathMap(zip){
   return map;
 }
 
+/** ชื่อชีตที่ถูกซ่อนไว้ — กฎเดียวกับ isHiddenSheet(): ของเก่าที่เขาตั้งใจเก็บ ห้ามดึงยอดมาใช้
+ *  ⚠️ ไม่มี attribute state = มองเห็น (ไฟล์จริงของ Delta ไม่เขียน state ให้ชีตที่มองเห็น) */
+async function hiddenSheetNames(zip){
+  const wbDoc = parseXml(await zip.file('xl/workbook.xml').async('string'));
+  const out = new Set();
+  Array.from(wbDoc.getElementsByTagNameNS(XL_NS, 'sheet')).forEach(sh=>{
+    const st = sh.getAttribute('state');
+    if(st && st !== 'visible') out.add(sh.getAttribute('name'));
+  });
+  return out;
+}
+
 /** ค่าที่คนเห็นในช่องหนึ่ง — คืนเป็นข้อความเสมอเพื่อเอาไปจับคู่ */
 function cellText(c, shared){
   if(!c) return '';
@@ -6585,10 +6597,13 @@ function resetCallIn(){
   document.getElementById('btnCallInScan').disabled = true;
 }
 
-/** รายการชีตให้ติ๊ก — ติ๊กมาให้เฉพาะชีตที่อ่านได้จริง (ชีต SUM ของไฟล์จริงจึงไม่ถูกติ๊กเอง)
+/** รายการชีตให้ติ๊ก — ติ๊กมาให้เฉพาะชีตที่อ่านได้จริงและไม่ถูกซ่อนไว้ (ชีต SUM จึงไม่ถูกติ๊กเอง)
  *
  *  🚨 ชีตที่อ่านไม่ได้ยังติ๊กได้ ห้าม disabled — คนที่ตั้งใจเลือกชีตนั้นต้องได้เห็น
  *     ข้อความบอกเหตุของชีตนั้นตรง ๆ ตอนกดเทียบยอด ไม่ใช่กดไม่ได้แล้วไม่รู้ว่าทำไม (G1)
+ *  🚨 ชีตที่ซ่อนไว้ติ๊กได้ด้วยหลักเดียวกัน แต่ห้ามติ๊กให้เอง และต้องมีคำว่า "ซ่อน" บนจอ
+ *     ของเก่าที่เขาเก็บมักเป็น **งวดเดียวกัน** ด่าน "ชีตคนละงวด" จึงช่วยไม่ได้ และยอดของมัน
+ *     จะชนะเพราะการยุบใบซ้ำเอาค่าของชีตท้ายสุด = เลขเก่าไปถึงกระดาษที่ส่ง Delta
  *  ⚠️ อ้างชีตด้วย data-idx ไม่ใช่ชื่อ — ชื่อชีตจริงมีอัญประกาศเดี่ยวอยู่ในตัว
  *     ตัวเลือก CSS ที่ประกอบจากชื่อจึงพังได้ และ escape ให้ครบทุกอักขระไม่คุ้ม */
 function renderCallInSheets(){
@@ -6596,8 +6611,10 @@ function renderCallInSheets(){
     const note = s.error
       ? ` · <span style="color:var(--red)">${escapeHtml(s.error)}</span>`
       : ` · ${s.week ? 'wk' + escapeHtml(s.week) : 'ชื่อชีตไม่บอกงวด'} · ${numFmt(s.items.length)} ใบ`;
-    return `<label class="cisheet"><input type="checkbox" data-idx="${i}"${s.error ? '' : ' checked'}>`
-      + `<span><b>${escapeHtml(s.name)}</b>${note}</span></label>`;
+    const hid = s.hidden ? ' · <b style="color:var(--amber)">ชีตที่ซ่อนไว้</b>' : '';
+    return `<label class="cisheet"><input type="checkbox" data-idx="${i}"`
+      + `${s.error || s.hidden ? '' : ' checked'}>`
+      + `<span><b>${escapeHtml(s.name)}</b>${hid}${note}</span></label>`;
   }).join('');
 }
 
@@ -6610,7 +6627,8 @@ document.getElementById('callInFileInput').addEventListener('change', async (e)=
   try{
     const zip = await JSZip.loadAsync(await file.arrayBuffer());
     if(!zip.file('xl/workbook.xml')) throw new Error('ไม่ใช่ไฟล์ Excel (.xlsx)');
-    pendingCallIn = {zip, sheetMap: await sheetPathMap(zip), fileName: file.name};
+    pendingCallIn = {zip, sheetMap: await sheetPathMap(zip), fileName: file.name,
+      hidden: await hiddenSheetNames(zip)};
   }catch(err){
     toast('เปิดไฟล์ไม่สำเร็จ: '+err.message);
     return;
@@ -6620,10 +6638,20 @@ document.getElementById('callInFileInput').addEventListener('change', async (e)=
      ไฟล์ Call In จริงมี 2-4 ชีต จึงไม่ใช่งานหนัก (ไฟล์แผนงาน 36 ชีตเป็นอีกหน้า) */
   pendingCallIn.sheets = [];
   for(const nm of Object.keys(pendingCallIn.sheetMap)){
-    const read = await readCallInSheet(pendingCallIn.zip, pendingCallIn.sheetMap[nm]);
+    /* 🚨 ต้อง try/catch ทีละชีต — ลูปนี้อยู่นอก try ที่ครอบการโหลดซิป · ชีตที่ workbook.xml
+       ประกาศไว้แต่ไฟล์ xml หายจากซิป ทำให้ readCallInSheet() throw แล้ว **ทั้งไฟล์ตาย**
+       ปุ่มยัง disabled · รายการชีตยังว่าง · ไม่บอกเหตุอะไรเลย = ทางตันเงียบที่ G1 ห้ามไว้
+       ใส่เป็น error ของชีตนั้น ชีตที่ดีจึงยังเทียบได้ (ผู้ตรวจ #146 รันพิสูจน์) */
+    let read;
+    try{
+      read = await readCallInSheet(pendingCallIn.zip, pendingCallIn.sheetMap[nm]);
+    }catch(err){
+      read = {error: 'อ่านชีตนี้ไม่ได้ — ' + err.message};
+    }
     const items = read.items || [];
     pendingCallIn.sheets.push({
       name: nm, week: weekFromSheetName(nm), items,
+      hidden: pendingCallIn.hidden.has(nm),
       error: read.error || (items.length ? '' : 'ไม่พบแถวที่มีทั้ง P/N และ PO ในชีตนี้')
     });
   }
