@@ -6684,7 +6684,9 @@ document.getElementById('btnCallInScan').addEventListener('click', ()=>{
   const byId = new Map();
   ticked.forEach(s=> s.items.forEach(it=> byId.has(it.id)
     ? byId.get(it.id).push({sheet: s.name, it}) : byId.set(it.id, [{sheet: s.name, it}])));
-  const sameVal = (a, b)=> String(a.fileWip || '').trim() === String(b.fileWip || '').trim() && a.fileQty === b.fileQty;
+  /* ⚠️ fileQty เป็น 0 = ชีตนั้นไม่มีคอลัมน์ PO QTY ให้เทียบ ไม่ใช่ "ยอดสั่งศูนย์" (กฎเดิมของ B5) */
+  const sameVal = (a, b)=> String(a.fileWip || '').trim() === String(b.fileWip || '').trim()
+    && (!a.fileQty || !b.fileQty || a.fileQty === b.fileQty);
   const items = [], clash = []; let multi = 0;
   byId.forEach(rows=>{
     items.push(rows[rows.length - 1].it);                       // ชีตท้ายสุดชนะ (กฎเดิม)
@@ -6755,7 +6757,7 @@ function renderCallInPreview(){
   if(pendingCallIn.clash.length){
     const ns = Array.from(new Set([].concat(...pendingCallIn.clash)));
     parts.push(`🚨 <b style="color:var(--red)">ไฟล์ให้ค่าของใบเดียวกันไม่เท่ากัน `
-      + `${numFmt(pendingCallIn.clash.length)} ใบ</b> — ใช้ค่าของชีตท้ายสุด ต้องหาว่าแถวไหนถูก`
+      + `${numFmt(pendingCallIn.clash.length)} ใบ</b> — ใช้ค่าของแถวท้ายสุด ต้องหาว่าแถวไหนถูก`
       + ` (${ns.map(n=>'<b>'+escapeHtml(n)+'</b>').join(' · ')})`);
   }
   if(p.qtyMismatch.length){

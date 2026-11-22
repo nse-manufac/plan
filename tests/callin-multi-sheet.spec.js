@@ -279,7 +279,7 @@ test('🚨 สองชีตให้ยอด Delta ของใบเดี�
   expect(sum, 'ต้องฟ้องว่าไฟล์ให้ค่าไม่เท่ากัน').toContain('ไม่เท่ากัน 1 ใบ');
   expect(sum, 'ต้องบอกชื่อชีตที่ขัดกัน เพื่อให้ไปเปิดดูได้').toContain(flat(CHOKE));
   expect(sum).toContain(XFRM);
-  expect(sum, 'ต้องบอกว่าใช้ค่าของชีตไหน').toContain('ชีตท้ายสุด');
+  expect(sum, 'ต้องบอกว่าใช้ค่าของแถวไหน').toContain('แถวท้ายสุด');
 });
 
 test('🚨 PO QTY ที่ไม่ตรงกับยอดสั่ง ถ้าอยู่ในชีตแรก ต้องยังมีอะไรฟ้อง', async ({ page }) => {
@@ -335,4 +335,49 @@ test('แถวซ้ำใน "ชีตเดียวกัน" ไม่ใ�
   expect(sum).toContain('เทียบจาก 1 ชีต');
   expect(sum, 'ชีตเดียวจะ "อยู่หลายชีต" ไม่ได้').not.toContain('อยู่หลายชีต');
   expect(sum, 'แต่สองแถวที่ขัดกันในชีตเดียวกันยังต้องฟ้อง').toContain('ไม่เท่ากัน 1 ใบ');
+});
+
+
+/* ---------- PO QTY ที่ไม่มีให้เทียบ ต้องไม่นับเป็นค่าที่ขัดกัน (ผู้ตรวจ #146 รอบ 4) ----------
+ *
+ * 🚨 `fileQty` เป็น 0 แปลว่า "ชีตนั้นไม่มีคอลัมน์ PO QTY ให้เทียบ" ไม่ใช่ "ยอดสั่งศูนย์"
+ *    กฎนี้เป็นของเดิม — `readCallInSheet()` เขียนไว้ และเทส B5 ของ `callin.spec.js` ยืนยันว่า
+ *    ขาดคอลัมน์นี้แล้วต้อง "เงียบไปเฉย ๆ ไม่มีคำเตือนหลอก" · B5 ยังเขียวเพราะติ๊กชีตเดียว
+ *    รูเปิดเฉพาะตอนติ๊กหลายชีต ซึ่งเป็นสิ่งที่ใบนี้มาทำ
+ * ⚠️ ของจริงมีใบซ้ำ 47 ใบ · ถ้าชีตใดขาดคอลัมน์นี้จะขึ้น "ไม่เท่ากัน 47 ใบ" ทุกสัปดาห์
+ *    แล้ววันที่ Wip bal. ขัดกันจริงจะถูกมองข้ามไปด้วย
+ * ⚠️ ทุกข้อในกลุ่มนี้ตั้ง Wip bal. ให้ **ตรงกันเป๊ะ** โดยเจตนา — ไม่งั้นแถบขึ้นจาก wip
+ *    แล้วเทสเขียวเองทั้งที่ยังผิด
+ */
+
+test('🚨 ชีตที่ไม่มีหัวตาราง PO QTY เลย ต้องไม่ทำให้ขึ้นว่าค่าไม่เท่ากัน', async ({ page }) => {
+  await openWith(page, [A1, A2]);
+  await page.setInputFiles('#callInFileInput', {
+    name: 'callin.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    buffer: await callInWorkbook([row(A1, 1170), row(A2, 222)], {
+      sheetName: CHOKE, qtyHeader: '',                       // ชีตนี้ไม่มีคอลัมน์ PO QTY
+      sheets: [{ sheetName: XFRM, rows: [row(A1, 1170), row(A2, 222)] }]
+    })
+  });
+  await expect(page.locator('#btnCallInScan')).toBeEnabled();
+  await page.click('#btnCallInScan');
+
+  const sum = await page.locator('#callInSummary').innerText();
+  expect(sum, 'Wip bal. ตรงกันทั้งสองใบ · ที่ต่างคือชีตหนึ่งไม่มีคอลัมน์ให้เทียบเท่านั้น')
+    .not.toContain('ไม่เท่ากัน');
+  expect(sum, 'แต่ยังต้องบอกว่ามีใบซ้ำ').toContain('ใบที่อยู่หลายชีต 2 ใบ');
+});
+
+test('🚨 ชีตที่มีหัว PO QTY แต่เซลล์ของแถวนั้นว่าง ต้องไม่ทำให้ขึ้นว่าค่าไม่เท่ากัน', async ({ page }) => {
+  /* ฉากที่เจอง่ายกว่าข้อข้างบน — หัวตารางครบ แต่ Delta เว้นช่องของใบนั้นไว้ */
+  await openWith(page, [A1]);
+  await openFile(page, {
+    mainName: CHOKE, main: [{ pn: A1.pn, poNo: A1.poNo, orderDate: '2026-07-06', wip: 1170 }],
+    extra: [{ sheetName: XFRM, rows: [row(A1, 1170)] }]
+  });
+  await page.click('#btnCallInScan');
+
+  const sum = await page.locator('#callInSummary').innerText();
+  expect(sum, 'ช่อง PO QTY ว่าง = ไม่มีอะไรให้เทียบ ไม่ใช่ยอดสั่งศูนย์').not.toContain('ไม่เท่ากัน');
 });
