@@ -1,0 +1,163 @@
+/* ติ๊กหลายชีตแล้วเทียบ/เก็บรอบเดียว
+ *
+ * ของจริงที่ใบนี้มาแก้ — ไฟล์ Call In ของบ้าน A มีสองชีตข้อมูล (Choke + X'FRM)
+ * เจ้าของต้องก๊อปแถวของชีตโช้คไปใส่ชีตหลักด้วยมือทุกสัปดาห์ เพราะหน้านี้เลือกได้ทีละชีต
+ * (ตรวจไฟล์จริงของ WK46 เมื่อ 22 พ.ย. 2569: ชีตโช้ค 47 ใบเป็นชุดย่อยของชีตหลัก 233 ใบ)
+ */
+const { test, expect } = require('@playwright/test');
+const { readSaved, waitReady } = require('./app-state');
+const { callInWorkbook } = require('./fixtures');
+
+const APP = '/production_plan_tracker.html';
+const K_STATE = 'tue_order_tracker_v1';
+
+const order = (poNo, pn) => ({
+  id: poNo + '|' + pn, week: 'W46', poNo, pn, subName: 'TUE-A', orderQty: 300,
+  orderDate: '2026-07-06', status: 'active',
+  importedAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-01T00:00:00.000Z', _dirty: false
+});
+
+/* รหัส PO ของเทสห้ามขึ้นต้น TM2… (F3 — repo นี้เป็น public) */
+const A1 = order('TM52AA001', '9100000081');
+const A2 = order('TM52AA002', '9100000082');
+const A3 = order('TM52AA003', '9100000083');
+
+const row = (o, wip) => ({ pn: o.pn, poNo: o.poNo, orderDate: '2026-07-06', qty: o.orderQty, wip });
+
+const CHOKE = 'Choke  WK46';          // ชื่อจริงมีเว้นวรรคสองตัว
+const XFRM = "X'FRM WK46";            // ชื่อจริงมีอัญประกาศเดี่ยวอยู่ในตัว
+
+async function openWith(page, orders) {
+  await page.addInitScript(([k, o]) => localStorage.setItem(k, JSON.stringify({
+    version: 1, deviceName: 't',
+    deadlineOffsets: { winding: 10, assembly: 17, support: null, inspection: 24, shipping: 28 },
+    chartPref: { mode: '14', from: '', to: '' }, orders: o, records: [], importHistory: []
+  })), [K_STATE, orders]);
+  await page.goto(APP);
+  await waitReady(page);
+  await page.waitForSelector('.tab-btn[data-tab="data"]');
+  await page.click('.tab-btn[data-tab="data"]');
+}
+
+/** เปิดไฟล์ที่มีชีตข้อมูลสองชีต (+ ชีตที่อ่านไม่ได้ ซึ่ง fixture แถมมาให้เสมอ) */
+async function openFile(page, opts) {
+  await page.setInputFiles('#callInFileInput', {
+    name: 'callin.xlsx',
+    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    buffer: await callInWorkbook(opts.main, { sheetName: opts.mainName, sheets: opts.extra })
+  });
+  await expect(page.locator('#btnCallInScan')).toBeEnabled();
+}
+
+/** ป้ายของทุกชีต พร้อมสถานะติ๊ก — อ่านจากจอจริง */
+const sheetList = page => page.evaluate(() =>
+  Array.from(document.querySelectorAll('#callInSheets .cisheet')).map(l => ({
+    name: l.querySelector('b').textContent,
+    checked: l.querySelector('input').checked,
+    text: l.innerText
+  })));
+
+const liveWip = async page => (await readSaved(page, K_STATE)).deltaWip
+  .filter(d => !d.voided).map(d => d.orderId + '@wk' + d.week + '=' + d.wip).sort();
+
+const TWO = {
+  mainName: CHOKE, main: [row(A1, 1170)],
+  extra: [{ sheetName: XFRM, rows: [row(A1, 1170), row(A2, 222), row(A3, 333)] }]
+};
+
+test('ติ๊กมาให้เฉพาะชีตที่อ่านได้ — ชีตที่อ่านไม่ได้ต้องไม่ถูกติ๊ก และต้องบอกเหตุไว้ข้าง ๆ', async ({ page }) => {
+  await openWith(page, [A1, A2, A3]);
+  await openFile(page, TWO);
+
+  const list = await sheetList(page);
+  expect(list.map(s => s.name)).toEqual([CHOKE, XFRM, 'อีกชีตที่ห้ามแตะ']);
+  expect(list.filter(s => s.checked).map(s => s.name),
+    'สองชีตข้อมูลต้องถูกติ๊กมาให้ ชีตที่อ่านไม่ได้ต้องไม่ถูกติ๊ก').toEqual([CHOKE, XFRM]);
+  expect(list[2].text, 'ต้องบอกเหตุว่าทำไมชีตนี้อ่านไม่ได้ ไม่ใช่เงียบ').toContain('P/N');
+  expect(list[1].text, 'ชีตที่อ่านได้ต้องบอกงวดกับจำนวนใบ').toContain('wk46');
+  expect(list[1].text).toContain('3 ใบ');
+});
+
+test('กดเทียบยอดรอบเดียวได้ครบทั้งสองชีต แล้วเก็บได้ในครั้งเดียว', async ({ page }) => {
+  await openWith(page, [A1, A2, A3]);
+  await openFile(page, TWO);
+  await page.click('#btnCallInScan');
+  await expect(page.locator('#callInPreviewPanel')).toBeVisible();
+
+  /* ⚠️ ยุบช่องว่างก่อนเทียบ — ชื่อชีตจริงมีเว้นวรรคสองตัว ('Choke  WK46')
+     แต่ HTML ยุบให้เหลือตัวเดียวตอนแสดงผล · ที่ต้องยืนยันคือชื่อชีตโผล่บนจอ ไม่ใช่จำนวนช่องว่าง */
+  const flat = s => s.replace(/\s+/g, ' ');
+  const sum = flat(await page.locator('#callInSummary').innerText());
+  expect(sum, 'ต้องบอกว่าเทียบจากกี่ชีตและชีตไหน').toContain('เทียบจาก 2 ชีต');
+  expect(sum).toContain(flat(CHOKE));
+  expect(sum).toContain(XFRM);
+
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(250);
+  expect(await liveWip(page), 'ต้องเก็บครบทั้งสามใบจากสองชีตในการกดครั้งเดียว').toEqual([
+    'TM52AA001|9100000081@wk46=1170',
+    'TM52AA002|9100000082@wk46=222',
+    'TM52AA003|9100000083@wk46=333'
+  ]);
+  await expect(page.locator('#toast')).toContainText('2 ชีต');
+});
+
+test('ใบที่อยู่ทั้งสองชีต ต้องใช้ค่าของชีตท้ายสุด — ผลเดียวกับนำเข้าทีละชีตตามลำดับ', async ({ page }) => {
+  await openWith(page, [A1, A2]);
+  /* ของจริงสองชีตใส่เลขตรงกันทุกใบ ที่นี่ตั้งให้ต่างกันโดยเจตนาเพื่อให้เห็นว่าใครชนะ */
+  await openFile(page, {
+    mainName: CHOKE, main: [row(A1, 111)],
+    extra: [{ sheetName: XFRM, rows: [row(A1, 999), row(A2, 222)] }]
+  });
+  await page.click('#btnCallInScan');
+  await expect(page.locator('#callInPreviewPanel')).toBeVisible();
+  expect(await page.locator('#callInSummary').innerText(),
+    'ต้องบอกว่ามีใบซ้ำกันกี่ใบ และใช้ค่าของชีตไหน').toContain('ใบที่อยู่หลายชีต 1 ใบ');
+
+  await page.click('#btnDeltaWipSave');
+  await page.waitForTimeout(250);
+  expect(await liveWip(page)).toEqual([
+    'TM52AA001|9100000081@wk46=999', 'TM52AA002|9100000082@wk46=222'
+  ]);
+});
+
+test('ติ๊กชีตคนละงวด ต้องฟ้องและไม่เทียบอะไรเลย — saveDeltaWip เก็บได้งวดเดียวต่อครั้ง', async ({ page }) => {
+  await openWith(page, [A1, A2]);
+  await openFile(page, {
+    mainName: 'Choke  WK46', main: [row(A1, 111)],
+    extra: [{ sheetName: "X'FRM WK47", rows: [row(A2, 222)] }]
+  });
+  await page.click('#btnCallInScan');
+
+  await expect(page.locator('#toast'), 'ต้องบอกว่าคนละงวด').toContainText('คนละงวด');
+  await expect(page.locator('#toast')).toContainText('wk46');
+  await expect(page.locator('#toast')).toContainText('wk47');
+  await expect(page.locator('#callInPreviewPanel'),
+    'ปนงวดแล้วห้ามเปิดหน้าผลเทียบให้กดเก็บต่อ').toBeHidden();
+  expect(await liveWip(page), 'ต้องไม่เก็บอะไรเลย').toEqual([]);
+});
+
+test('ปลดติ๊กหมดแล้วกดเทียบ ต้องบอกให้ติ๊กก่อน', async ({ page }) => {
+  await openWith(page, [A1, A2, A3]);
+  await openFile(page, TWO);
+  await page.evaluate(() => document.querySelectorAll('#callInSheets input')
+    .forEach(b => { b.checked = false; }));
+  await page.click('#btnCallInScan');
+  await expect(page.locator('#toast')).toContainText('ติ๊กชีต');
+  await expect(page.locator('#callInPreviewPanel')).toBeHidden();
+});
+
+test('ติ๊กด้วยการคลิกจริงต้องใช้งานได้ — ปลดติ๊กชีตโช้คแล้วต้องเทียบจากชีตเดียว', async ({ page }) => {
+  /* ⚠️ เทสอื่นตั้งค่า checked ผ่าน evaluate ข้อนี้คลิกของจริง
+     เพื่อพิสูจน์ว่า <label> ครอบ <input> ถูก และกดโดนจริงบนจอ */
+  await openWith(page, [A1, A2, A3]);
+  await openFile(page, TWO);
+  await page.locator('#callInSheets .cisheet').first().locator('input').click();
+
+  const list = await sheetList(page);
+  expect(list.filter(s => s.checked).map(s => s.name)).toEqual([XFRM]);
+
+  await page.click('#btnCallInScan');
+  await expect(page.locator('#callInPreviewPanel')).toBeVisible();
+  expect(await page.locator('#callInSummary').innerText()).toContain('เทียบจาก 1 ชีต');
+});

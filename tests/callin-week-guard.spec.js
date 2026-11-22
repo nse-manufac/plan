@@ -56,7 +56,11 @@ async function scan(page, rows, sheetName) {
     buffer: await callInWorkbook(rows, { sheetName })
   });
   await expect(page.locator('#btnCallInScan')).toBeEnabled();
-  await page.selectOption('#callInSheet', sheetName);
+  await page.evaluate(want => {
+    document.querySelectorAll('#callInSheets .cisheet').forEach(l => {
+      l.querySelector('input').checked = l.querySelector('b').textContent === want;
+    });
+  }, sheetName);
   await page.click('#btnCallInScan');
   await expect(page.locator('#callInPreviewPanel')).toBeVisible();
 }

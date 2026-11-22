@@ -124,6 +124,8 @@ async function callInWorkbook(rows, opts = {}) {
   const ws = wb.addWorksheet(opts.sheetName || "X-FRM wk34");
   anchorTopLeft(ws);
   ws.getCell('E1').value = 'DAILY CALL IN TRANSFOMER';
+  /* opts.sheets = ชีตข้อมูลเพิ่มในไฟล์เดียวกัน [{sheetName, rows}]
+     ไฟล์จริงของบ้าน A มีสองชีตข้อมูล (Choke + X'FRM) ที่ต้องนำเข้าทั้งคู่ */
   // ⚠️ ตำแหน่งคอลัมน์ Wip bal. ปรับได้ผ่าน opts.wipCol/opts.wipHeader — ของจริงเคยถูก
   //    แทรกคอลัมน์ใหม่เข้ามาจนเลื่อนจาก E ไป F มาแล้ว (3 ก.ย. 2026)
   //    ค่าเริ่มต้นยังเป็น E เหมือนเดิม เทสเดิมที่ไม่ส่ง opts นี้จึงไม่ต้องแก้อะไร
@@ -151,6 +153,22 @@ async function callInWorkbook(rows, opts = {}) {
     if (r.wip !== undefined) row.getCell(wipCol).value = r.wip;
     row.getCell(agingCol).value = { formula: `TODAY()-C${n}`, result: 0 };  // ดู result ที่ deliveryFormWorkbook
     if (r.commit !== undefined) row.getCell(10).value = r.commit;   // ของที่คนวางแผนกรอกเอง
+  });
+
+  (opts.sheets || []).forEach(extra=>{
+    const w2 = wb.addWorksheet(extra.sheetName);
+    anchorTopLeft(w2);
+    const h2 = w2.getRow(6);
+    [[1,'P/N'], [2,'PO  NO'], [3,'Order Date'], [4,'PO QTY'], [5,'Wip bal.'], [6,'Aging']]
+      .forEach(([c, v]) => { h2.getCell(c).value = v; });
+    (extra.rows || []).forEach((r, i) => {
+      const n = 7 + i, rw = w2.getRow(n);
+      rw.getCell(1).value = r.pn;
+      rw.getCell(2).value = r.poNo;
+      if (r.orderDate) rw.getCell(3).value = new Date(r.orderDate + 'T00:00:00Z');
+      rw.getCell(4).value = r.qty;
+      if (r.wip !== undefined) rw.getCell(5).value = r.wip;
+    });
   });
 
   const other = wb.addWorksheet('อีกชีตที่ห้ามแตะ');

@@ -40,12 +40,22 @@ async function openWith(page, orders, records = []) {
   await page.click('.tab-btn[data-tab="data"]');
 }
 
+/** ติ๊กเฉพาะชีตที่ระบุ ปลดติ๊กที่เหลือ — ตั้งแต่ติ๊กหลายชีตได้ ตัวเลือกไม่ใช่ <select> แล้ว
+ *  จับคู่ด้วยชื่อในป้าย ไม่ใช่ลำดับ เพื่อให้เทสอ่านออกว่าเจาะจงชีตไหน */
+async function pickSheets(page, names) {
+  await page.evaluate(want => {
+    document.querySelectorAll('#callInSheets .cisheet').forEach(l => {
+      l.querySelector('input').checked = want.includes(l.querySelector('b').textContent);
+    });
+  }, names);
+}
+
 /** อัปโหลดไฟล์ → เลือกชีต → กดเทียบยอด */
 async function scan(page, buf, sheet) {
   await page.setInputFiles('#callInFileInput',
     { name: 'callin.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', buffer: buf });
   await expect(page.locator('#btnCallInScan')).toBeEnabled();
-  if (sheet) await page.selectOption('#callInSheet', sheet);
+  if (sheet) await pickSheets(page, [sheet]);
   await page.click('#btnCallInScan');
   await expect(page.locator('#callInPreviewPanel')).toBeVisible();
 }
@@ -392,7 +402,7 @@ test('G1 — เลือกชีตผิดต้องขึ้นข้อ�
     { name: 'callin.xlsx', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       buffer: await callInWorkbook(ROWS) });
   await expect(page.locator('#btnCallInScan')).toBeEnabled();
-  await page.selectOption('#callInSheet', 'อีกชีตที่ห้ามแตะ');
+  await pickSheets(page, ['อีกชีตที่ห้ามแตะ']);
   await page.click('#btnCallInScan');
 
   await expect(page.locator('#toast'), 'ชีตที่ไม่มีหัวตาราง P/N ต้องขึ้นข้อความบอก').toContainText('P/N');
@@ -478,7 +488,7 @@ test('B6 — ขาดหัวตาราง Wip bal. ต้องยังป
         { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 180 }
       ], { wipHeader: '' }) });
   await expect(page.locator('#btnCallInScan')).toBeEnabled();
-  await page.selectOption('#callInSheet', 'X-FRM wk34');
+  await pickSheets(page, ['X-FRM wk34']);
   await page.click('#btnCallInScan');
 
   await expect(page.locator('#toast'), 'ต้องบอกชื่อหัวตารางที่หาไม่เจอ').toContainText('Wip bal.');

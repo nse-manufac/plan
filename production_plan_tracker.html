@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <!-- เลขรุ่นของโปรแกรม ประกาศที่นี่ที่เดียว โค้ดอ่านจากตรงนี้ (INVARIANTS F4)
      คนละเรื่องกับ state.version ที่เป็นเวอร์ชันของโครงสร้างข้อมูลในเครื่อง — ห้ามเอามาปนกัน -->
-<meta name="app-version" content="2026-11-22.1">
+<meta name="app-version" content="2026-11-22.2">
 <title>ระบบติดตามแผนงาน Production &amp; Dashboard WIP</title>
 <style>
   :root{
@@ -45,6 +45,9 @@
   .panel .desc{color:var(--text-dim);font-size:12.5px;margin-bottom:14px;}
   .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;}
   .field{display:flex;flex-direction:column;gap:5px;}
+  /* รายการชีตให้ติ๊กของหน้าเทียบยอด Call In — ไฟล์จริงมี 2-4 ชีต จึงเรียงลงมาตรง ๆ ได้ */
+  .cisheets{display:flex;flex-direction:column;gap:4px;min-width:320px;}
+  .cisheet{display:flex;align-items:center;gap:6px;font-weight:400;}
   .field label{font-size:12.5px;font-weight:600;color:var(--text-dim);}
   input[type=text],input[type=number],input[type=date],select{
     padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff;color:var(--text);min-width:120px;
@@ -1045,8 +1048,8 @@
         <input type="file" id="callInFileInput" accept=".xlsx">
       </div>
       <div class="field">
-        <label>เลือกชีต</label>
-        <select id="callInSheet" style="min-width:200px" disabled><option>— เปิดไฟล์ก่อน —</option></select>
+        <label>ชีตที่จะเทียบ — ติ๊กได้หลายชีต</label>
+        <div class="cisheets" id="callInSheets">— เปิดไฟล์ก่อน —</div>
       </div>
       <div class="field">
         <label>&nbsp;</label>
@@ -1127,7 +1130,7 @@
 
 <script src="lib/jszip.min.js?v=2c75f9c4"></script>
 <script src="lib/exceljs.min.js?v=1b114472"></script>
-<script src="core/dates.js?v=2026-11-22.1"></script>
-<script src="app.js?v=2026-11-22.1"></script>
+<script src="core/dates.js?v=2026-11-22.2"></script>
+<script src="app.js?v=2026-11-22.2"></script>
 </body>
 </html>

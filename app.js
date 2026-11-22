@@ -6581,10 +6581,24 @@ document.getElementById('btnExportExcel').addEventListener('click', exportExcelR
 function resetCallIn(){
   pendingCallIn = null;
   document.getElementById('callInPreviewPanel').style.display = 'none';
-  const sel = document.getElementById('callInSheet');
-  sel.innerHTML = '<option>— เปิดไฟล์ก่อน —</option>';
-  sel.disabled = true;
+  document.getElementById('callInSheets').textContent = '— เปิดไฟล์ก่อน —';
   document.getElementById('btnCallInScan').disabled = true;
+}
+
+/** รายการชีตให้ติ๊ก — ติ๊กมาให้เฉพาะชีตที่อ่านได้จริง (ชีต SUM ของไฟล์จริงจึงไม่ถูกติ๊กเอง)
+ *
+ *  🚨 ชีตที่อ่านไม่ได้ยังติ๊กได้ ห้าม disabled — คนที่ตั้งใจเลือกชีตนั้นต้องได้เห็น
+ *     ข้อความบอกเหตุของชีตนั้นตรง ๆ ตอนกดเทียบยอด ไม่ใช่กดไม่ได้แล้วไม่รู้ว่าทำไม (G1)
+ *  ⚠️ อ้างชีตด้วย data-idx ไม่ใช่ชื่อ — ชื่อชีตจริงมีอัญประกาศเดี่ยวอยู่ในตัว
+ *     ตัวเลือก CSS ที่ประกอบจากชื่อจึงพังได้ และ escape ให้ครบทุกอักขระไม่คุ้ม */
+function renderCallInSheets(){
+  document.getElementById('callInSheets').innerHTML = pendingCallIn.sheets.map((s, i)=>{
+    const note = s.error
+      ? ` · <span style="color:var(--red)">${escapeHtml(s.error)}</span>`
+      : ` · ${s.week ? 'wk' + escapeHtml(s.week) : 'ชื่อชีตไม่บอกงวด'} · ${numFmt(s.items.length)} ใบ`;
+    return `<label class="cisheet"><input type="checkbox" data-idx="${i}"${s.error ? '' : ' checked'}>`
+      + `<span><b>${escapeHtml(s.name)}</b>${note}</span></label>`;
+  }).join('');
 }
 
 document.getElementById('callInFileInput').addEventListener('change', async (e)=>{
@@ -6601,28 +6615,63 @@ document.getElementById('callInFileInput').addEventListener('change', async (e)=
     toast('เปิดไฟล์ไม่สำเร็จ: '+err.message);
     return;
   }
-  const sel = document.getElementById('callInSheet');
-  sel.innerHTML = '';
-  Object.keys(pendingCallIn.sheetMap).forEach(nm=>{
-    const opt = document.createElement('option');
-    opt.value = nm; opt.textContent = nm;
-    sel.appendChild(opt);
-  });
-  sel.disabled = false;
+  /* อ่านทุกชีตตอนเปิดไฟล์ครั้งเดียว — ได้สองอย่างจากงานเดียว
+     ติ๊กให้เฉพาะชีตที่อ่านได้จริง และตอนกดเทียบยอดไม่ต้องแกะ XML ซ้ำ
+     ไฟล์ Call In จริงมี 2-4 ชีต จึงไม่ใช่งานหนัก (ไฟล์แผนงาน 36 ชีตเป็นอีกหน้า) */
+  pendingCallIn.sheets = [];
+  for(const nm of Object.keys(pendingCallIn.sheetMap)){
+    const read = await readCallInSheet(pendingCallIn.zip, pendingCallIn.sheetMap[nm]);
+    const items = read.items || [];
+    pendingCallIn.sheets.push({
+      name: nm, week: weekFromSheetName(nm), items,
+      error: read.error || (items.length ? '' : 'ไม่พบแถวที่มีทั้ง P/N และ PO ในชีตนี้')
+    });
+  }
+  renderCallInSheets();
   document.getElementById('btnCallInScan').disabled = false;
 });
 
-document.getElementById('btnCallInScan').addEventListener('click', async ()=>{
+document.getElementById('btnCallInScan').addEventListener('click', ()=>{
   if(!pendingCallIn){ toast('เลือกไฟล์ก่อนครับ'); return; }
-  const name = document.getElementById('callInSheet').value;
-  const path = pendingCallIn.sheetMap[name];
-  const read = await readCallInSheet(pendingCallIn.zip, path);
-  if(read.error){ toast(read.error); return; }
-  if(!read.items.length){ toast('ไม่พบแถวที่มีทั้ง P/N และ PO ในชีตนี้'); return; }
+  const ticked = Array.from(document.querySelectorAll('#callInSheets input[data-idx]'))
+    .filter(b=>b.checked).map(b=>pendingCallIn.sheets[Number(b.dataset.idx)]);
+  if(!ticked.length){
+    /* ไม่มีชีตไหนติ๊กอยู่ · ถ้าเป็นเพราะทุกชีตในไฟล์อ่านไม่ได้ ต้องบอกเหตุของชีตนั้น
+       ไม่ใช่สั่งให้ "ติ๊กก่อน" ซึ่งเป็นคำแนะนำที่ทำตามไม่ได้ (G1)
+       มีชีตที่ติ๊กได้แต่คนปลดติ๊กเอง = สั่งให้ติ๊กถูกแล้ว */
+    const first = pendingCallIn.sheets.find(s=>s.error);
+    toast(first && pendingCallIn.sheets.every(s=>s.error)
+      ? `ชีต "${first.name}" — ${first.error}`
+      : 'ติ๊กชีตที่จะเทียบก่อนครับ');
+    return;
+  }
 
-  pendingCallIn.week = weekFromSheetName(name);
-  pendingCallIn.items = read.items;
-  pendingCallIn.plan = planCallIn(read.items);
+  /* ชีตที่อ่านไม่ได้แม้แต่ชีตเดียว = ไม่เทียบอะไรทั้งนั้น
+     ข้ามมันไปเฉย ๆ แล้วเทียบที่เหลือ คือทางที่ทำให้คนลืมชีตโดยไม่รู้ตัว (G1) */
+  const bad = ticked.find(s=>s.error);
+  if(bad){ toast(`ชีต "${bad.name}" — ${bad.error}`); return; }
+
+  /* 🚨 ทุกชีตที่ติ๊กต้องเป็นงวดเดียวกัน — saveDeltaWip() เก็บได้งวดเดียวต่อครั้ง
+     ปล่อยให้ปนงวดแล้วใบของชีตหนึ่งจะถูกเก็บเป็นงวดของอีกชีต = ยอดผิดงวดแบบเงียบ
+     คนละเรื่องกับด่านของ deltaWeekSwitchLoss() ซึ่งคุมการเปลี่ยน "งวดที่ยึดอยู่" */
+  const weeks = Array.from(new Set(ticked.map(s=>s.week).filter(Boolean)));
+  if(weeks.length > 1){
+    toast('ชีตที่ติ๊กอยู่คนละงวด (' + weeks.map(w=>'wk'+w).join(' · ')
+      + ') — เก็บได้งวดเดียวต่อครั้ง ติ๊กเฉพาะชีตของงวดเดียวกันครับ');
+    return;
+  }
+
+  /* ใบที่อยู่หลายชีต (ชีตโช้คของบ้าน A เป็นชุดย่อยของชีตหลักทั้งก้อน) เอาค่าของชีตท้ายสุด
+     = ผลเดียวกับการนำเข้าทีละชีตตามลำดับ ซึ่งเป็นสิ่งที่การติ๊กหลายชีตมาแทน */
+  const byId = new Map();
+  ticked.forEach(s=> s.items.forEach(it=> byId.set(it.id, it)));
+  const items = Array.from(byId.values());
+
+  pendingCallIn.week = weeks[0] || '';
+  pendingCallIn.picked = ticked.map(s=>s.name);
+  pendingCallIn.dupes = ticked.reduce((n,s)=>n + s.items.length, 0) - items.length;
+  pendingCallIn.items = items;
+  pendingCallIn.plan = planCallIn(items);
   renderCallInPreview();
 });
 
@@ -6669,6 +6718,10 @@ function renderCallInPreview(){
      <tbody>${rows.join('') || emptyRow(6,'ไม่มีอะไรต้องเปลี่ยน')}</tbody>`;
 
   const parts = [
+    `เทียบจาก <b>${numFmt(pendingCallIn.picked.length)}</b> ชีต: `
+      + pendingCallIn.picked.map(n=>'<b>'+escapeHtml(n)+'</b>').join(' · ')
+      + (pendingCallIn.dupes
+          ? ` · ใบที่อยู่หลายชีต ${numFmt(pendingCallIn.dupes)} ใบ ใช้ค่าของชีตท้ายสุด` : ''),
     `จับคู่ PO ได้ <b>${numFmt(p.update.length)}</b> แถว · <b>ยอดไม่ตรงกัน ${numFmt(willChange.length)} แถว</b>`,
     `แถวในไฟล์ที่ไม่มีใบนั้นในแอป <b>${numFmt(p.missingOrder.length)}</b> — Delta รู้จัก เราไม่รู้จัก`,
     `ใบที่เรายังส่งไม่ครบ แต่ไม่มีแถวในไฟล์ <b>${numFmt(p.missingRow.length)}</b> — เรารู้จัก Delta ไม่มี`
@@ -6716,9 +6769,9 @@ document.getElementById('btnDeltaWipSave').addEventListener('click', ()=>{
   /* ⚠️ ห้ามรายงาน r.cleared เป็น "ลบไปกี่ใบ" — ขอบเขตการล้างคือใบที่อยู่ในชีตนี้
    *    ทุกใบที่ถูกล้างจึงถูกเขียนทับด้วยของใหม่ทันทีเสมอ ไม่มีอะไรหายไปจริง */
   const total = r.added + r.updated;
-  toast(`เก็บยอดของ Delta งวด wk${week} แล้ว — ${total} ใบในชีตนี้`
+  toast(`เก็บยอดของ Delta งวด wk${week} แล้ว — ${total} ใบจาก ${pendingCallIn.picked.length} ชีต`
       + (r.blank ? ` (มียอด ${total - r.blank} · Delta เว้นช่องว่างไว้ ${r.blank})` : '')
-      + ` · ใบที่ไม่ได้อยู่ในชีตนี้ไม่ถูกแตะ`);
+      + ` · ใบที่ไม่ได้อยู่ในชีตที่ติ๊กไม่ถูกแตะ`);
   renderSyncBadge();
   renderDeliveryNote();
 });
