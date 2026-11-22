@@ -112,8 +112,9 @@ test('ใบที่อยู่ทั้งสองชีต ต้องใ�
   });
   await page.click('#btnCallInScan');
   await expect(page.locator('#callInPreviewPanel')).toBeVisible();
-  expect(await page.locator('#callInSummary').innerText(),
-    'ต้องบอกว่ามีใบซ้ำกันกี่ใบ และใช้ค่าของชีตไหน').toContain('ใบที่อยู่หลายชีต 1 ใบ');
+  const sum = await page.locator('#callInSummary').innerText();
+  expect(sum, 'ต้องบอกว่ามีใบซ้ำกันกี่ใบ และใช้ค่าของชีตไหน').toContain('ใบที่อยู่หลายชีต 1 ใบ');
+  expect(sum, 'ค่าสองชีตไม่เท่ากันต้องฟ้องด้วย ไม่ใช่เงียบ').toContain('ไม่เท่ากัน 1 ใบ');
 
   await page.click('#btnDeltaWipSave');
   await page.waitForTimeout(250);
@@ -249,4 +250,89 @@ test('🚨 ชีตที่อ่านแล้วพัง ต้องไ�
   await expect(page.locator('#callInPreviewPanel'),
     'ชีตที่ดีต้องยังเทียบได้ตามปกติ').toBeVisible();
   expect(await page.locator('#callInSummary').innerText()).toContain('เทียบจาก 1 ชีต');
+});
+
+
+/* ---------- สองชีตให้ค่าของใบเดียวกันไม่เท่ากัน (ผู้ตรวจ #146 รอบ 3 รันพิสูจน์) ----------
+ *
+ * 🚨 การยุบใบซ้ำเกิด "ก่อน" planCallIn() ค่าของชีตแรกจึงไม่เคยถูกเทียบเลย
+ *    ก่อนการติ๊กหลายชีตต้องนำเข้าทีละชีต คนจึงเห็นหน้าผลเทียบของทุกชีต ของผิดในชีตแรกถูกเห็น
+ *    ที่หายคือ **คำเตือน** ไม่ใช่ข้อมูลที่เก็บ (ค่าที่เก็บยังเท่ากับการนำเข้าทีละชีตตามลำดับ)
+ * 🚨 ฉากนี้เอื้อมถึงวันนี้ — ใบซ้ำ 47 ใบของไฟล์ WK46 มาจากการที่เจ้าของก๊อปมาเอง
+ *    ถ้าแถวที่ก๊อปค้างไว้เก่ากว่าชีตที่ Delta อัปเดตทีหลัง ค่าเก่าจะชนะ (ชีตท้ายชนะ)
+ */
+
+test('🚨 สองชีตให้ยอด Delta ของใบเดียวกันไม่เท่ากัน ต้องฟ้องพร้อมชื่อชีต ห้ามกลืนเงียบ', async ({ page }) => {
+  /* ฉากที่ผู้ตรวจรัน — ยอดเรา 300 · ชีตแรก 50 · ชีตท้าย 300
+     แถวที่รอดตรงกับยอดเราพอดี จอจึงขึ้น "ยอดไม่ตรงกัน 0 แถว" และตาราง "ไม่มีอะไรต้องเปลี่ยน"
+     ทั้งที่ในไฟล์มีเลขสองตัวที่ขัดกันอยู่ */
+  await openWith(page, [A1]);
+  await openFile(page, {
+    mainName: CHOKE, main: [row(A1, 50)],
+    extra: [{ sheetName: XFRM, rows: [row(A1, 300)] }]
+  });
+  await page.click('#btnCallInScan');
+  await expect(page.locator('#callInPreviewPanel')).toBeVisible();
+
+  const flat = s => s.replace(/\s+/g, ' ');
+  const sum = flat(await page.locator('#callInSummary').innerText());
+  expect(sum, 'ต้องฟ้องว่าไฟล์ให้ค่าไม่เท่ากัน').toContain('ไม่เท่ากัน 1 ใบ');
+  expect(sum, 'ต้องบอกชื่อชีตที่ขัดกัน เพื่อให้ไปเปิดดูได้').toContain(flat(CHOKE));
+  expect(sum).toContain(XFRM);
+  expect(sum, 'ต้องบอกว่าใช้ค่าของชีตไหน').toContain('ชีตท้ายสุด');
+});
+
+test('🚨 PO QTY ที่ไม่ตรงกับยอดสั่ง ถ้าอยู่ในชีตแรก ต้องยังมีอะไรฟ้อง', async ({ page }) => {
+  /* คำเตือน PO QTY ของ planCallIn() หายไปเลยเมื่อของผิดอยู่ในชีตแรก เพราะแถวนั้นถูกยุบทิ้งก่อน
+     โค้ดเขียนเองว่าข้อนี้ "ร้ายแรงกว่ายอดค้างไม่ตรง ต้องหาว่าฝั่งไหนถูก"
+     แถบค่าไม่เท่ากันคือสิ่งที่ปิดรูนี้ — ไม่ได้เอาคำเตือนเดิมกลับมา แต่ชี้ไปที่ใบและชีตที่ต้องดู */
+  await openWith(page, [A1]);
+  await openFile(page, {
+    mainName: CHOKE, main: [{ ...row(A1, 1170), qty: 999 }],
+    extra: [{ sheetName: XFRM, rows: [row(A1, 1170)] }]
+  });
+  await page.click('#btnCallInScan');
+  const sum = await page.locator('#callInSummary').innerText();
+  expect(sum, 'PO QTY ของสองชีตไม่เท่ากัน ต้องไม่เงียบ').toContain('ไม่เท่ากัน 1 ใบ');
+});
+
+test('ค่าตรงกันทุกชีต ต้องไม่ฟ้อง — ไฟล์ WK46 ของจริงเป็นแบบนี้ทั้ง 47 ใบ', async ({ page }) => {
+  /* คู่กับสองข้อข้างบน · แถบที่ขึ้นทุกสัปดาห์คือแถบที่ไม่มีใครอ่าน */
+  await openWith(page, [A1, A2]);
+  await openFile(page, {
+    mainName: CHOKE, main: [row(A1, 1170)],
+    extra: [{ sheetName: XFRM, rows: [row(A1, 1170), row(A2, 222)] }]
+  });
+  await page.click('#btnCallInScan');
+  const sum = await page.locator('#callInSummary').innerText();
+  expect(sum, 'ใบซ้ำที่ค่าตรงกันต้องไม่ถูกฟ้อง').not.toContain('ไม่เท่ากัน');
+  expect(sum, 'แต่ยังต้องบอกว่ามีใบซ้ำ').toContain('ใบที่อยู่หลายชีต 1 ใบ');
+});
+
+test('ใบเดียวอยู่สามชีต ต้องนับเป็น 1 ใบ ไม่ใช่ 2 — เลขนี้เป็นจำนวน "ใบ" ไม่ใช่ "แถวที่ยุบ"', async ({ page }) => {
+  await openWith(page, [A1]);
+  await openFile(page, {
+    mainName: CHOKE, main: [row(A1, 1170)],
+    extra: [{ sheetName: XFRM, rows: [row(A1, 1170)] },
+             { sheetName: 'Choke 2  WK46', rows: [row(A1, 1170)] }]
+  });
+  await page.click('#btnCallInScan');
+  const sum = await page.locator('#callInSummary').innerText();
+  expect(sum).toContain('เทียบจาก 3 ชีต');
+  expect(sum, 'สูตรเดิม (ผลรวมแถว − จำนวนใบ) ได้ 2 ซึ่งเป็นจำนวนแถวที่ถูกยุบ ไม่ใช่จำนวนใบ')
+    .toContain('ใบที่อยู่หลายชีต 1 ใบ');
+});
+
+test('แถวซ้ำใน "ชีตเดียวกัน" ไม่ใช่ใบที่อยู่หลายชีต — ติ๊กชีตเดียวต้องไม่ขึ้นเลขนี้', async ({ page }) => {
+  /* ของจริงเกิดได้เมื่อ Delta ใส่ใบเดียวกันสองแถวในชีตเดียว
+     สูตรเดิมทำให้ขึ้น "เทียบจาก 1 ชีต … อยู่หลายชีต 1 ใบ" ซึ่งอ่านไม่ได้ความ */
+  await openWith(page, [A1]);
+  await openFile(page, { mainName: XFRM, main: [row(A1, 50), row(A1, 1170)], extra: [] });
+  await page.evaluate(() => document.querySelectorAll('#callInSheets input')
+    .forEach((b, i) => { b.checked = i === 0; }));
+  await page.click('#btnCallInScan');
+  const sum = await page.locator('#callInSummary').innerText();
+  expect(sum).toContain('เทียบจาก 1 ชีต');
+  expect(sum, 'ชีตเดียวจะ "อยู่หลายชีต" ไม่ได้').not.toContain('อยู่หลายชีต');
+  expect(sum, 'แต่สองแถวที่ขัดกันในชีตเดียวกันยังต้องฟ้อง').toContain('ไม่เท่ากัน 1 ใบ');
 });

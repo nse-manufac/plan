@@ -1120,16 +1120,12 @@ async function sheetPathMap(zip){
   return map;
 }
 
-/** ชื่อชีตที่ถูกซ่อนไว้ — กฎเดียวกับ isHiddenSheet(): ของเก่าที่เขาตั้งใจเก็บ ห้ามดึงยอดมาใช้
- *  ⚠️ ไม่มี attribute state = มองเห็น (ไฟล์จริงของ Delta ไม่เขียน state ให้ชีตที่มองเห็น) */
+/** ชื่อชีตที่ถูกซ่อนไว้ — กฎเดียวกับ isHiddenSheet() · ⚠️ ไม่มี attribute state = มองเห็น */
 async function hiddenSheetNames(zip){
   const wbDoc = parseXml(await zip.file('xl/workbook.xml').async('string'));
-  const out = new Set();
-  Array.from(wbDoc.getElementsByTagNameNS(XL_NS, 'sheet')).forEach(sh=>{
-    const st = sh.getAttribute('state');
-    if(st && st !== 'visible') out.add(sh.getAttribute('name'));
-  });
-  return out;
+  return new Set(Array.from(wbDoc.getElementsByTagNameNS(XL_NS, 'sheet'))
+    .filter(sh=>{ const st = sh.getAttribute('state'); return st && st !== 'visible'; })
+    .map(sh=>sh.getAttribute('name')));
 }
 
 /** ค่าที่คนเห็นในช่องหนึ่ง — คืนเป็นข้อความเสมอเพื่อเอาไปจับคู่ */
@@ -6597,15 +6593,9 @@ function resetCallIn(){
   document.getElementById('btnCallInScan').disabled = true;
 }
 
-/** รายการชีตให้ติ๊ก — ติ๊กมาให้เฉพาะชีตที่อ่านได้จริงและไม่ถูกซ่อนไว้ (ชีต SUM จึงไม่ถูกติ๊กเอง)
- *
- *  🚨 ชีตที่อ่านไม่ได้ยังติ๊กได้ ห้าม disabled — คนที่ตั้งใจเลือกชีตนั้นต้องได้เห็น
- *     ข้อความบอกเหตุของชีตนั้นตรง ๆ ตอนกดเทียบยอด ไม่ใช่กดไม่ได้แล้วไม่รู้ว่าทำไม (G1)
- *  🚨 ชีตที่ซ่อนไว้ติ๊กได้ด้วยหลักเดียวกัน แต่ห้ามติ๊กให้เอง และต้องมีคำว่า "ซ่อน" บนจอ
- *     ของเก่าที่เขาเก็บมักเป็น **งวดเดียวกัน** ด่าน "ชีตคนละงวด" จึงช่วยไม่ได้ และยอดของมัน
- *     จะชนะเพราะการยุบใบซ้ำเอาค่าของชีตท้ายสุด = เลขเก่าไปถึงกระดาษที่ส่ง Delta
- *  ⚠️ อ้างชีตด้วย data-idx ไม่ใช่ชื่อ — ชื่อชีตจริงมีอัญประกาศเดี่ยวอยู่ในตัว
- *     ตัวเลือก CSS ที่ประกอบจากชื่อจึงพังได้ และ escape ให้ครบทุกอักขระไม่คุ้ม */
+/** รายการชีตให้ติ๊ก — **กฎทุกข้อกับเหตุผลอยู่ใน CLAUDE.md** (ค้นด้วย `ติ๊กหลายชีต`)
+ *  🚨 ติ๊กให้เฉพาะชีตที่อ่านได้และไม่ถูกซ่อน · ทั้งสองแบบยังติ๊กได้เอง ห้าม disabled (G1)
+ *  🚨 ชีตที่ซ่อนต้องมีคำว่า "ซ่อน" บนจอ · ⚠️ อ้างด้วย data-idx ไม่ใช่ชื่อ (ชื่อจริงมี ' อยู่ในตัว) */
 function renderCallInSheets(){
   document.getElementById('callInSheets').innerHTML = pendingCallIn.sheets.map((s, i)=>{
     const note = s.error
@@ -6638,10 +6628,8 @@ document.getElementById('callInFileInput').addEventListener('change', async (e)=
      ไฟล์ Call In จริงมี 2-4 ชีต จึงไม่ใช่งานหนัก (ไฟล์แผนงาน 36 ชีตเป็นอีกหน้า) */
   pendingCallIn.sheets = [];
   for(const nm of Object.keys(pendingCallIn.sheetMap)){
-    /* 🚨 ต้อง try/catch ทีละชีต — ลูปนี้อยู่นอก try ที่ครอบการโหลดซิป · ชีตที่ workbook.xml
-       ประกาศไว้แต่ไฟล์ xml หายจากซิป ทำให้ readCallInSheet() throw แล้ว **ทั้งไฟล์ตาย**
-       ปุ่มยัง disabled · รายการชีตยังว่าง · ไม่บอกเหตุอะไรเลย = ทางตันเงียบที่ G1 ห้ามไว้
-       ใส่เป็น error ของชีตนั้น ชีตที่ดีจึงยังเทียบได้ (ผู้ตรวจ #146 รันพิสูจน์) */
+    /* 🚨 ต้อง try/catch ทีละชีต — ลูปอยู่นอก try ที่ครอบการโหลดซิป ชีตเดียวที่ throw
+       ทำให้ **ทั้งไฟล์ตายเงียบ** (CLAUDE.md หัวข้อ `ติ๊กหลายชีต`) */
     let read;
     try{
       read = await readCallInSheet(pendingCallIn.zip, pendingCallIn.sheetMap[nm]);
@@ -6689,15 +6677,25 @@ document.getElementById('btnCallInScan').addEventListener('click', ()=>{
     return;
   }
 
-  /* ใบที่อยู่หลายชีต (ชีตโช้คของบ้าน A เป็นชุดย่อยของชีตหลักทั้งก้อน) เอาค่าของชีตท้ายสุด
-     = ผลเดียวกับการนำเข้าทีละชีตตามลำดับ ซึ่งเป็นสิ่งที่การติ๊กหลายชีตมาแทน */
+  /* ใบที่อยู่หลายชีตเอาค่าของชีตท้ายสุด = ผลเดียวกับการนำเข้าทีละชีตตามลำดับ
+     🚨 แต่ค่าที่ไม่เท่ากันของใบเดียวกัน **ต้องฟ้อง ห้ามเงียบ** — การยุบก่อนเทียบทำให้ค่าของ
+        ชีตแรกไม่เคยถึง planCallIn() เลย รวมคำเตือน PO QTY · ⚠️ และนับ "ใบ" ไม่ใช่ "แถวที่ยุบ"
+     เหตุผลเต็มกับฉากที่เกิดอยู่แล้ววันนี้: CLAUDE.md หัวข้อ `ติ๊กหลายชีต` */
   const byId = new Map();
-  ticked.forEach(s=> s.items.forEach(it=> byId.set(it.id, it)));
-  const items = Array.from(byId.values());
+  ticked.forEach(s=> s.items.forEach(it=> byId.has(it.id)
+    ? byId.get(it.id).push({sheet: s.name, it}) : byId.set(it.id, [{sheet: s.name, it}])));
+  const sameVal = (a, b)=> String(a.fileWip || '').trim() === String(b.fileWip || '').trim() && a.fileQty === b.fileQty;
+  const items = [], clash = []; let multi = 0;
+  byId.forEach(rows=>{
+    items.push(rows[rows.length - 1].it);                       // ชีตท้ายสุดชนะ (กฎเดิม)
+    if(new Set(rows.map(r=>r.sheet)).size > 1) multi++;
+    if(rows.some(r=> !sameVal(r.it, rows[0].it))) clash.push(rows.map(r=>r.sheet));
+  });
 
   pendingCallIn.week = weeks[0] || '';
   pendingCallIn.picked = ticked.map(s=>s.name);
-  pendingCallIn.dupes = ticked.reduce((n,s)=>n + s.items.length, 0) - items.length;
+  pendingCallIn.multi = multi;
+  pendingCallIn.clash = clash;
   pendingCallIn.items = items;
   pendingCallIn.plan = planCallIn(items);
   renderCallInPreview();
@@ -6748,12 +6746,18 @@ function renderCallInPreview(){
   const parts = [
     `เทียบจาก <b>${numFmt(pendingCallIn.picked.length)}</b> ชีต: `
       + pendingCallIn.picked.map(n=>'<b>'+escapeHtml(n)+'</b>').join(' · ')
-      + (pendingCallIn.dupes
-          ? ` · ใบที่อยู่หลายชีต ${numFmt(pendingCallIn.dupes)} ใบ ใช้ค่าของชีตท้ายสุด` : ''),
+      + (pendingCallIn.multi
+          ? ` · ใบที่อยู่หลายชีต ${numFmt(pendingCallIn.multi)} ใบ ใช้ค่าของชีตท้ายสุด` : ''),
     `จับคู่ PO ได้ <b>${numFmt(p.update.length)}</b> แถว · <b>ยอดไม่ตรงกัน ${numFmt(willChange.length)} แถว</b>`,
     `แถวในไฟล์ที่ไม่มีใบนั้นในแอป <b>${numFmt(p.missingOrder.length)}</b> — Delta รู้จัก เราไม่รู้จัก`,
     `ใบที่เรายังส่งไม่ครบ แต่ไม่มีแถวในไฟล์ <b>${numFmt(p.missingRow.length)}</b> — เรารู้จัก Delta ไม่มี`
   ];
+  if(pendingCallIn.clash.length){
+    const ns = Array.from(new Set([].concat(...pendingCallIn.clash)));
+    parts.push(`🚨 <b style="color:var(--red)">ไฟล์ให้ค่าของใบเดียวกันไม่เท่ากัน `
+      + `${numFmt(pendingCallIn.clash.length)} ใบ</b> — ใช้ค่าของชีตท้ายสุด ต้องหาว่าแถวไหนถูก`
+      + ` (${ns.map(n=>'<b>'+escapeHtml(n)+'</b>').join(' · ')})`);
+  }
   if(p.qtyMismatch.length){
     parts.push(`⚠️ <b>PO QTY ไม่ตรงกัน ${numFmt(p.qtyMismatch.length)} แถว</b> — ร้ายแรงกว่ายอดค้างไม่ตรง ต้องหาว่าฝั่งไหนถูก`);
   }
