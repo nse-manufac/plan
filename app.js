@@ -1315,9 +1315,9 @@ function deltaWipLeft(dw, orderQty, shipped){
  *     ใบของชีตแรกจะหายจากจอทั้งชุด
  *
  *  เหตุผลที่ต้องตัดสินด้วย createdAt อยู่ที่ deltaWipNewer() */
-function currentDeltaWeek(){
+function currentDeltaWeek(rows = state.deltaWip){
   let best = null;
-  state.deltaWip.forEach(d=>{
+  rows.forEach(d=>{
     if(d.voided) return;
     if(!best || deltaWipNewer(d, best)) best = d;
   });
@@ -1336,41 +1336,63 @@ function currentDeltaWeek(){
  *     ทางกู้มีทางเดียวคือนำเข้าไฟล์ของ "งวดใหม่" นั้นด้วยชื่อชีตที่เป็นงวดเดิม
  *     ด่านนี้จึงต้องอยู่ "ก่อน" กดเก็บ ไม่ใช่ฟ้องทีหลัง
  *
- *  🚨 นับเฉพาะ "หน่วยอื่น" ห้ามนับใบของหน่วยที่ชีตนี้ครอบ
- *     ใบของหน่วยเดียวกันที่ Delta ตัดออกจากงวดใหม่ (ส่งครบแล้วเขาตัดออกจากไฟล์เลย)
- *     **ต้องหายตามการออกแบบ** — นั่นคือเหตุผลทั้งหมดที่ deltaWipOf() มีด่านงวด
- *     นับรวมแล้วกล่องจะเด้งทุกสัปดาห์ด้วยเลขที่เป็นเรื่องปกติ = คำเตือนที่ไม่มีใครอ่าน
- *     (เทสเดิมสองข้อของ #62 จับข้อนี้ได้ทันทีตอนเขียนผิดเป็นแบบนั้น)
- *  ⚠️ ไม่นับใบที่อยู่ในชีตที่กำลังจะเก็บ — ใบพวกนั้นได้แถวของงวดใหม่ทันที ไม่ได้เสียอะไร
- *  ⚠️ เดินผ่าน state.deltaWip รอบเดียว ห้ามเรียก deltaWipOf() ต่อใบ (ของจริง 712 ใบ)
- *     แต่ต้องตัดสินเหมือน deltaWipOf() เป๊ะ ๆ คือ "หาแถวใหม่สุดของใบนั้น แล้วค่อยเทียบงวด"
- *     ไม่ใช่ "มีแถวของงวดนี้ไหม" ซึ่งให้คนละคำตอบกับใบที่มีหลายงวด */
+ *  🚨 ห้ามเดาว่า "งวดที่เก็บจะกลายเป็นงวดที่ยึด" — จริงเฉพาะตอนเกิดแถวใหม่
+ *     saveDeltaWip() เจอแถว (ใบ+งวด) เดิมแล้ว Object.assign ทับโดยไม่บัมป์ createdAt (B4)
+ *     งวดที่ยึดจึงไม่ขยับ และการ "เก็บไฟล์เดิมซ้ำ" ไม่ได้ทำให้ใครเสียยอดเลย
+ *     ฉบับแรกเดาเอา แล้วเตือนว่า "จะเสียทันที" ในฉากที่เก็บแล้วไม่เสียอะไร (ผู้ตรวจ #145 รันพิสูจน์)
+ *     ตอนนี้จึง **จำลองผลของการเก็บบนสำเนาแถว** แล้วถามคำถามเดิมสองครั้ง ก่อนกับหลัง
+ *     ชุดกฎการมองเห็น (currentDeltaWeek + แถวใหม่สุดของใบ) จึงมีชุดเดียว ไม่มีทางหลุดจากกัน
+ *
+ *  🚨 ตัดสิน **ต่อใบ** ห้ามตัดด้วยหน่วย — ไฟล์จริง "หนึ่งชีตไม่ใช่หนึ่งหน่วย"
+ *     ชีตที่สองของ WK 35 ตัวจริงมี TUE-U 59 ใบ และ TUE-H ปนมา 1 ใบ
+ *     ฉบับแรกตัดใบทิ้งทั้งหน่วยที่ชีตครอบ ใบปน 1 ใบจึงพา TUE-H ทั้ง 341 ใบออกจากการนับ
+ *     = ด่านเงียบสนิทกับไฟล์จริงทุกชีต (ผู้ตรวจ #145 รันพิสูจน์ · CLAUDE.md เตือนข้อนี้ไว้ตรง ๆ)
+ *
+ *  🚨 นับเฉพาะใบที่ **ยังค้างส่ง** (wipBalance > 0) — ใบที่ส่งครบแล้ว Delta ตัดออกจาก
+ *     ไฟล์งวดใหม่เป็นเรื่องปกติทุกสัปดาห์ ซึ่งเป็นเหตุผลทั้งหมดที่ deltaWipOf() มีด่านงวด
+ *     นับรวมแล้วกล่องจะเด้งด้วยเลขที่เป็นเรื่องปกติ = คำเตือนที่ไม่มีใครอ่าน
+ *     เกณฑ์เดียวกับหน้า FG ("ส่งครบแล้วไม่มีอะไรต้องเทียบ · ยังค้างแล้วไม่มีในไฟล์ต้องฟ้อง")
+ *
+ *  ⚠️ เทส "เลขที่เตือนต้องตรงกับที่เสียจริง" กันสำเนาการเขียนแถวข้างล่างหลุดจาก saveDeltaWip() */
 function deltaWeekSwitchLoss(newWeek, items){
-  const cur = currentDeltaWeek();
-  if(cur == null || String(cur) === String(newWeek)) return [];
   const orderById = {}; activeOrders().forEach(o=>orderById[o.id]=o);
-  const unitOf = o => String(o.subName || '');
+  const picked = (items || []).filter(it => orderById[it.id]);
+  if(!picked.length) return [];          // = ทางที่ saveDeltaWip() คืนก่อนแตะอะไร
 
-  const inSheet = new Set(), units = new Set();
-  (items || []).forEach(it=>{
-    const o = orderById[it.id];
-    if(!o) return;                 // ใบที่เราไม่รู้จัก saveDeltaWip ก็ไม่เก็บ
-    inSheet.add(o.id);
-    units.add(unitOf(o));
+  /* สำเนาผลของการเก็บ — สองขั้นเดียวกับ saveDeltaWip() เป๊ะ ๆ
+     1) ล้างแถวของใบที่อยู่ในชีตนี้  2) เขียนทับแถว (ใบ+งวด) เดิม หรือเพิ่มแถวใหม่
+     ค่า wip ไม่มีผลกับการมองเห็น จึงไม่ต้องจำลอง */
+  const inSheet = new Set(picked.map(it => it.id));
+  const now = new Date().toISOString();
+  const post = state.deltaWip.map(d => inSheet.has(d.orderId) ? {...d, voided: true} : d);
+  picked.forEach(it=>{
+    const i = post.findIndex(d => d.orderId === it.id && String(d.week) === String(newWeek));
+    if(i > -1) post[i] = {...post[i], voided: false};
+    else post.push({orderId: it.id, week: String(newWeek), createdAt: now, voided: false});
   });
-  /* ไม่มีใบที่รู้จักเลย = saveDeltaWip() คืนก่อนแตะอะไร งวดที่ยึดอยู่จึงไม่ขยับ */
-  if(!inSheet.size) return [];
 
-  const best = new Map();
-  state.deltaWip.forEach(d=>{
-    const o = orderById[d.orderId];
-    if(d.voided || !o || inSheet.has(d.orderId) || units.has(unitOf(o))) return;
-    const b = best.get(d.orderId);
-    if(!b || deltaWipNewer(d, b)) best.set(d.orderId, d);
+  /* ใบที่มองเห็นยอดอยู่ในชุดแถวหนึ่ง — ใช้กฎเดียวกับ deltaWipOf() คือหาแถวใหม่สุดของใบนั้น
+     แล้วค่อยเทียบกับงวดที่ยึดอยู่ของชุดนั้น · ไม่ใช่ "มีแถวของงวดนี้ไหม" ซึ่งคนละคำตอบ */
+  const visible = rows => {
+    const wk = currentDeltaWeek(rows);
+    const best = new Map();
+    rows.forEach(d=>{
+      if(d.voided) return;
+      const b = best.get(d.orderId);
+      if(!b || deltaWipNewer(d, b)) best.set(d.orderId, d);
+    });
+    const out = new Set();
+    best.forEach((d, id)=>{ if(wk != null && String(d.week) === String(wk)) out.add(id); });
+    return out;
+  };
+
+  const after = visible(post);
+  const cumMap = buildCumMap(state.records);
+  return Array.from(visible(state.deltaWip)).filter(id=>{
+    if(after.has(id)) return false;
+    const o = orderById[id];
+    return !!o && wipBalance(o, cumMap[id]) > 0;
   });
-  const lost = [];
-  best.forEach((d, id)=>{ if(String(d.week) === String(cur)) lost.push(id); });
-  return lost;
 }
 
 /** เลขสัปดาห์จากชื่อชีต เช่น "X'FRM3M4 wk34" -> "34"
@@ -6663,7 +6685,8 @@ function renderCallInPreview(){
     const lost = deltaWeekSwitchLoss(pendingCallIn.week, pendingCallIn.items);
     parts.push(`🚨 <b style="color:var(--red)">งวดไม่ตรงกับที่ยึดอยู่</b> — ยึดอยู่ <b>wk${escapeHtml(curWk)}</b>`
       + ` · ไฟล์นี้เป็น <b>wk${escapeHtml(pendingCallIn.week)}</b>`
-      + (lost.length ? ` · เก็บแล้ว <b>${numFmt(lost.length)} ใบของหน่วยอื่นจะไม่มียอดของ Delta</b>` : ''));
+      + (lost.length
+          ? ` · เก็บแล้ว <b>${numFmt(lost.length)} ใบที่ยังค้างส่งจะไม่มียอดของ Delta</b>` : ''));
   } else if(pendingCallIn.week){
     parts.push(`งวดของไฟล์นี้ <b>wk${escapeHtml(pendingCallIn.week)}</b>`
       + (curWk ? ' · ตรงกับงวดที่ยึดอยู่' : ' · ยังไม่มีงวดไหนถูกยึดไว้'));
@@ -6684,7 +6707,7 @@ document.getElementById('btnDeltaWipSave').addEventListener('click', ()=>{
   const lossIds = deltaWeekSwitchLoss(week, pendingCallIn.items);
   if(lossIds.length && !confirm(
       `งวดที่ยึดอยู่ตอนนี้คือ wk${currentDeltaWeek()} แต่ไฟล์นี้เป็น wk${week}\n\n`
-    + `เก็บแล้ว ใบของหน่วยอื่น ${numFmt(lossIds.length)} ใบจะไม่มียอดของ Delta ทันที\n`
+    + `เก็บแล้ว ใบที่ยังค้างส่งอีก ${numFmt(lossIds.length)} ใบจะไม่มียอดของ Delta ทันที\n`
     + `(หายจากหน้ายอดคงคลัง FG · หน้าใบส่งสินค้า · และช่อง Wip bal. บนกระดาษ)\n\n`
     + `กดนำเข้าไฟล์เดิมซ้ำกู้คืนไม่ได้ — ต้องนำเข้าไฟล์ของหน่วยนั้นด้วยชื่อชีตที่เป็น wk${week}`
     + `\n\nยืนยันว่าจะเก็บ?`)) return;

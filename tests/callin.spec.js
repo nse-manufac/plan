@@ -249,6 +249,11 @@ test('#62 — ใบที่หายไปจากไฟล์รอบให
   await scan(page, await callInWorkbook([
     { pn: '9100000041', poNo: 'PO-C041', orderDate: '2026-07-06', qty: 300, wip: 90 }
   ], { sheetName: 'X-FRM wk35' }), 'X-FRM wk35');
+  /* ⚠️ ด่านงวดถามก่อนเก็บ และถามถูกแล้ว — PO-C040 ยังค้างส่งเต็มจำนวน (ไม่มี record ส่งของ)
+     แล้วหลุดจากไฟล์งวดใหม่ ซึ่งเป็นเรื่องที่ต้องเอาไปคุยกับ Delta ไม่ใช่เรื่องปกติ
+     (เกณฑ์เดียวกับหน้า FG) · ข้อนี้วัดที่ "แถวในข้อมูลยังอยู่ครบ" ซึ่งไม่เกี่ยวกับกล่อง
+     กติกาของด่านอยู่ที่ tests/callin-week-guard.spec.js */
+  page.once('dialog', d => d.accept());
   await page.click('#btnDeltaWipSave');
   await page.waitForTimeout(200);
 
