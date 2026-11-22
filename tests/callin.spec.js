@@ -311,6 +311,10 @@ test('#62 — นำเข้าชีตของหน่วยหนึ่ง
   await scan(page, await callInWorkbook([
     { pn: '9100000041', poNo: 'PO-U001', orderDate: '2026-07-06', qty: 300, wip: 55 }
   ], { sheetName: 'X-FRM wk35' }), 'X-FRM wk35');
+  /* ⚠️ ด่านงวดถามก่อนเก็บ และถามถูกแล้ว — การนำเข้างวด 35 ของ TUE-U ทำให้ใบของ TUE-H
+     ซึ่งอยู่งวด 34 ตกด่านงวดของ deltaWipOf() จริง · ข้อนี้วัดที่ "แถวในข้อมูลไม่ถูกล้าง"
+     ซึ่งยังจริงทุกตัวอักษร · กติกาของด่านอยู่ที่ tests/callin-week-guard.spec.js */
+  page.once('dialog', d => d.accept());
   await page.click('#btnDeltaWipSave');
   await page.waitForTimeout(200);
 

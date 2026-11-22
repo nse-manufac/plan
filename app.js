@@ -1324,6 +1324,55 @@ function currentDeltaWeek(){
   return best ? String(best.week) : null;
 }
 
+/** ใบที่ "ตอนนี้เห็นยอดของ Delta อยู่" แล้วจะไม่เห็น ถ้างวดที่ยึดอยู่เปลี่ยนไปเป็น newWeek
+ *
+ *  🚨 currentDeltaWeek() เป็นค่าเดียวของทั้งแอป ไม่ได้แยกตามหน่วย — นำเข้าไฟล์ของงวดอื่น
+ *     จึงทำให้ deltaWipOf() ของ **ทุกหน่วย** ตกด่านงวดพร้อมกัน ยอดหายจากหน้า FG ·
+ *     หน้าใบส่งสินค้า · และช่อง Wip bal. บนกระดาษ FM-ST-07
+ *
+ *  🚨 และกดนำเข้าไฟล์เดิมซ้ำกู้คืนไม่ได้ — saveDeltaWip() เจอแถวของงวดนั้นอยู่แล้ว
+ *     จึง Object.assign ทับที่เดิมโดย **ไม่บัมป์ createdAt** ส่วน deltaWipNewer()
+ *     ตัดสินด้วย createdAt ก่อน งวดที่ยึดอยู่จึงไม่ขยับ (รันพิสูจน์แล้ว 22 พ.ย. 2569)
+ *     ทางกู้มีทางเดียวคือนำเข้าไฟล์ของ "งวดใหม่" นั้นด้วยชื่อชีตที่เป็นงวดเดิม
+ *     ด่านนี้จึงต้องอยู่ "ก่อน" กดเก็บ ไม่ใช่ฟ้องทีหลัง
+ *
+ *  🚨 นับเฉพาะ "หน่วยอื่น" ห้ามนับใบของหน่วยที่ชีตนี้ครอบ
+ *     ใบของหน่วยเดียวกันที่ Delta ตัดออกจากงวดใหม่ (ส่งครบแล้วเขาตัดออกจากไฟล์เลย)
+ *     **ต้องหายตามการออกแบบ** — นั่นคือเหตุผลทั้งหมดที่ deltaWipOf() มีด่านงวด
+ *     นับรวมแล้วกล่องจะเด้งทุกสัปดาห์ด้วยเลขที่เป็นเรื่องปกติ = คำเตือนที่ไม่มีใครอ่าน
+ *     (เทสเดิมสองข้อของ #62 จับข้อนี้ได้ทันทีตอนเขียนผิดเป็นแบบนั้น)
+ *  ⚠️ ไม่นับใบที่อยู่ในชีตที่กำลังจะเก็บ — ใบพวกนั้นได้แถวของงวดใหม่ทันที ไม่ได้เสียอะไร
+ *  ⚠️ เดินผ่าน state.deltaWip รอบเดียว ห้ามเรียก deltaWipOf() ต่อใบ (ของจริง 712 ใบ)
+ *     แต่ต้องตัดสินเหมือน deltaWipOf() เป๊ะ ๆ คือ "หาแถวใหม่สุดของใบนั้น แล้วค่อยเทียบงวด"
+ *     ไม่ใช่ "มีแถวของงวดนี้ไหม" ซึ่งให้คนละคำตอบกับใบที่มีหลายงวด */
+function deltaWeekSwitchLoss(newWeek, items){
+  const cur = currentDeltaWeek();
+  if(cur == null || String(cur) === String(newWeek)) return [];
+  const orderById = {}; activeOrders().forEach(o=>orderById[o.id]=o);
+  const unitOf = o => String(o.subName || '');
+
+  const inSheet = new Set(), units = new Set();
+  (items || []).forEach(it=>{
+    const o = orderById[it.id];
+    if(!o) return;                 // ใบที่เราไม่รู้จัก saveDeltaWip ก็ไม่เก็บ
+    inSheet.add(o.id);
+    units.add(unitOf(o));
+  });
+  /* ไม่มีใบที่รู้จักเลย = saveDeltaWip() คืนก่อนแตะอะไร งวดที่ยึดอยู่จึงไม่ขยับ */
+  if(!inSheet.size) return [];
+
+  const best = new Map();
+  state.deltaWip.forEach(d=>{
+    const o = orderById[d.orderId];
+    if(d.voided || !o || inSheet.has(d.orderId) || units.has(unitOf(o))) return;
+    const b = best.get(d.orderId);
+    if(!b || deltaWipNewer(d, b)) best.set(d.orderId, d);
+  });
+  const lost = [];
+  best.forEach((d, id)=>{ if(String(d.week) === String(cur)) lost.push(id); });
+  return lost;
+}
+
 /** เลขสัปดาห์จากชื่อชีต เช่น "X'FRM3M4 wk34" -> "34"
  *  ไฟล์จริงตั้งชื่อชีตแบบนี้ทุกใบ ถ้าวันหนึ่งไม่ตรงรูปแบบ ให้คนพิมพ์เอง */
 function weekFromSheetName(name){
@@ -2908,10 +2957,14 @@ function renderFg(){
 
   const totalFg = all.reduce((n,g)=> n + g.fg, 0);
   const mismatch = all.filter(g=> g.deltaHave && g.diff !== 0).length;
+  const curWeek = currentDeltaWeek();
   document.getElementById('fgSummary').innerHTML =
     `${numFmt(all.length)} กลุ่ม · <b>FG รวมทั้งหมด ${numFmt(totalFg)} ชิ้น</b>` +
     (rows.length !== all.length ? ` · แสดงอยู่ ${numFmt(rows.length)} กลุ่ม` : '') +
     (mismatch ? ` · <b style="color:var(--warn)">${numFmt(mismatch)} กลุ่มยอดค้างไม่ตรงกับ Delta</b>` : '') +
+    /* 🚨 เลขของ Delta ทั้งหน้านี้ถูกกั้นด้วยงวด — ไม่บอกว่ายึดงวดไหน คนที่เจอคอลัมน์
+       "ค้างส่ง (Delta)" ว่างทั้งคอลัมน์จะไม่มีทางรู้ว่าเกิดจากนำเข้าไฟล์ผิดงวด */
+    (curWeek ? ` · ยึดยอด Delta จากไฟล์งวด <b>wk${escapeHtml(curWeek)}</b>` : '') +
     ` · กดที่แถวเพื่อดูใบสั่งของ P/N นั้น`;
 
   document.querySelectorAll('#fgTable tr.fg-row').forEach(tr=>{
@@ -6602,6 +6655,19 @@ function renderCallInPreview(){
     parts.push(`⚠️ <b>PO QTY ไม่ตรงกัน ${numFmt(p.qtyMismatch.length)} แถว</b> — ร้ายแรงกว่ายอดค้างไม่ตรง ต้องหาว่าฝั่งไหนถูก`);
   }
   if(p.missingOrder.length > 15) parts.push(`(ตารางข้างล่างแสดงแถวที่ไม่มีใบในแอปแค่ 15 จาก ${numFmt(p.missingOrder.length)} แถว)`);
+  /* 🚨 งวดที่ยึดอยู่ต้องเห็น "ก่อน" กดเก็บ — จุดที่คนพลาดคือหน้านี้
+     ของเดิมบอกงวดไว้ที่หน้าใบส่งสินค้าที่เดียว ซึ่งไม่ใช่หน้าที่คนเปิดตอนนำเข้าไฟล์
+     ผลของการพลาดอยู่ที่คอมเมนต์ของ deltaWeekSwitchLoss() */
+  const curWk = currentDeltaWeek();
+  if(pendingCallIn.week && curWk && String(curWk) !== String(pendingCallIn.week)){
+    const lost = deltaWeekSwitchLoss(pendingCallIn.week, pendingCallIn.items);
+    parts.push(`🚨 <b style="color:var(--red)">งวดไม่ตรงกับที่ยึดอยู่</b> — ยึดอยู่ <b>wk${escapeHtml(curWk)}</b>`
+      + ` · ไฟล์นี้เป็น <b>wk${escapeHtml(pendingCallIn.week)}</b>`
+      + (lost.length ? ` · เก็บแล้ว <b>${numFmt(lost.length)} ใบของหน่วยอื่นจะไม่มียอดของ Delta</b>` : ''));
+  } else if(pendingCallIn.week){
+    parts.push(`งวดของไฟล์นี้ <b>wk${escapeHtml(pendingCallIn.week)}</b>`
+      + (curWk ? ' · ตรงกับงวดที่ยึดอยู่' : ' · ยังไม่มีงวดไหนถูกยึดไว้'));
+  }
   parts.push('หน้านี้อ่านอย่างเดียว ไม่แก้ไฟล์ของ Delta และไม่เปลี่ยนข้อมูลในแอป');
   document.getElementById('callInSummary').innerHTML = parts.join('<br>');
   document.getElementById('callInPreviewPanel').style.display = '';
@@ -6612,6 +6678,17 @@ document.getElementById('btnDeltaWipSave').addEventListener('click', ()=>{
   const week = pendingCallIn.week
     || prompt('ชื่อชีตไม่ได้บอกเลขสัปดาห์ — พิมพ์เลขสัปดาห์ของไฟล์นี้ (เช่น 34)');
   if(!week) return;
+
+  /* 🚨 ด่านงวด — เหตุผลเต็มและเหตุที่กู้คืนไม่ได้อยู่ที่ deltaWeekSwitchLoss()
+     ถามเฉพาะตอนมีของจะเสียจริง · งวดเดิมหรือยังไม่เคยนำเข้า จะไม่ถามอะไรเลย */
+  const lossIds = deltaWeekSwitchLoss(week, pendingCallIn.items);
+  if(lossIds.length && !confirm(
+      `งวดที่ยึดอยู่ตอนนี้คือ wk${currentDeltaWeek()} แต่ไฟล์นี้เป็น wk${week}\n\n`
+    + `เก็บแล้ว ใบของหน่วยอื่น ${numFmt(lossIds.length)} ใบจะไม่มียอดของ Delta ทันที\n`
+    + `(หายจากหน้ายอดคงคลัง FG · หน้าใบส่งสินค้า · และช่อง Wip bal. บนกระดาษ)\n\n`
+    + `กดนำเข้าไฟล์เดิมซ้ำกู้คืนไม่ได้ — ต้องนำเข้าไฟล์ของหน่วยนั้นด้วยชื่อชีตที่เป็น wk${week}`
+    + `\n\nยืนยันว่าจะเก็บ?`)) return;
+
   const r = saveDeltaWip(pendingCallIn.items, week, pendingCallIn.fileName);
   /* ⚠️ ห้ามรายงาน r.cleared เป็น "ลบไปกี่ใบ" — ขอบเขตการล้างคือใบที่อยู่ในชีตนี้
    *    ทุกใบที่ถูกล้างจึงถูกเขียนทับด้วยของใหม่ทันทีเสมอ ไม่มีอะไรหายไปจริง */
