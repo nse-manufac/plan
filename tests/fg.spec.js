@@ -241,7 +241,11 @@ test('แถวที่กางออกมาต้องบอก PO Date �
 test('ยอดราย PO ที่กางออกมา บวกกันต้องเท่ากับเลขบนแถวของกลุ่ม', async ({ page }) => {
   /* แถวของกลุ่มกับรายการที่กางออกมาอยู่ติดกัน คนจะบวกตามด้วยตาทันที
      ถ้าสองชั้นคิดคนละชุดใบ จะได้เลขไม่ตรงกันโดยไม่มีอะไรฟ้อง แล้วเลิกเชื่อทั้งหน้า
-     (หลักเดียวกับแถบข้อมูลย้อนแย้งกับรายการที่กางจากมัน) */
+     (หลักเดียวกับแถบข้อมูลย้อนแย้งกับรายการที่กางจากมัน)
+     🚨 ข้อนี้ยืนอยู่บนฉากที่ **ไม่มีใบไหนเข้าเกณฑ์ "จบแล้ว"** (ทั้งสองใบยังค้างส่ง) — ตั้งแต่มี
+        ช่องติ๊ก `#fgShowDone` สามคอลัมน์นี้บวกไม่เท่าแถวกลุ่มเมื่อมีใบถูกซ่อน ซึ่งถูกตามที่เจ้าของสั่ง
+        ใครแก้ fixture ให้ใบใดใบหนึ่งจบ ข้อนี้จะแดงพร้อมข้อความ "ต้องตรงกับช่อง…" แล้วชี้ไปทางที่ผิด
+        (ผู้ตรวจ #144 รอบ 3 ทัก · กฎฉบับที่ใช้จริงอยู่ในบล็อก `fgPoDone` ของ CLAUDE.md) */
   await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 3000)], [
     rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000, '2026-08-20'),
     rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22'),
@@ -891,4 +895,159 @@ test('"ส่งครบแล้ว" ต้องตัดสินจาก�
   ]);
   const mid = await page.locator('#wtDue svg text').first().textContent();
   expect(mid, 'ต้องเหลือใบเดียวที่ยังไม่เสร็จ คือใบที่ยังไม่ส่งสักชิ้น').toBe('1');
+});
+
+/* ───────── ซ่อน PO ที่จบแล้วในแถวที่กางออกมา (เจ้าของสั่ง 20 พ.ย. 2569) ─────────
+   เจ้าของเปิดจอจริงแล้วถามว่า "ทำไมกดซ่อนแล้วยังแสดงอยู่" — ช่องติ๊กเดิมซ่อนเฉพาะ
+   "แถวกลุ่ม" ส่วนตารางราย PO ข้างในโชว์ทุกใบมาตลอด ทั้งตอนที่ยังเป็นการ์ดและตอนเป็นแถวที่กาง */
+
+const DONE_ORDERS = [
+  order('PO-A1', PN_A, 5000),   // ยังไม่จบ — FG 1,800 · ค้างส่ง 3,800
+  order('PO-A2', PN_A, 3000)    // จบแล้ว  — FG 0 · ค้างส่ง 0
+];
+const DONE_RECS = [
+  rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000),
+  rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22'),
+  rec('r3', 'PO-A2|' + PN_A, 'inspection', 3000, '2026-08-21'),
+  rec('r4', 'PO-A2|' + PN_A, 'shipping',   3000, '2026-08-23')
+];
+
+test('ใบที่จบแล้วต้องไม่ขึ้นในแถวที่กาง จนกว่าจะติ๊ก "แสดง PO ที่จบแล้ว"', async ({ page }) => {
+  await open(page, DONE_ORDERS, DONE_RECS);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  let txt = await cmpOf(page, PN_A, 'TUE-U').innerText();
+  expect(txt, 'ใบที่ยังค้างส่งต้องอยู่').toContain('PO-A1');
+  expect(txt, 'ใบที่จบแล้วต้องถูกซ่อนตั้งแต่แรก').not.toContain('PO-A2');
+
+  /* ⚠️ ต้องบอกด้วยว่าซ่อนไปกี่ใบ ห้ามซ่อนเงียบ ๆ — คนที่รู้ว่ากลุ่มนี้มีกี่ใบจะนึกว่าข้อมูลหาย
+     (หลักเดียวกับแถวรวมของหน้ายอดรายวันทุกขั้นที่ต้องบอกจำนวนใบที่ซ่อน) */
+  const head = () => subOf(page, PN_A, 'TUE-U').locator('.fg-sub-head').innerText();
+  expect(await head()).toContain('1 จาก 2 ใบ');
+  expect(await head()).toContain('ซ่อนใบที่จบแล้ว 1 ใบ');
+  expect(await head(), 'ใบที่ซ่อนมีเลขจริงทั้งสามช่อง ผลบวกจึงไม่เท่าแถวกลุ่ม ต้องบอก')
+    .toContain('บวกไม่เท่าแถวกลุ่ม');
+
+  await page.check('#fgShowDone');
+  await page.waitForTimeout(200);
+  txt = await cmpOf(page, PN_A, 'TUE-U').innerText();
+  expect(txt, 'ติ๊กแล้วต้องเห็นครบ').toContain('PO-A2');
+  /* ⚠️ ข้อความ "ซ่อนไว้ N ใบ" ต้องหายไปด้วย ไม่งั้นเป็นคำโกหกที่ค้างบนหัวแถวที่คนใช้อ่านยอด */
+  expect(await head(), 'ไม่มีอะไรถูกซ่อนแล้ว').not.toContain('ซ่อนใบที่จบแล้ว');
+});
+
+test('ใบที่ส่งเกินยอดสั่งต้องไม่ถูกซ่อน และเลขที่เห็นต้องยังบวกเท่าแถวกลุ่ม', async ({ page }) => {
+  /* 🚨 ด่านของเกณฑ์ "สองข้อ" — `wipBalance()` ครอบที่ 0 มาแต่เดิม ใบที่ส่งเกินยอดสั่งจึงได้
+        ค้างส่ง 0 ทั้งที่ FG ติดลบค้างอยู่ · เขียนเกณฑ์เป็น `ourWip === 0` ข้อเดียวเมื่อไหร่
+        ใบนี้หายทันที แล้ว FG ของแถวที่เห็นจะบวกได้ 1,800 ขณะที่แถวกลุ่มเขียน 800
+        = ของที่คีย์ผิดถูกกลบ และเลขสองชั้นที่วางติดกันขัดกันเอง (ลองถอดแล้วแดงจริง) */
+  await open(page, [
+    order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 3000), order('PO-A3', PN_A, 2000)
+  ], [
+    rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22'),
+    rec('r3', 'PO-A2|' + PN_A, 'inspection', 3000, '2026-08-21'),
+    rec('r4', 'PO-A2|' + PN_A, 'shipping',   3000, '2026-08-23'),
+    rec('r5', 'PO-A3|' + PN_A, 'inspection', 1000, '2026-08-21'),
+    rec('r6', 'PO-A3|' + PN_A, 'shipping',   2000, '2026-08-23')
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  const txt = await cmpOf(page, PN_A, 'TUE-U').innerText();
+  expect(txt, 'ใบที่ FG ติดลบต้องยังเห็น แม้ค้างส่งเป็น 0').toContain('PO-A3');
+  expect(txt, 'ใบที่จบจริงยังต้องถูกซ่อน').not.toContain('PO-A2');
+
+  const num = s => Number(String(s).replace(/,/g, ''));
+  let fgSum = 0, wipSum = 0;
+  for(const r of await cmpOf(page, PN_A, 'TUE-U').locator('tr').all()){
+    fgSum  += num(await r.locator('td').nth(5).innerText());
+    wipSum += num(await r.locator('td').nth(6).innerText());
+  }
+  expect(fgSum, '1,800 ของใบที่ยังค้าง บวกกับ −1,000 ของใบที่ส่งเกิน').toBe(800);
+  expect(num(await cellOf(page, PN_A, 'TUE-U', 4)), 'FG คงเหลือของแถวกลุ่ม').toBe(fgSum);
+  expect(num(await cellOf(page, PN_A, 'TUE-U', 5)), 'ค้างส่ง (เรา) ของแถวกลุ่ม').toBe(wipSum);
+});
+
+test('กลุ่มที่จบแล้วทุกใบ ต้องบอกว่าซ่อนอยู่ ไม่ใช่ตารางเปล่า', async ({ page }) => {
+  /* กลุ่มแบบนี้ขึ้นจริงเมื่อยังไม่ได้ติ๊ก "ซ่อนกลุ่มที่ไม่มีของเหลือ"
+     ปล่อยให้ตารางว่างแล้วคนจะอ่านว่าใบของ P/N นี้หายไปไหนหมด ทั้งที่มันจบแล้วทุกใบ */
+  await open(page, [DONE_ORDERS[1]], DONE_RECS.slice(2));
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  expect(await cmpOf(page, PN_A, 'TUE-U').innerText()).toContain('จบแล้วทุกใบ');
+});
+
+test('ใบที่บัญชีเราจบแล้ว แต่ยอดของ Delta ยังไม่ตรง ต้องไม่ถูกซ่อน', async ({ page }) => {
+  /* 🚨 ด่านของข้อที่สามใน fgPoDone() — "จบแล้ว" ต้องรวม "ฝั่ง Delta ไม่เหลืออะไรให้ตาม" ด้วย
+        ใบที่เราส่งครบแล้ว แต่ Delta ลง Wip bal. ไว้มากกว่าที่เราส่ง จะได้ `delta.left > 0`
+        → แถวกลุ่มขึ้นป้ายแดงว่ายอดไม่ตรงกับ Delta แต่ใบต้นเหตุถูกซ่อน
+        หน้าเขียนเองว่า "กดที่แถวเพื่อดูใบสั่งของ P/N นั้น" แล้วกางไปเจอตารางที่ไม่มีคำตอบ
+        = ตอบผิดแย่กว่าไม่ตอบ (หลักเดียวกับที่ openRecordsForPo() ต้องล้างตัวกรองก่อนพาไป)
+        และปุ่ม ✎ แก้ ซึ่งเป็น **ทางเดียว** ที่แก้ยอดผิดของ Delta ได้ ก็อยู่บนแถวนั้น
+     ⚠️ ฉากนี้เกิดจริงได้สองทาง — Delta ลง PO QTY มากกว่า Open Q'ty ของเรา
+        หรือมีคนใส่ตัวแก้มือ `wipOverride` มากกว่าที่เราส่ง (ผู้ตรวจ #144 รันพิสูจน์) */
+  await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 1000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22'),
+    rec('r3', 'PO-A2|' + PN_A, 'inspection', 1000, '2026-08-21'),
+    rec('r4', 'PO-A2|' + PN_A, 'shipping',   1000, '2026-08-23')   // บัญชีเราจบ: ค้างส่ง 0 · FG 0
+  ], [deltaRow('PO-A2|' + PN_A, 34, 1200)]);                       // แต่ Delta ว่ายังค้าง → left 200
+
+  expect(await rowOf(page, PN_A, 'TUE-U'), 'แถวกลุ่มฟ้องว่ายอดไม่ตรงกับ Delta').toContain('-200');
+
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+  const cmp = await cmpOf(page, PN_A, 'TUE-U').innerText();
+  expect(cmp, 'ใบต้นเหตุต้องอยู่ในตาราง ไม่ใช่ซ่อนไว้หลังช่องติ๊ก').toContain('PO-A2');
+  expect(cmp, 'พร้อมปุ่มแก้ยอดของ Delta ซึ่งเป็นทางเดียวที่แก้ได้').toContain('✎ แก้');
+
+  /* ⚠️ และต้องไม่เหลืออะไรถูกซ่อนในฉากนี้เลย — ไม่งั้นข้อนี้เขียวได้ทั้งที่ซ่อนใบผิดใบ */
+  expect(await subOf(page, PN_A, 'TUE-U').locator('.fg-sub-head').innerText(),
+    'ไม่มีใบไหนเข้าเกณฑ์ "จบแล้ว" ในฉากนี้').not.toContain('ซ่อนใบที่จบแล้ว');
+});
+
+test('ใบที่ผลิตได้เท่าไหร่ส่งหมดเท่านั้น แต่ยังค้างส่งอยู่ ต้องไม่ถูกซ่อน', async ({ page }) => {
+  /* 🚨 ด่านของข้อที่ **หนึ่ง** (`ourWip === 0`) ซึ่งก่อนหน้านี้ไม่มีเทสของตัวเอง
+        มันรอดมาได้เพราะ fixture ของข้ออื่นบังเอิญเป็นใบที่ไม่มี record เลย — ใครแก้ fixture นั้น
+        วันหนึ่งด่านจะหายเงียบ ๆ (ผู้ตรวจ #144 รอบ 2 ทัก) · ฉากนี้จึงทำให้ `FG คงเหลือ = 0`
+        ด้วยการ "ผลิตได้ 500 แล้วส่งไป 500" ไม่ใช่ด้วยการไม่ทำอะไรเลย
+        ยอดสั่ง 1,000 จึงยังค้างส่งอยู่ 500 = ใบที่ยังต้องตาม ห้ามหายจากตาราง
+        ⚠️ ถอดข้อ 1 ออกแล้วแดง (พิสูจน์แล้ว) · เป็นฉากจริงของใบที่ทยอยผลิตทยอยส่ง */
+  await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 1000)], [
+    rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22'),
+    rec('r3', 'PO-A2|' + PN_A, 'inspection', 500, '2026-08-21'),
+    rec('r4', 'PO-A2|' + PN_A, 'shipping',   500, '2026-08-23')   // FG 0 แต่ยังค้างส่ง 500
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  expect(await cmpOf(page, PN_A, 'TUE-U').innerText(),
+    'ใบที่ยังค้างส่งต้องอยู่ แม้ของในคลังจะหมดพอดี').toContain('PO-A2');
+  expect(await subOf(page, PN_A, 'TUE-U').locator('.fg-sub-head').innerText(),
+    'ไม่มีใบไหนเข้าเกณฑ์ "จบแล้ว" ในฉากนี้').not.toContain('ซ่อนใบที่จบแล้ว');
+});
+
+test('ใบที่ซ่อนเป็น 0 ทั้งสามช่อง — ห้ามบอกว่าผลบวกไม่เท่าแถวกลุ่ม', async ({ page }) => {
+  /* 🚨 ประโยคเตือนต้องขึ้นเฉพาะตอนที่ผลบวกไม่เท่าจริง — ใบยอดสั่ง 0 ที่ซิงค์มาและไม่เคยคีย์อะไร
+        เข้าเกณฑ์ "จบแล้ว" ครบสามข้อ จึงถูกซ่อน แต่มันไม่ได้พาเลขไหนหายไปจากผลบวกเลย
+        เตือนไว้ก่อนดูเหมือนปลอดภัย แต่บนหน้าที่มีไว้ไล่ของผิด มันส่งคนไปหาส่วนต่างที่ไม่มีอยู่
+        (ผู้ตรวจ #144 รอบ 4 รันเจอ · ของเดิมขึ้นประโยคนี้ทุกครั้งที่มีใบถูกซ่อน)
+     ⚠️ ต้องวัดคู่กับผลบวกจริง ไม่ใช่วัดแค่ว่าไม่มีประโยค — ไม่งั้นวันหนึ่งที่เลขเริ่มไม่ตรง
+        แล้วประโยคหายไปด้วย ข้อนี้จะยังเขียว */
+  await open(page, [order('PO-A1', PN_A, 5000), order('PO-A2', PN_A, 0)], [
+    rec('r1', 'PO-A1|' + PN_A, 'inspection', 3000),
+    rec('r2', 'PO-A1|' + PN_A, 'shipping',   1200, '2026-08-22')
+  ]);
+  await page.click(`#fgTable tr.fg-row[data-pn="${PN_A}"][data-unit="TUE-U"]`);
+
+  const head = await subOf(page, PN_A, 'TUE-U').locator('.fg-sub-head').innerText();
+  expect(head, 'ยังต้องบอกว่าซ่อนไปกี่ใบ').toContain('ซ่อนใบที่จบแล้ว 1 ใบ');
+  expect(head, 'แต่ห้ามบอกว่าผลบวกไม่เท่า เพราะฉากนี้มันเท่า').not.toContain('บวกไม่เท่าแถวกลุ่ม');
+
+  const num = s => Number(String(s).replace(/,/g, ''));
+  let inSum = 0, outSum = 0;
+  for(const r of await cmpOf(page, PN_A, 'TUE-U').locator('tr').all()){
+    inSum  += num(await r.locator('td').nth(3).innerText());
+    outSum += num(await r.locator('td').nth(4).innerText());
+  }
+  expect(num(await cellOf(page, PN_A, 'TUE-U', 2)), 'รับเข้าของแถวกลุ่ม').toBe(inSum);
+  expect(num(await cellOf(page, PN_A, 'TUE-U', 3)), 'ส่งออกของแถวกลุ่ม').toBe(outSum);
 });
